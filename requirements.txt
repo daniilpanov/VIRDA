@@ -1,0 +1,17 @@
+# Core computation
+numpy
+scipy
+scikit-image
+trimesh
+
+# MRI I/O (optional, for api/mri_loader)
+nibabel
+pydicom
+mne
+
+# Visualization (optional, for api/visualization_3d)
+pyvista
+matplotlib
+
+# Dev
+pytest
