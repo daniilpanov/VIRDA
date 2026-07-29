@@ -1,23 +1,27 @@
 repos:
-  - repo: https://github.com/psf/black
-    rev: 26.5.1
+  - repo: local
     hooks:
       - id: black
-        language_version: python3.14
-
-  - repo: https://github.com/pycqa/isort
-    rev: 8.0.1
-    hooks:
+        name: black
+        entry: uv run --active black
+        language: system
+        types: [ python ]
+        pass_filenames: true
       - id: isort
-        args: ["--profile", "black"]
-
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.0
-    hooks:
+        name: isort
+        entry: uv run --active isort
+        language: system
+        types: [ python ]
+        pass_filenames: true
       - id: ruff
-        args: ["--fix"]
-
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v2.3.0
-    hooks:
+        name: ruff
+        entry: uv run --active ruff format
+        language: system
+        types: [ python ]
+        pass_filenames: true
       - id: mypy
+        name: mypy
+        entry: uv run --active mypy
+        language: system
+        types: [ python ]
+        pass_filenames: true
