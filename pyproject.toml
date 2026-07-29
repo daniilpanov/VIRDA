@@ -24,6 +24,9 @@ dev = [
     "ruff>=0.16.0",
     "pre-commit>=3.8",
 ]
+research = [
+    "matplotlib>=3.11.1",
+]
 
 [tool.black]
 line-length = 100
@@ -34,6 +37,8 @@ profile = "black"
 line_length = 100
 
 [tool.mypy]
+exclude = "research/"
+
 python_version = "3.14"
 incremental = true
 strict = true
