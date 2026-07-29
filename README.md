@@ -1,3 +1,7 @@
+![Python 3.14](https://img.shields.io/badge/Python-3.14-blue?logo=python)
+![Package Manager](https://img.shields.io/badge/Package%20Manager-uv-DE5FE9?logo=python)
+![CI Status](https://github.com/daniilpanov/VIRDA/actions/workflows/ci.yml/badge.svg)
+
 # VIRDA Electrode Localization
 
 Software for localizing VIRDA electrodes in a patient's MRI coordinate system using a three-stage pipeline: MRI scalp mesh generation, virtual Electrode Surface Equivalent (ESE) construction, and real electrode localization from external measurements.
