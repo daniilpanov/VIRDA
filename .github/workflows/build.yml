@@ -1,0 +1,63 @@
+name: Docker Build and Push
+
+on:
+  release:
+    types: [published]
+
+  workflow_dispatch:
+    inputs:
+      test_tag:
+        description: 'Custom suffix for the test image'
+        required: false
+        default: 'latest'
+
+jobs:
+  build-and-push:
+    name: Build & Push Docker Image
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=sha,prefix=sha-
+            # CUSTOM RUN
+            type=raw,value=test-${{ inputs.test_tag || 'latest' }},enable=${{ github.event_name == 'workflow_dispatch' }}
+            # PRE-RELEASE
+            type=raw,value=pre-latest,enable=${{ github.event_name == 'release' && github.event.release.prerelease }}
+            type=semver,prefix=pre-,pattern={{version}},enable=${{ github.event_name == 'release' && github.event.release.prerelease }}
+            # STABLE RELEASE
+            type=semver,pattern={{version}},enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
+            type=semver,pattern={{major}},enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
+            type=raw,value=latest,enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

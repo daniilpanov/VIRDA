@@ -1,0 +1,49 @@
+version: 2
+updates:
+  # Python packages
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "python"
+    commit-message:  # Example: chore(deps): bump numpy from 2.0 to 2.1
+      prefix: "chore"
+      include: "scope"
+
+    groups:
+      production-dependencies:
+        patterns:
+          - "numpy"
+          - "scipy"
+          - "nibabel"
+          - "scikit-image"
+          - "trimesh"
+          - "pyvista"
+          - "pydantic"
+      dev-dependencies:
+        patterns:
+          - "pytest*"
+          - "black"
+          - "isort"
+          - "mypy"
+          - "ruff"
+          - "pre-commit"
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    reviewers:
+      - "your-username"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "ci"

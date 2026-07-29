@@ -1,0 +1,21 @@
+__pycache__
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+.coverage
+htmlcov/
+*.egg-info/
+
+dist/
+build/
+.venv/
+venv/
+env/
+
+**/*.log
+
+# For me, because I'm using CLion
+CMakeLists.txt
+# For me, because I'm using pyenv
+.python-version
