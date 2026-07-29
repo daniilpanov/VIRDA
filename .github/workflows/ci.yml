@@ -35,16 +35,7 @@ jobs:
         run: uv sync --all-extras --frozen
 
       - name: Check code formatting (black)
-        run: uv run black src/ tests/ --check
-
-      - name: Check import sorting (isort)
-        run: uv run isort src/ tests/ --check
-
-      - name: Run linter (ruff)
-        run: uv run ruff check src/ tests/
-
-      - name: Type checking (mypy)
-        run: uv run mypy src/virda/ --strict
+        run: uv run pre-commit run --all-files
 
   # ========================================
   # JOB 2: Tests with coverage
