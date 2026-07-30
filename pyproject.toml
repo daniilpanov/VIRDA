@@ -60,4 +60,5 @@ select = ["E", "F", "I", "N", "W", "UP", "B", "A", "C4", "SIM"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+pythonpath = ["src"]
 addopts = "-v --cov=src/virda --cov-report=term-missing"
