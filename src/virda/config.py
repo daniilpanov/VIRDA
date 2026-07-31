@@ -5,6 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class VirdaSettings(BaseSettings):
     nifti_path: str | None = None
+    output_dir: str | None = None
 
     closing_radius: int = 5
 
