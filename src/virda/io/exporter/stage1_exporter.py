@@ -1,3 +1,4 @@
+import logging
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -5,18 +6,15 @@ from typing import Any
 
 import numpy as np
 from pydantic_settings import BaseSettings
-from scipy.spatial import cKDTree
 
 from virda.io.exporter.json_io import save_config, save_fiducials, save_json
+from virda.io.exporter.nifti_exporter import export_segmentation
 from virda.io.exporter.ply_exporter import export_ply
-from virda.io.qc import run_qc
-from virda.io.qc.geometry import fiducials_world_coordinates
 from virda.models.ese_config import ESEConfig
 from virda.models.fiducial import Fiducial
-from virda.models.scalp_mesh import ScalpMesh
 from virda.models.stage1_result import Stage1Result
-
-FIDUCIAL_TOLERANCE_MM = 3.0
+from virda.qc.checks import run_checks
+from virda.visualization import write_visual_artifacts
 
 
 class Stage1Exporter:
@@ -33,22 +31,45 @@ class Stage1Exporter:
 
     def export(self, result: Stage1Result, output_dir: str | Path) -> Path:
         project_dir = Path(output_dir) / "patient_project"
-        project_dir.mkdir(parents=True, exist_ok=True)
-        export_ply(project_dir / "mesh.ply", result.mesh)
+        mesh_dir = project_dir / "mesh"
+        segmentation_dir = project_dir / "segmentation"
+        fiducials_dir = project_dir / "fiducials"
+        config_dir = project_dir / "config"
+        quality_control_dir = project_dir / "quality_control"
+        input_mri_dir = project_dir / "input_mri"
+        for directory in (
+            mesh_dir,
+            segmentation_dir,
+            fiducials_dir,
+            config_dir,
+            quality_control_dir,
+            input_mri_dir,
+        ):
+            directory.mkdir(parents=True, exist_ok=True)
+        log = _configure_logging(project_dir / "logs" / "stage1.log")
+
+        mesh_path = mesh_dir / "scalp.ply"
+        export_ply(mesh_path, result.mesh)
+        if result.mesh.face_adjacency is not None:
+            np.save(mesh_dir / "scalp_face_adjacency.npy", result.mesh.face_adjacency)
 
         fiducials = result.fiducials
         fiducials_qc: dict[str, Any] | None = None
         if self._skip_fiducials:
-            print(
-                "[info] --skip-fiducials: fiducial-dependent steps disabled "
-                "(fiducials.json not written)",
-                file=sys.stderr,
+            log.info(
+                "--skip-fiducials: fiducial-dependent steps disabled (fiducials.json not written)"
             )
         else:
-            save_fiducials(project_dir / "fiducials.json", fiducials)
-            fiducials_qc = fiducial_qc(fiducials, result)
-            for warning in fiducials_qc["warnings"]:
-                print(f"[warning] {warning}", file=sys.stderr)
+            save_fiducials(fiducials_dir / "fiducials.json", fiducials)
+
+        mask_path = segmentation_dir / "head_mask.nii.gz"
+        export_segmentation(mask_path, result.segmentation_mask, result.mri_volume.affine)
+
+        report = run_checks(result, nifti_mask_path=mask_path)
+        fiducials_qc = report["fiducials"]
+        for warning in report["warnings"]:
+            log.warning(warning)
+        save_json(quality_control_dir / "report.json", report)
 
         save_json(
             project_dir / "stage1_result.json",
@@ -59,47 +80,47 @@ class Stage1Exporter:
                 skipped=self._skip_fiducials,
             ),
         )
-        save_config(project_dir / "pipeline_config.json", self._pipeline_config())
-        run_qc(result, project_dir, with_html=self._qc_html)
+        save_config(config_dir / "pipeline_config.json", self._pipeline_config())
+        save_json(input_mri_dir / "provenance.json", _input_provenance(result))
+        write_visual_artifacts(
+            result, quality_control_dir, mesh_path=mesh_path, with_html=self._qc_html
+        )
         return project_dir
 
     def _pipeline_config(self) -> dict[str, Any]:
-        config: dict[str, Any] = dict(self._settings.model_dump())
+        config = self._settings.model_dump(
+            exclude={"n_electrodes", "ese_offset_mm", "ese_reference"}
+        )
         if self._ese_config is not None:
             config["ese"] = asdict(self._ese_config)
         return config
 
 
-def fiducial_qc(
-    fiducials: list[Fiducial], result: Stage1Result, tolerance_mm: float = FIDUCIAL_TOLERANCE_MM
-) -> dict[str, Any]:
-    """Distance from each fiducial to the scalp mesh (per TZ 13.1 / 16)."""
-    checks: list[dict[str, Any]] = []
-    warnings: list[str] = []
-    if not fiducials:
-        return {"checks": checks, "tolerance_mm": tolerance_mm, "warnings": warnings}
-    tree = cKDTree(_mesh_world_vertices(result))
-    for fiducial in fiducials:
-        world = fiducials_world_coordinates([fiducial], result.mri_volume.affine)[0]
-        distance = float(tree.query(world, k=1)[0])
-        checks.append(
-            {
-                "fiducial_id": fiducial.fiducial_id,
-                "name": fiducial.name,
-                "distance_to_surface_mm": round(distance, 3),
-            }
-        )
-        if distance > tolerance_mm:
-            warnings.append(
-                f"{fiducial.fiducial_id} is {distance:.1f} mm from the scalp surface "
-                f"(tolerance {tolerance_mm} mm)"
-            )
-    return {"checks": checks, "tolerance_mm": tolerance_mm, "warnings": warnings}
+def _configure_logging(log_path: Path) -> logging.Logger:
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    logger = logging.getLogger("virda.stage1")
+    logger.setLevel(logging.INFO)
+    logger.handlers.clear()
+    logger.propagate = False
+    formatter = logging.Formatter("[%(levelname)s] %(message)s")
+    file_handler = logging.FileHandler(log_path, encoding="utf-8")
+    file_handler.setFormatter(formatter)
+    stream_handler = logging.StreamHandler(sys.stderr)
+    stream_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+    logger.addHandler(stream_handler)
+    return logger
 
 
-def _mesh_world_vertices(result: Stage1Result) -> np.ndarray:
-    mesh: ScalpMesh = result.mesh
-    return np.asarray(mesh.vertices, dtype=np.float64)
+def _input_provenance(result: Stage1Result) -> dict[str, Any]:
+    mri = result.mri_volume
+    return {
+        "source": mri.metadata.get("source"),
+        "shape": list(mri.data.shape),
+        "spacing": list(mri.spacing),
+        "orientation": list(mri.orientation),
+        "affine": mri.affine.tolist(),
+    }
 
 
 def _stage1_result_to_dict(
@@ -121,6 +142,9 @@ def _stage1_result_to_dict(
         fiducials_section = {"count": fiducial_count}
 
     mri = result.mri_volume
+    adjacency_edges = (
+        int(result.mesh.face_adjacency.shape[0]) if result.mesh.face_adjacency is not None else None
+    )
     return {
         "mri_volume": {
             "shape": list(mri.data.shape),
@@ -136,6 +160,8 @@ def _stage1_result_to_dict(
         "mesh": {
             "n_vertices": int(result.mesh.vertices.shape[0]),
             "n_faces": int(result.mesh.faces.shape[0]),
+            "n_adjacency_edges": adjacency_edges,
+            "coordinate_system": result.mesh.coordinate_system,
             "vertices_min": result.mesh.vertices.min(axis=0).tolist(),
             "vertices_max": result.mesh.vertices.max(axis=0).tolist(),
         },

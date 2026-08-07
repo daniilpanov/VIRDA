@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 from typing import cast
 
+import nibabel as nib
 import numpy as np
 import pytest
 import trimesh
@@ -88,11 +89,17 @@ class TestStage1Pipeline:
         project_dir = tmp_path / "patient_project"
         assert project_dir.is_dir()
 
-        mesh_path = project_dir / "mesh.ply"
+        mesh_path = project_dir / "mesh" / "scalp.ply"
         assert mesh_path.is_file()
         loaded_mesh = cast(trimesh.Trimesh, trimesh.load(mesh_path))
         np.testing.assert_allclose(loaded_mesh.vertices, result.mesh.vertices)
         np.testing.assert_allclose(loaded_mesh.faces, result.mesh.faces)
+
+        adjacency_path = project_dir / "mesh" / "scalp_face_adjacency.npy"
+        assert adjacency_path.is_file()
+        adjacency = np.load(adjacency_path)
+        assert adjacency.ndim == 2 and adjacency.shape[1] == 2
+        assert adjacency.max() < result.mesh.faces.shape[0]
 
         stage1_payload = json.loads(
             (project_dir / "stage1_result.json").read_text(encoding="utf-8")
@@ -100,20 +107,44 @@ class TestStage1Pipeline:
         np.testing.assert_allclose(np.asarray(stage1_payload["mri_volume"]["affine"]), np.eye(4))
         assert stage1_payload["mri_volume"]["spacing"] == [1.0, 1.0, 1.0]
         assert stage1_payload["mri_volume"]["shape"] == [20, 20, 20]
+        assert stage1_payload["mesh"]["n_adjacency_edges"] == adjacency.shape[0]
 
         config_payload = json.loads(
-            (project_dir / "pipeline_config.json").read_text(encoding="utf-8")
+            (project_dir / "config" / "pipeline_config.json").read_text(encoding="utf-8")
         )
         assert config_payload["ese"]["ese_offset_mm"] == 4.0
         assert config_payload["closing_radius"] == 5
 
-        fiducials_payload = json.loads((project_dir / "fiducials.json").read_text(encoding="utf-8"))
+        fiducials_payload = json.loads(
+            (project_dir / "fiducials" / "fiducials.json").read_text(encoding="utf-8")
+        )
         assert fiducials_payload["fiducials"][0]["fiducial_id"] == "NAS"
 
-        assert (project_dir / "qc_overlay_sagittal.png").is_file()
-        assert (project_dir / "qc_overlay_coronal.png").is_file()
-        assert (project_dir / "qc_overlay_axial.png").is_file()
-        assert (project_dir / "qc_3d_front.png").is_file()
+        mask_path = project_dir / "segmentation" / "head_mask.nii.gz"
+        assert mask_path.is_file()
+        loaded_mask = nib.load(mask_path)
+        assert isinstance(loaded_mask, nib.Nifti1Image)
+        np.testing.assert_allclose(loaded_mask.affine, np.eye(4))
+        assert loaded_mask.shape == (20, 20, 20)
+        stored_voxels = int(np.asanyarray(loaded_mask.dataobj).astype(bool).sum())
+        assert stored_voxels == int(result.segmentation_mask.sum())
+
+        provenance = json.loads(
+            (project_dir / "input_mri" / "provenance.json").read_text(encoding="utf-8")
+        )
+        assert provenance["shape"] == [20, 20, 20]
+        assert provenance["source"] is not None
+
+        report = json.loads(
+            (project_dir / "quality_control" / "report.json").read_text(encoding="utf-8")
+        )
+        assert "status" in report
+        assert any(check["name"] == "mri_metadata" for check in report["checks"])
+        assert (project_dir / "logs" / "stage1.log").is_file()
+        assert (project_dir / "quality_control" / "qc_overlay_sagittal.png").is_file()
+        assert (project_dir / "quality_control" / "qc_overlay_coronal.png").is_file()
+        assert (project_dir / "quality_control" / "qc_overlay_axial.png").is_file()
+        assert (project_dir / "quality_control" / "qc_3d_front.png").is_file()
 
     def test_run_without_fiducials_raises(self, synthetic_nifti_path: Path) -> None:
         pipeline = Stage1Pipeline(

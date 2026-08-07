@@ -89,9 +89,7 @@ def air_depth_score(mask: np.ndarray, wide_mm: float = 10.0) -> np.ndarray:
     return score
 
 
-def face_air_depths(
-    mesh: trimesh.Trimesh, affine: np.ndarray, score: np.ndarray
-) -> np.ndarray:
+def face_air_depths(mesh: trimesh.Trimesh, affine: np.ndarray, score: np.ndarray) -> np.ndarray:
     """Largest air depth (mm) among the voxels of each face's three vertices."""
     world = mesh.vertices.astype(np.float64)
     shape = np.asarray(score.shape, dtype=np.float64)

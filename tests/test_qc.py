@@ -4,15 +4,23 @@ import numpy as np
 import pytest
 
 from virda.fiducials.provider import ManualFiducialProvider
+from virda.geometry.transforms import (
+    fiducials_world_coordinates,
+    mesh_voxel_coordinates,
+)
 from virda.io.exporter.ply_exporter import export_ply
 from virda.io.loader.nifti_loader import NiftiLoader
-from virda.io.qc import overlay_slices, render_3d, run_qc, write_viewer_html
-from virda.io.qc.geometry import fiducials_world_coordinates, mesh_voxel_coordinates
 from virda.mesh.mesh_cleaner import TrimeshCleaner
 from virda.models.fiducial import Fiducial
 from virda.models.stage1_result import Stage1Result
 from virda.pipelines.stage1 import Stage1Pipeline
 from virda.segmentation.head_segmenter import OtsuHeadSegmenter
+from virda.visualization import (
+    overlay_slices,
+    render_3d,
+    write_viewer_html,
+    write_visual_artifacts,
+)
 
 matplotlib = pytest.importorskip("matplotlib")
 pyvista = pytest.importorskip("pyvista")
@@ -59,10 +67,10 @@ class TestViewerHtml:
         assert "THREE.BufferGeometry" in html
 
 
-class TestRunQc:
-    def test_run_qc_writes_all_artifacts(self, qc_result: Stage1Result, tmp_path: Path) -> None:
+class TestWriteVisualArtifacts:
+    def test_writes_all_artifacts(self, qc_result: Stage1Result, tmp_path: Path) -> None:
         export_ply(tmp_path / "mesh.ply", qc_result.mesh)
-        out = run_qc(qc_result, tmp_path, with_html=True)
+        out = write_visual_artifacts(qc_result, tmp_path, with_html=True)
         assert (out / "qc_overlay_sagittal.png").is_file()
         assert (out / "qc_3d_front.png").is_file()
         assert (out / "head_viewer.html").is_file()

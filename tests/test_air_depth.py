@@ -46,13 +46,13 @@ def _cavity_mesh() -> ScalpMesh:
 def _cavity_shell_faces(mesh: ScalpMesh, center: np.ndarray) -> np.ndarray:
     centroids = mesh.vertices[mesh.faces].mean(axis=1)
     distance = np.linalg.norm(centroids - center, axis=1)
-    return (distance >= 7.0) & (distance <= 11.0)
+    return np.asarray((distance >= 7.0) & (distance <= 11.0))
 
 
 def _outer_shell_faces(mesh: ScalpMesh, center: np.ndarray) -> np.ndarray:
     centroids = mesh.vertices[mesh.faces].mean(axis=1)
     distance = np.linalg.norm(centroids - center, axis=1)
-    return (distance >= 15.0) & (distance <= 17.0)
+    return np.asarray((distance >= 15.0) & (distance <= 17.0))
 
 
 class TestAirDepthScore:
@@ -101,9 +101,7 @@ class TestGeodesicInternalFaces:
         center = np.array([48.0, 48.0, 48.0])
         shell_before = int(_cavity_shell_faces(mesh, center).sum())
 
-        cleaned = TrimeshCleaner(remove_internal_faces=False).clean(
-            mesh, mask=mask, affine=affine
-        )
+        cleaned = TrimeshCleaner(remove_internal_faces=False).clean(mesh, mask=mask, affine=affine)
 
         assert int(_cavity_shell_faces(cleaned, center).sum()) == shell_before
 

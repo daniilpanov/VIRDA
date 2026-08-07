@@ -99,7 +99,7 @@ def _box_with_inner_cavity_mesh() -> ScalpMesh:
 def _cavity_shell_faces(mesh: ScalpMesh, center: np.ndarray) -> np.ndarray:
     centroids = mesh.vertices[mesh.faces].mean(axis=1)
     distance = np.linalg.norm(centroids - center, axis=1)
-    return (distance >= 14.0) & (distance <= 20.0)
+    return np.asarray((distance >= 14.0) & (distance <= 20.0))
 
 
 class TestRemoveInternalFaces:
@@ -108,9 +108,7 @@ class TestRemoveInternalFaces:
         center = np.array([32.0, 32.0, 32.0])
         assert _cavity_shell_faces(mesh, center).sum() > 1000
 
-        cleaned = TrimeshCleaner(
-            internal_face_method="ray", internal_face_region=None
-        ).clean(mesh)
+        cleaned = TrimeshCleaner(internal_face_method="ray", internal_face_region=None).clean(mesh)
 
         assert _cavity_shell_faces(cleaned, center).sum() < 50
         assert cleaned.vertices.shape[0] > 1000
@@ -121,8 +119,7 @@ class TestRemoveInternalFaces:
         shell_before = int(_cavity_shell_faces(mesh, center).sum())
 
         cleaned = TrimeshCleaner(
-            internal_face_method="ray",
-            remove_internal_faces=False, internal_face_region=None
+            internal_face_method="ray", remove_internal_faces=False, internal_face_region=None
         ).clean(mesh)
 
         assert int(_cavity_shell_faces(cleaned, center).sum()) == shell_before
@@ -134,9 +131,7 @@ class TestRemoveInternalFaces:
             (np.linalg.norm(mesh.vertices[mesh.faces].mean(axis=1) - center, axis=1) > 20).sum()
         )
 
-        cleaned = TrimeshCleaner(
-            internal_face_method="ray", internal_face_region=None
-        ).clean(mesh)
+        cleaned = TrimeshCleaner(internal_face_method="ray", internal_face_region=None).clean(mesh)
         face_centers = cleaned.vertices[cleaned.faces].mean(axis=1)
         outer_after = int((np.linalg.norm(face_centers - center, axis=1) > 20).sum())
 

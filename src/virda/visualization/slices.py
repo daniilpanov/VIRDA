@@ -4,7 +4,7 @@ from pathlib import Path
 
 import numpy as np
 
-from virda.io.qc.geometry import mesh_voxel_coordinates
+from virda.geometry.transforms import mesh_voxel_coordinates
 from virda.models.stage1_result import Stage1Result
 
 

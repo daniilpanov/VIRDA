@@ -1,4 +1,4 @@
-"""Coordinate helpers shared by QC artifact generators."""
+"""Coordinate helpers shared across modules."""
 
 import numpy as np
 

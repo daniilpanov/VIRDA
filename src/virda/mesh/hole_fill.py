@@ -6,9 +6,7 @@ import numpy as np
 import trimesh
 
 
-def fill_small_boundary_holes(
-    mesh: trimesh.Trimesh, max_perimeter_mm: float = 15.0
-) -> int:
+def fill_small_boundary_holes(mesh: trimesh.Trimesh, max_perimeter_mm: float = 15.0) -> int:
     """Close small boundary rings of ``mesh`` in place.
 
     A boundary ring is a closed loop of boundary edges whose vertices each lie

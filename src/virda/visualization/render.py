@@ -1,10 +1,10 @@
-"""QC 3D renders from fixed viewpoints (requires pyvista)."""
+"""3D renders from fixed viewpoints (requires pyvista)."""
 
 from pathlib import Path
 
 import numpy as np
 
-from virda.io.qc.geometry import fiducials_world_coordinates
+from virda.geometry.transforms import fiducials_world_coordinates
 from virda.models.stage1_result import Stage1Result
 
 _VIEWS = [
@@ -17,9 +17,12 @@ _VIEWS = [
 ]
 
 
-def render_3d(result: Stage1Result, output_dir: str | Path) -> Path:
-    """Shaded 3D renders of the scalp mesh with fiducials (needs mesh.ply next to output)."""
+def render_3d(
+    result: Stage1Result, output_dir: str | Path, mesh_path: str | Path | None = None
+) -> Path:
+    """Shaded 3D renders of the scalp mesh with fiducials (needs a PLY file on disk)."""
     out = Path(output_dir)
+    mesh_file = Path(mesh_path) if mesh_path is not None else out / "mesh.ply"
     try:
         import pyvista as pv
     except ImportError:
@@ -27,7 +30,7 @@ def render_3d(result: Stage1Result, output_dir: str | Path) -> Path:
     pv.OFF_SCREEN = True
     if hasattr(pv, "start_xvfb"):
         pv.start_xvfb()
-    mesh = pv.read(str(out / "mesh.ply"))
+    mesh = pv.read(str(mesh_file))
     center = np.asarray(mesh.center, dtype=float)
     diag = float(mesh.length)
     for name, pos in _VIEWS:

@@ -33,9 +33,9 @@ class TrimeshCleaner:
         internal_face_seed_depth_mm: float = 30.0,
         internal_face_flood_depth_mm: float = 8.0,
         internal_face_ray_length_mm: float = 90.0,
-        internal_face_region: tuple[
-            tuple[float, float], tuple[float, float], tuple[float, float]
-        ] = DEFAULT_FACE_REGION,
+        internal_face_region: (
+            tuple[tuple[float, float], tuple[float, float], tuple[float, float]] | None
+        ) = DEFAULT_FACE_REGION,
         fill_small_holes: bool = True,
         fill_small_holes_max_mm: float = 15.0,
         subdivide_max_edge: float | None = None,
@@ -78,9 +78,7 @@ class TrimeshCleaner:
                 trimesh_mesh.update_faces(~remove_mask)
                 trimesh_mesh.process(validate=True)
                 if self._fill_small_holes:
-                    fill_small_boundary_holes(
-                        trimesh_mesh, self._fill_small_holes_max_mm
-                    )
+                    fill_small_boundary_holes(trimesh_mesh, self._fill_small_holes_max_mm)
                     trimesh_mesh.process(validate=True)
         if self._subdivide_max_edge is not None:
             trimesh_mesh = cast(
@@ -90,14 +88,8 @@ class TrimeshCleaner:
         components = trimesh_mesh.split(only_watertight=False)
         if len(components) > 1:
             main_body = _keep_largest_component(components)
-            return ScalpMesh(
-                vertices=np.asarray(main_body.vertices, dtype=np.float64),
-                faces=np.asarray(main_body.faces, dtype=np.int64),
-            )
-        return ScalpMesh(
-            vertices=np.asarray(trimesh_mesh.vertices, dtype=np.float64),
-            faces=np.asarray(trimesh_mesh.faces, dtype=np.int64),
-        )
+            return _from_trimesh(main_body)
+        return _from_trimesh(trimesh_mesh)
 
     def _internal_face_mask(
         self,
@@ -133,13 +125,21 @@ def _keep_largest_component(components: list[trimesh.Trimesh]) -> trimesh.Trimes
     return max(components, key=lambda component: len(component.vertices))
 
 
+def _from_trimesh(mesh: trimesh.Trimesh) -> ScalpMesh:
+    return ScalpMesh(
+        vertices=np.asarray(mesh.vertices, dtype=np.float64),
+        faces=np.asarray(mesh.faces, dtype=np.int64),
+        face_adjacency=np.asarray(mesh.face_adjacency, dtype=np.int64),
+        coordinate_system="world",
+    )
+
+
 def _ray_internal_face_mask(
     mesh: trimesh.Trimesh,
     seed_depth_mm: float = 30.0,
     flood_depth_mm: float = 8.0,
     ray_length_mm: float = 90.0,
-    region: tuple[tuple[float, float], tuple[float, float], tuple[float, float]]
-    | None = None,
+    region: tuple[tuple[float, float], tuple[float, float], tuple[float, float]] | None = None,
 ) -> np.ndarray:
     """Return a boolean mask of internal (cavity-wall) faces to remove.
 
@@ -156,22 +156,14 @@ def _ray_internal_face_mask(
         return np.zeros(0, dtype=bool)
     centers = mesh.triangles_center
     normals = _outward_normals(mesh)
-    in_region = (
-        _in_region(centers, region)
-        if region is not None
-        else np.ones(n_faces, dtype=bool)
-    )
+    in_region = _in_region(centers, region) if region is not None else np.ones(n_faces, dtype=bool)
 
     target = np.flatnonzero(in_region)
     depths = np.full(n_faces, np.inf)
     if len(target):
-        depths[target] = _ray_depths(
-            mesh, centers[target], normals[target], ray_length_mm
-        )
+        depths[target] = _ray_depths(mesh, centers[target], normals[target], ray_length_mm)
 
-    eligible = (
-        (depths >= flood_depth_mm) & (depths <= ray_length_mm) & in_region
-    )
+    eligible = (depths >= flood_depth_mm) & (depths <= ray_length_mm) & in_region
     seeds = (depths >= seed_depth_mm) & in_region
     return connected_components_containing_seeds(mesh, eligible, seeds)
 
@@ -190,7 +182,7 @@ def _in_region(
     centers: np.ndarray,
     region: tuple[tuple[float, float], tuple[float, float], tuple[float, float]],
 ) -> np.ndarray:
-    ((x0, x1), (y0, y1), (z0, z1)) = region
+    (x0, x1), (y0, y1), (z0, z1) = region
     return (
         (centers[:, 0] >= x0)
         & (centers[:, 0] <= x1)

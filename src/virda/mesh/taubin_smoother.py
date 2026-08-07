@@ -17,4 +17,7 @@ class TaubinSmoother:
         return ScalpMesh(
             vertices=trimesh_mesh.vertices.copy(),
             faces=trimesh_mesh.faces.copy(),
+            face_adjacency=mesh.face_adjacency,
+            coordinate_system=mesh.coordinate_system,
+            metadata=mesh.metadata,
         )

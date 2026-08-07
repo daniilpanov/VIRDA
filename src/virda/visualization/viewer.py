@@ -7,19 +7,22 @@ from pathlib import Path
 
 import numpy as np
 
-from virda.io.qc.geometry import fiducials_world_coordinates
+from virda.geometry.transforms import fiducials_world_coordinates
 from virda.models.stage1_result import Stage1Result
 
 
-def write_viewer_html(result: Stage1Result, output_dir: str | Path) -> Path:
+def write_viewer_html(
+    result: Stage1Result, output_dir: str | Path, mesh_path: str | Path | None = None
+) -> Path:
     """Self-contained HTML viewer (decimated mesh; needs internet for the three.js CDN)."""
     out = Path(output_dir)
+    mesh_file = Path(mesh_path) if mesh_path is not None else out / "mesh.ply"
     try:
         import pyvista as pv
     except ImportError:
         return out
     pv.OFF_SCREEN = True
-    mesh = pv.read(str(out / "mesh.ply"))
+    mesh = pv.read(str(mesh_file))
     decimated = mesh.decimate_pro(0.85)
     vertices = decimated.points.astype(np.float32).ravel().tolist()
     faces = decimated.faces.reshape(-1, 4)[:, 1:].astype(np.int32).ravel().tolist()
