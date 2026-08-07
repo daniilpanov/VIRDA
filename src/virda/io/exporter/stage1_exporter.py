@@ -22,12 +22,10 @@ class Stage1Exporter:
         self,
         settings: BaseSettings,
         ese_config: ESEConfig | None = None,
-        fiducials: list[Fiducial] | None = None,
         skip_fiducials: bool = False,
     ) -> None:
         self._settings = settings
         self._ese_config = ese_config
-        self._fiducials = fiducials or []
         self._skip_fiducials = skip_fiducials
 
     def export(self, result: Stage1Result, output_dir: str | Path) -> Path:
@@ -35,6 +33,7 @@ class Stage1Exporter:
         project_dir.mkdir(parents=True, exist_ok=True)
         export_ply(project_dir / "mesh.ply", result.mesh)
 
+        fiducials = result.fiducials
         fiducials_qc: dict[str, Any] | None = None
         if self._skip_fiducials:
             print(
@@ -43,8 +42,8 @@ class Stage1Exporter:
                 file=sys.stderr,
             )
         else:
-            save_fiducials(project_dir / "fiducials.json", self._fiducials)
-            fiducials_qc = fiducial_qc(self._fiducials, result)
+            save_fiducials(project_dir / "fiducials.json", fiducials)
+            fiducials_qc = fiducial_qc(fiducials, result)
             for warning in fiducials_qc["warnings"]:
                 print(f"[warning] {warning}", file=sys.stderr)
 
@@ -52,7 +51,7 @@ class Stage1Exporter:
             project_dir / "stage1_result.json",
             _stage1_result_to_dict(
                 result,
-                fiducials=self._fiducials,
+                fiducials=fiducials,
                 fiducials_qc=fiducials_qc,
                 skipped=self._skip_fiducials,
             ),
