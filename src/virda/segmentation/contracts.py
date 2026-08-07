@@ -7,4 +7,9 @@ from virda.models.mri_volume import MRIVolume
 
 @runtime_checkable
 class HeadSegmenter(Protocol):
-    def segment(self, volume: MRIVolume, closing_radius: int = 5) -> np.ndarray: ...
+    def segment(
+        self,
+        volume: MRIVolume,
+        closing_radius: int = 5,
+        threshold: float | None = None,
+    ) -> np.ndarray: ...

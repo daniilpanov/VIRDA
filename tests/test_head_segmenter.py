@@ -66,6 +66,19 @@ class TestHeadSegmenter:
 
         assert not np.any(segmentation_mask[expected_outside])
 
+    def test_manual_threshold_overrides_otsu(self, sphere_volume: MRIVolume) -> None:
+        sphere_center = np.array([15, 15, 15])
+        sphere_radius = 10
+        grid_indices = np.indices((30, 30, 30))
+        squared_distance = np.sum((grid_indices - sphere_center.reshape(-1, 1, 1, 1)) ** 2, axis=0)
+        expected_inside = squared_distance <= sphere_radius**2
+
+        segmentation_mask = self.segmenter.segment(sphere_volume, closing_radius=0, threshold=50.0)
+
+        assert segmentation_mask.dtype == bool
+        assert np.all(segmentation_mask[expected_inside])
+        assert segmentation_mask.sum() == expected_inside.sum()
+
     def test_all_zero_volume_returns_empty_mask(self) -> None:
         empty_data = np.zeros((10, 10, 10), dtype=np.float32)
         volume = MRIVolume(

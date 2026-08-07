@@ -1,7 +1,7 @@
 import sys
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 from pydantic_settings import BaseSettings
@@ -98,7 +98,7 @@ def _fiducial_world_coordinates(fiducial: Fiducial, result: Stage1Result) -> np.
     coordinates = np.asarray(fiducial.coordinates, dtype=np.float64)
     if fiducial.coordinate_system == "voxel":
         affine = result.mri_volume.affine
-        return coordinates @ affine[:3, :3].T + affine[:3, 3]
+        return cast(np.ndarray, coordinates @ affine[:3, :3].T + affine[:3, 3])
     return coordinates
 
 

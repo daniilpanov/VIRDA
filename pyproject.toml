@@ -9,6 +9,7 @@ dependencies = [
     "nibabel>=5.0",  # for NIfTI loader adapter
     "scikit-image>=0.24",  # core package
     "trimesh>=4.0",  # for
+    "rtree>=1.0",  # ray casting for trimesh (internal-face removal)
     "tqdm>=4.66",  # for progress visualization
     "pydantic>=2.9",  # core package
     "pydantic-settings>=2.14.2",
@@ -68,3 +69,8 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 pythonpath = ["src"]
 addopts = "-v --cov=src/virda --cov-report=term-missing"
+
+[dependency-groups]
+dev = [
+    "scipy-stubs>=1.18.0.1",
+]

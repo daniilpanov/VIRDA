@@ -1,5 +1,5 @@
-from pathlib import Path
 import sys
+from pathlib import Path
 
 from virda.config import get_virda_settings
 from virda.io.exporter.json_io import load_fiducials
@@ -44,6 +44,17 @@ def run(
     cleaner = TrimeshCleaner(
         min_component_vertices=settings.cleaner_min_vertices,
         merge_digits=settings.cleaner_merge_digits,
+        remove_internal_faces=settings.remove_internal_faces,
+        internal_face_method=settings.internal_face_method,
+        internal_face_wide_mm=settings.internal_face_wide_mm,
+        internal_face_seed_mm=settings.internal_face_seed_mm,
+        internal_face_flood_mm=settings.internal_face_flood_mm,
+        internal_face_seed_depth_mm=settings.internal_face_seed_depth_mm,
+        internal_face_flood_depth_mm=settings.internal_face_flood_depth_mm,
+        internal_face_ray_length_mm=settings.internal_face_ray_length_mm,
+        fill_small_holes=settings.fill_small_holes,
+        fill_small_holes_max_mm=settings.fill_small_holes_max_mm,
+        subdivide_max_edge=settings.subdivide_max_edge,
     )
 
     smoother: MeshSmoother
@@ -77,6 +88,7 @@ def run(
         resolved_path,
         output_dir=resolved_output_dir,
         closing_radius=settings.closing_radius,
+        threshold=settings.threshold,
     )
 
 

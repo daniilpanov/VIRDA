@@ -9,8 +9,15 @@ from virda.models.mri_volume import MRIVolume
 
 
 class OtsuHeadSegmenter:
-    def segment(self, volume: MRIVolume, closing_radius: int = 5) -> np.ndarray:
-        intensity_threshold = threshold_otsu(volume.data)
+    def segment(
+        self,
+        volume: MRIVolume,
+        closing_radius: int = 5,
+        threshold: float | None = None,
+    ) -> np.ndarray:
+        intensity_threshold = (
+            threshold if threshold is not None else threshold_otsu(volume.data)
+        )
         above_threshold_mask = volume.data > intensity_threshold
 
         connected_components = label(above_threshold_mask)

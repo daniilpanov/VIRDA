@@ -30,13 +30,18 @@ class Stage1Pipeline:
         path: str | Path,
         output_dir: str | Path | None = None,
         closing_radius: int = 5,
+        threshold: float | None = None,
     ) -> Stage1Result:
         mri_volume = self._loader.load(path)
-        segmentation_mask = self._segmenter.segment(mri_volume, closing_radius=closing_radius)
+        segmentation_mask = self._segmenter.segment(
+            mri_volume, closing_radius=closing_radius, threshold=threshold
+        )
         raw_mesh = self._extractor.extract(segmentation_mask, mri_volume.affine)
         mesh = raw_mesh
         if self._cleaner is not None:
-            mesh = self._cleaner.clean(mesh)
+            mesh = self._cleaner.clean(
+                mesh, mask=segmentation_mask, affine=mri_volume.affine
+            )
         if self._smoother is not None:
             mesh = self._smoother.smooth(mesh)
         result = Stage1Result(
