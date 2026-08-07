@@ -19,3 +19,6 @@ env/
 CMakeLists.txt
 # For me, because I'm using pyenv
 .python-version
+
+# Research scratch space
+research/
