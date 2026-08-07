@@ -18,8 +18,9 @@ class TrimeshCleaner:
         )
         trimesh_mesh.process(validate=True)
         trimesh_mesh = cast(trimesh.Trimesh, trimesh_mesh.subdivide_to_size(max_edge=5.0))
-        if len(trimesh_mesh.split()) > 1:
-            main_body = _keep_largest_component(trimesh_mesh)
+        components = trimesh_mesh.split(only_watertight=False)
+        if len(components) > 1:
+            main_body = _keep_largest_component(components)
             return ScalpMesh(
                 vertices=np.asarray(main_body.vertices, dtype=np.float64),
                 faces=np.asarray(main_body.faces, dtype=np.int64),
@@ -30,6 +31,5 @@ class TrimeshCleaner:
         )
 
 
-def _keep_largest_component(trimesh_mesh: trimesh.Trimesh) -> trimesh.Trimesh:
-    components = trimesh_mesh.split()
+def _keep_largest_component(components: list[trimesh.Trimesh]) -> trimesh.Trimesh:
     return max(components, key=lambda component: len(component.vertices))
