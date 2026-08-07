@@ -40,7 +40,7 @@ class OtsuHeadSegmenter:
         connected_components: np.ndarray, background_label: int
     ) -> int:
         labels, counts = np.unique(connected_components, return_counts=True)
-        label_to_count = dict(zip(labels, counts))
+        label_to_count = dict(zip(labels, counts, strict=False))
         label_to_count.pop(background_label, None)
         largest_label = max(
             label_to_count, key=lambda component_label: label_to_count[component_label]

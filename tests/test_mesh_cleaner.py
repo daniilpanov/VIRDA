@@ -137,8 +137,7 @@ class TestRemoveInternalFaces:
         cleaned = TrimeshCleaner(
             internal_face_method="ray", internal_face_region=None
         ).clean(mesh)
-        outer_after = int(
-            (np.linalg.norm(cleaned.vertices[cleaned.faces].mean(axis=1) - center, axis=1) > 20).sum()
-        )
+        face_centers = cleaned.vertices[cleaned.faces].mean(axis=1)
+        outer_after = int((np.linalg.norm(face_centers - center, axis=1) > 20).sum())
 
         assert outer_after > outer_before * 0.9

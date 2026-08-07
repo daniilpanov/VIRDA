@@ -1,7 +1,7 @@
 import sys
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import numpy as np
 from pydantic_settings import BaseSettings
@@ -9,6 +9,8 @@ from scipy.spatial import cKDTree
 
 from virda.io.exporter.json_io import save_config, save_fiducials, save_json
 from virda.io.exporter.ply_exporter import export_ply
+from virda.io.qc import run_qc
+from virda.io.qc.geometry import fiducials_world_coordinates
 from virda.models.ese_config import ESEConfig
 from virda.models.fiducial import Fiducial
 from virda.models.scalp_mesh import ScalpMesh
@@ -27,6 +29,7 @@ class Stage1Exporter:
         self._settings = settings
         self._ese_config = ese_config
         self._skip_fiducials = skip_fiducials
+        self._qc_html = bool(getattr(settings, "qc_html", False))
 
     def export(self, result: Stage1Result, output_dir: str | Path) -> Path:
         project_dir = Path(output_dir) / "patient_project"
@@ -57,6 +60,7 @@ class Stage1Exporter:
             ),
         )
         save_config(project_dir / "pipeline_config.json", self._pipeline_config())
+        run_qc(result, project_dir, with_html=self._qc_html)
         return project_dir
 
     def _pipeline_config(self) -> dict[str, Any]:
@@ -76,7 +80,7 @@ def fiducial_qc(
         return {"checks": checks, "tolerance_mm": tolerance_mm, "warnings": warnings}
     tree = cKDTree(_mesh_world_vertices(result))
     for fiducial in fiducials:
-        world = _fiducial_world_coordinates(fiducial, result)
+        world = fiducials_world_coordinates([fiducial], result.mri_volume.affine)[0]
         distance = float(tree.query(world, k=1)[0])
         checks.append(
             {
@@ -91,14 +95,6 @@ def fiducial_qc(
                 f"(tolerance {tolerance_mm} mm)"
             )
     return {"checks": checks, "tolerance_mm": tolerance_mm, "warnings": warnings}
-
-
-def _fiducial_world_coordinates(fiducial: Fiducial, result: Stage1Result) -> np.ndarray:
-    coordinates = np.asarray(fiducial.coordinates, dtype=np.float64)
-    if fiducial.coordinate_system == "voxel":
-        affine = result.mri_volume.affine
-        return cast(np.ndarray, coordinates @ affine[:3, :3].T + affine[:3, 3])
-    return coordinates
 
 
 def _mesh_world_vertices(result: Stage1Result) -> np.ndarray:
