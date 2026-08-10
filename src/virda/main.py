@@ -45,9 +45,13 @@ def run(
         min_component_vertices=settings.cleaner_min_vertices,
         merge_digits=settings.cleaner_merge_digits,
         remove_internal_faces=settings.remove_internal_faces,
+        internal_face_method=settings.internal_face_method,
         internal_face_wide_mm=settings.internal_face_wide_mm,
         internal_face_seed_mm=settings.internal_face_seed_mm,
         internal_face_flood_mm=settings.internal_face_flood_mm,
+        internal_face_seed_depth_mm=settings.internal_face_seed_depth_mm,
+        internal_face_flood_depth_mm=settings.internal_face_flood_depth_mm,
+        internal_face_ray_length_mm=settings.internal_face_ray_length_mm,
     )
 
     smoother: MeshSmoother

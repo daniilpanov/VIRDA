@@ -110,6 +110,10 @@ class TestGeodesicInternalFaces:
         with pytest.raises(ValueError, match="segmentation mask"):
             TrimeshCleaner().clean(mesh)
 
+    def test_invalid_method_raises(self) -> None:
+        with pytest.raises(ValueError, match="internal_face_method"):
+            TrimeshCleaner(internal_face_method="marching")
+
 
 class TestInternalFaceMask:
     def test_empty_mesh_returns_empty_mask(self) -> None:
