@@ -1,14 +1,23 @@
+import json
 from pathlib import Path
+from typing import cast
 
 import nibabel as nib
 import numpy as np
 import pytest
+import trimesh
+from pydantic_settings import BaseSettings
 
+from virda.io.exporter.stage1_exporter import Stage1Exporter
 from virda.io.loader.nifti_loader import NiftiLoader
+<<<<<<< HEAD
 from virda.mesh.air_depth import AirDepthCleaner
 from virda.mesh.cleaners import LargestComponentCleaner, MergeCleaner
 from virda.mesh.contracts import MeshCleaner
 from virda.mesh.hole_fill import HoleFillCleaner
+from virda.models.ese_config import ESEConfig
+from virda.models.fiducial import Fiducial
+>>>>>>> 8197fff (feat(pipelines): export stage1 artifacts to patient_project)
 from virda.models.stage1_result import Stage1Result
 from virda.pipelines.stage1 import Stage1Pipeline
 from virda.segmentation.head_segmenter import OtsuHeadSegmenter
@@ -74,3 +83,66 @@ class TestStage1Pipeline:
 
         assert isinstance(result, Stage1Result)
         assert result.mesh.vertices.shape[0] > 0
+
+    def test_run_with_output_dir_exports_artifacts(
+        self, synthetic_nifti_path: Path, tmp_path: Path
+    ) -> None:
+        class DummySettings(BaseSettings):
+            closing_radius: int = 5
+            smoother_iterations: int = 10
+
+        fiducial = Fiducial(
+            fiducial_id="NAS",
+            name="nasion",
+            coordinates=np.array([10.0, 10.0, 10.0]),
+            coordinate_system="world",
+        )
+        exporter = Stage1Exporter(
+            settings=DummySettings(),
+            ese_config=ESEConfig(ese_offset_mm=4.0),
+            fiducials=[fiducial],
+        )
+        pipeline = Stage1Pipeline(
+            loader=NiftiLoader(),
+            segmenter=OtsuHeadSegmenter(),
+            cleaners=[MergeCleaner(), LargestComponentCleaner()],
+            exporter=exporter,
+        )
+
+        result = pipeline.run(synthetic_nifti_path, output_dir=tmp_path, closing_radius=0)
+
+        project_dir = tmp_path / "patient_project"
+        assert project_dir.is_dir()
+
+        mesh_path = project_dir / "mesh.ply"
+        assert mesh_path.is_file()
+        loaded_mesh = cast(trimesh.Trimesh, trimesh.load(mesh_path))
+        np.testing.assert_allclose(loaded_mesh.vertices, result.mesh.vertices)
+        np.testing.assert_allclose(loaded_mesh.faces, result.mesh.faces)
+
+        stage1_payload = json.loads(
+            (project_dir / "stage1_result.json").read_text(encoding="utf-8")
+        )
+        np.testing.assert_allclose(np.asarray(stage1_payload["mri_volume"]["affine"]), np.eye(4))
+        assert stage1_payload["mri_volume"]["spacing"] == [1.0, 1.0, 1.0]
+        assert stage1_payload["mri_volume"]["shape"] == [20, 20, 20]
+
+        config_payload = json.loads(
+            (project_dir / "pipeline_config.json").read_text(encoding="utf-8")
+        )
+        assert config_payload["ese"]["ese_offset_mm"] == 4.0
+        assert config_payload["closing_radius"] == 5
+
+        fiducials_payload = json.loads((project_dir / "fiducials.json").read_text(encoding="utf-8"))
+        assert fiducials_payload["fiducials"][0]["fiducial_id"] == "NAS"
+
+    def test_run_with_output_dir_without_exporter_raises(
+        self, synthetic_nifti_path: Path, tmp_path: Path
+    ) -> None:
+        pipeline = Stage1Pipeline(
+            loader=NiftiLoader(),
+            segmenter=OtsuHeadSegmenter(),
+        )
+
+        with pytest.raises(ValueError, match="exporter"):
+            pipeline.run(synthetic_nifti_path, output_dir=tmp_path, closing_radius=0)
