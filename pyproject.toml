@@ -11,7 +11,7 @@ dependencies = [
     "trimesh>=4.0",  # for
     "tqdm>=4.66",  # for progress visualization
     "pydantic>=2.9",  # core package
-    "pydantic-settings>=2.14.2",
+    "pydantic-settings>=2.15.0",
 ]
 
 [project.optional-dependencies]
