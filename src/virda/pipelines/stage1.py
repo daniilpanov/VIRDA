@@ -1,9 +1,11 @@
 from pathlib import Path
 
+from virda.fiducials.provider import FiducialProvider
 from virda.io.exporter.contracts import Exporter
 from virda.io.loader.contracts import MRILoader
 from virda.mesh.contracts import MeshCleaner, MeshExtractor, MeshSmoother
 from virda.mesh.mesh_extractor import MarchingCubesExtractor
+from virda.models.fiducial import Fiducial
 from virda.models.stage1_result import Stage1Result
 from virda.segmentation.contracts import HeadSegmenter
 
@@ -17,6 +19,7 @@ class Stage1Pipeline:
         cleaner: MeshCleaner | None = None,
         smoother: MeshSmoother | None = None,
         exporter: Exporter | None = None,
+        fiducial_provider: FiducialProvider | None = None,
     ):
         self._loader = loader
         self._segmenter = segmenter
@@ -24,6 +27,7 @@ class Stage1Pipeline:
         self._cleaner = cleaner
         self._smoother = smoother
         self._exporter = exporter
+        self._fiducial_provider = fiducial_provider
 
     def run(
         self,
@@ -42,10 +46,14 @@ class Stage1Pipeline:
             mesh = self._cleaner.clean(mesh, mask=segmentation_mask, affine=mri_volume.affine)
         if self._smoother is not None:
             mesh = self._smoother.smooth(mesh)
+        fiducials: list[Fiducial] = []
+        if self._fiducial_provider is not None:
+            fiducials = self._fiducial_provider.fiducials(mesh)
         result = Stage1Result(
             mri_volume=mri_volume,
             segmentation_mask=segmentation_mask,
             mesh=mesh,
+            fiducials=fiducials,
         )
         if output_dir is not None:
             if self._exporter is None:
