@@ -52,6 +52,8 @@ def run(
         internal_face_seed_depth_mm=settings.internal_face_seed_depth_mm,
         internal_face_flood_depth_mm=settings.internal_face_flood_depth_mm,
         internal_face_ray_length_mm=settings.internal_face_ray_length_mm,
+        fill_small_holes=settings.fill_small_holes,
+        fill_small_holes_max_mm=settings.fill_small_holes_max_mm,
     )
 
     smoother: MeshSmoother

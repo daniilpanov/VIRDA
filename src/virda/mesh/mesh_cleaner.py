@@ -4,6 +4,7 @@ import numpy as np
 import trimesh
 
 from virda.mesh.air_depth import connected_components_containing_seeds, internal_face_mask
+from virda.mesh.hole_fill import fill_small_boundary_holes
 from virda.models.scalp_mesh import ScalpMesh
 
 # Region in world mm where internal (cavity) walls can occur: the facial block.
@@ -35,6 +36,8 @@ class TrimeshCleaner:
         internal_face_region: (
             tuple[tuple[float, float], tuple[float, float], tuple[float, float]] | None
         ) = DEFAULT_FACE_REGION,
+        fill_small_holes: bool = True,
+        fill_small_holes_max_mm: float = 15.0,
     ) -> None:
         if internal_face_method not in _INTERNAL_FACE_METHODS:
             raise ValueError(
@@ -52,6 +55,8 @@ class TrimeshCleaner:
         self._internal_face_flood_depth_mm = internal_face_flood_depth_mm
         self._internal_face_ray_length_mm = internal_face_ray_length_mm
         self._internal_face_region = internal_face_region
+        self._fill_small_holes = fill_small_holes
+        self._fill_small_holes_max_mm = fill_small_holes_max_mm
 
     def clean(
         self,
@@ -70,6 +75,9 @@ class TrimeshCleaner:
             if remove_mask.any():
                 trimesh_mesh.update_faces(~remove_mask)
                 trimesh_mesh.process(validate=True)
+                if self._fill_small_holes:
+                    fill_small_boundary_holes(trimesh_mesh, self._fill_small_holes_max_mm)
+                    trimesh_mesh.process(validate=True)
         trimesh_mesh = cast(trimesh.Trimesh, trimesh_mesh.subdivide_to_size(max_edge=5.0))
         components = trimesh_mesh.split(only_watertight=False)
         if len(components) > 1:

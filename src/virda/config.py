@@ -23,6 +23,8 @@ class VirdaSettings(BaseSettings):
     internal_face_seed_depth_mm: float = 30.0
     internal_face_flood_depth_mm: float = 8.0
     internal_face_ray_length_mm: float = 90.0
+    fill_small_holes: bool = True
+    fill_small_holes_max_mm: float = 15.0
 
     smoother_type: str = "laplacian"
     smoother_iterations: int = 5
