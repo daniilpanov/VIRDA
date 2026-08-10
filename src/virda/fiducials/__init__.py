@@ -1,0 +1,1 @@
+"""Fiducial detection and providers."""

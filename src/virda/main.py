@@ -3,7 +3,11 @@ from collections.abc import Callable
 from pathlib import Path
 
 from virda.config import VirdaSettings, get_virda_settings
-from virda.io.exporter.json_io import load_fiducials
+from virda.fiducials.provider import (
+    AutoFiducialProvider,
+    FiducialProvider,
+    ManualFiducialProvider,
+)
 from virda.io.exporter.stage1_exporter import Stage1Exporter
 from virda.io.loader.nifti_loader import NiftiLoader
 from virda.mesh.air_depth import AirDepthCleaner
@@ -13,7 +17,6 @@ from virda.mesh.hole_fill import HoleFillCleaner
 from virda.mesh.laplacian_smoother import LaplacianSmoother
 from virda.mesh.taubin_smoother import TaubinSmoother
 from virda.models.ese_config import ESEConfig
-from virda.models.fiducial import Fiducial
 from virda.models.stage1_result import Stage1Result
 from virda.pipelines.stage1 import Stage1Pipeline
 from virda.segmentation.head_segmenter import OtsuHeadSegmenter
@@ -56,8 +59,10 @@ def run(
     resolved_fiducials_path = fiducials_path or settings.fiducials_path
     resolved_skip_fiducials = skip_fiducials or settings.skip_fiducials
 
-    fiducials = _load_or_require_fiducials(
-        resolved_fiducials_path, skip_fiducials=resolved_skip_fiducials
+    fiducial_provider = _build_fiducial_provider(
+        resolved_fiducials_path,
+        skip_fiducials=resolved_skip_fiducials,
+        auto_detect=settings.auto_detect_fiducials,
     )
 
     loader = NiftiLoader()
@@ -85,7 +90,6 @@ def run(
             ese_offset_mm=settings.ese_offset_mm,
             ese_reference=settings.ese_reference,
         ),
-        fiducials=fiducials,
         skip_fiducials=resolved_skip_fiducials,
     )
 
@@ -95,6 +99,7 @@ def run(
         cleaners=cleaners,
         smoother=smoother,
         exporter=exporter,
+        fiducial_provider=fiducial_provider,
     )
     return pipeline.run(
         resolved_path,
@@ -104,20 +109,18 @@ def run(
     )
 
 
-def _load_or_require_fiducials(
-    fiducials_path: str | Path | None, skip_fiducials: bool
-) -> list[Fiducial]:
+def _build_fiducial_provider(
+    fiducials_path: str | Path | None,
+    skip_fiducials: bool,
+    auto_detect: bool,
+) -> FiducialProvider:
     if skip_fiducials:
-        return []
-    if fiducials_path is None:
-        raise ValueError(
-            "No fiducials provided. Pass --fiducials_path (or set VIRDA_FIDUCIALS_PATH), "
-            "or use --skip_fiducials to run without fiducial-dependent steps."
-        )
-    fiducials = load_fiducials(Path(fiducials_path))
-    if not fiducials:
-        raise ValueError(f"No fiducials found in {fiducials_path}")
-    return fiducials
+        return ManualFiducialProvider(None, skip=True)
+    if fiducials_path is not None:
+        return ManualFiducialProvider(Path(fiducials_path))
+    if auto_detect:
+        return AutoFiducialProvider()
+    return ManualFiducialProvider(None)
 
 
 _BOOL_VALUES = {"true", "false", "True", "False", "1", "0"}

@@ -16,6 +16,7 @@ class VirdaSettings(BaseSettings):
 
     fiducials_path: str | None = None
     skip_fiducials: bool = False
+    auto_detect_fiducials: bool = False
 
     closing_radius: int = 5
     threshold: float | None = None

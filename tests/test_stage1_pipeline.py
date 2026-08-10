@@ -8,16 +8,16 @@ import pytest
 import trimesh
 from pydantic_settings import BaseSettings
 
+from virda.fiducials.provider import ManualFiducialProvider
+from virda.io.exporter.json_io import save_fiducials
 from virda.io.exporter.stage1_exporter import Stage1Exporter
 from virda.io.loader.nifti_loader import NiftiLoader
-<<<<<<< HEAD
 from virda.mesh.air_depth import AirDepthCleaner
 from virda.mesh.cleaners import LargestComponentCleaner, MergeCleaner
 from virda.mesh.contracts import MeshCleaner
 from virda.mesh.hole_fill import HoleFillCleaner
 from virda.models.ese_config import ESEConfig
 from virda.models.fiducial import Fiducial
->>>>>>> 8197fff (feat(pipelines): export stage1 artifacts to patient_project)
 from virda.models.stage1_result import Stage1Result
 from virda.pipelines.stage1 import Stage1Pipeline
 from virda.segmentation.head_segmenter import OtsuHeadSegmenter
@@ -97,16 +97,19 @@ class TestStage1Pipeline:
             coordinates=np.array([10.0, 10.0, 10.0]),
             coordinate_system="world",
         )
+        fiducials_path = tmp_path / "fiducials.json"
+        save_fiducials(fiducials_path, [fiducial])
+        fiducial_provider = ManualFiducialProvider(fiducials_path)
         exporter = Stage1Exporter(
             settings=DummySettings(),
             ese_config=ESEConfig(ese_offset_mm=4.0),
-            fiducials=[fiducial],
         )
         pipeline = Stage1Pipeline(
             loader=NiftiLoader(),
             segmenter=OtsuHeadSegmenter(),
             cleaners=[MergeCleaner(), LargestComponentCleaner()],
             exporter=exporter,
+            fiducial_provider=fiducial_provider,
         )
 
         result = pipeline.run(synthetic_nifti_path, output_dir=tmp_path, closing_radius=0)
@@ -135,6 +138,29 @@ class TestStage1Pipeline:
 
         fiducials_payload = json.loads((project_dir / "fiducials.json").read_text(encoding="utf-8"))
         assert fiducials_payload["fiducials"][0]["fiducial_id"] == "NAS"
+
+    def test_run_without_fiducials_raises(self, synthetic_nifti_path: Path) -> None:
+        pipeline = Stage1Pipeline(
+            loader=NiftiLoader(),
+            segmenter=OtsuHeadSegmenter(),
+            cleaners=[MergeCleaner(), LargestComponentCleaner()],
+            fiducial_provider=ManualFiducialProvider(None),
+        )
+
+        with pytest.raises(ValueError, match="fiducials"):
+            pipeline.run(synthetic_nifti_path, closing_radius=0)
+
+    def test_run_with_skip_fiducials_returns_empty(self, synthetic_nifti_path: Path) -> None:
+        pipeline = Stage1Pipeline(
+            loader=NiftiLoader(),
+            segmenter=OtsuHeadSegmenter(),
+            cleaners=[MergeCleaner(), LargestComponentCleaner()],
+            fiducial_provider=ManualFiducialProvider(None, skip=True),
+        )
+
+        result = pipeline.run(synthetic_nifti_path, closing_radius=0)
+
+        assert result.fiducials == []
 
     def test_run_with_output_dir_without_exporter_raises(
         self, synthetic_nifti_path: Path, tmp_path: Path
