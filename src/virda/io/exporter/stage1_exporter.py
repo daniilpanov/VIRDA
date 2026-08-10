@@ -3,6 +3,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from virda.config import VirdaSettings
 from virda.io.exporter.json_io import save_config, save_fiducials, save_json
 from virda.io.exporter.ply_exporter import export_ply
@@ -26,6 +27,8 @@ class Stage1Exporter:
         project_dir = Path(output_dir) / "patient_project"
         project_dir.mkdir(parents=True, exist_ok=True)
         export_ply(project_dir / "mesh.ply", result.mesh)
+        if result.mesh.face_adjacency is not None:
+            np.save(project_dir / "scalp_face_adjacency.npy", result.mesh.face_adjacency)
 
         fiducials = result.fiducials
         if self._skip_fiducials:
@@ -73,6 +76,9 @@ def _stage1_result_to_dict(
         fiducials_section = {"count": fiducial_count}
 
     mri = result.mri_volume
+    adjacency_edges = (
+        int(result.mesh.face_adjacency.shape[0]) if result.mesh.face_adjacency is not None else None
+    )
     return {
         "mri_volume": {
             "shape": list(mri.data.shape),
@@ -88,6 +94,8 @@ def _stage1_result_to_dict(
         "mesh": {
             "n_vertices": int(result.mesh.vertices.shape[0]),
             "n_faces": int(result.mesh.faces.shape[0]),
+            "n_adjacency_edges": adjacency_edges,
+            "coordinate_system": result.mesh.coordinate_system,
             "vertices_min": result.mesh.vertices.min(axis=0).tolist(),
             "vertices_max": result.mesh.vertices.max(axis=0).tolist(),
         },
