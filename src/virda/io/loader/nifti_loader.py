@@ -38,4 +38,5 @@ class NiftiLoader:
             affine=voxel_to_world_affine,
             spacing=voxel_spacing_mm,
             orientation=aff2axcodes(nifti_image.affine),
+            metadata={"source": str(resolved_path)},
         )

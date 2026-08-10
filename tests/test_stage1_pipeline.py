@@ -6,8 +6,8 @@ import nibabel as nib
 import numpy as np
 import pytest
 import trimesh
-from pydantic_settings import BaseSettings
 
+from virda.config import VirdaSettings
 from virda.fiducials.provider import ManualFiducialProvider
 from virda.io.exporter.json_io import save_fiducials
 from virda.io.exporter.stage1_exporter import Stage1Exporter
@@ -18,26 +18,6 @@ from virda.models.fiducial import Fiducial
 from virda.models.stage1_result import Stage1Result
 from virda.pipelines.stage1 import Stage1Pipeline
 from virda.segmentation.head_segmenter import OtsuHeadSegmenter
-
-
-@pytest.fixture
-def synthetic_nifti_path(tmp_path: Path) -> Path:
-    volume_shape = (20, 20, 20)
-    center = np.array([10, 10, 10])
-    sphere_radius = 8
-    grid_indices = np.indices(volume_shape)
-    squared_distance = np.sum((grid_indices - center.reshape(-1, 1, 1, 1)) ** 2, axis=0)
-    is_inside_sphere = squared_distance <= sphere_radius**2
-
-    image_data = np.zeros(volume_shape, dtype=np.float32)
-    image_data[is_inside_sphere] = 100.0
-
-    voxel_to_world_affine = np.eye(4)
-
-    nifti_image = nib.Nifti1Image(image_data, voxel_to_world_affine)
-    nifti_file_path = tmp_path / "synthetic.nii.gz"
-    nib.save(nifti_image, nifti_file_path)
-    return nifti_file_path
 
 
 class TestStage1Pipeline:
@@ -79,7 +59,7 @@ class TestStage1Pipeline:
     def test_run_with_output_dir_exports_artifacts(
         self, synthetic_nifti_path: Path, tmp_path: Path
     ) -> None:
-        class DummySettings(BaseSettings):
+        class DummySettings(VirdaSettings):
             closing_radius: int = 5
             smoother_iterations: int = 10
 
@@ -93,7 +73,7 @@ class TestStage1Pipeline:
         save_fiducials(fiducials_path, [fiducial])
         fiducial_provider = ManualFiducialProvider(fiducials_path)
         exporter = Stage1Exporter(
-            settings=DummySettings(),
+            settings=DummySettings(_cli_parse_args=False),  # type: ignore[call-arg]
             ese_config=ESEConfig(ese_offset_mm=4.0),
         )
         pipeline = Stage1Pipeline(
@@ -109,13 +89,13 @@ class TestStage1Pipeline:
         project_dir = tmp_path / "patient_project"
         assert project_dir.is_dir()
 
-        mesh_path = project_dir / "mesh.ply"
+        mesh_path = project_dir / "mesh" / "scalp.ply"
         assert mesh_path.is_file()
         loaded_mesh = cast(trimesh.Trimesh, trimesh.load(mesh_path))
         np.testing.assert_allclose(loaded_mesh.vertices, result.mesh.vertices)
         np.testing.assert_allclose(loaded_mesh.faces, result.mesh.faces)
 
-        adjacency_path = project_dir / "scalp_face_adjacency.npy"
+        adjacency_path = project_dir / "mesh" / "scalp_face_adjacency.npy"
         assert adjacency_path.is_file()
         adjacency = np.load(adjacency_path)
         assert adjacency.ndim == 2 and adjacency.shape[1] == 2
@@ -128,16 +108,43 @@ class TestStage1Pipeline:
         assert stage1_payload["mri_volume"]["spacing"] == [1.0, 1.0, 1.0]
         assert stage1_payload["mri_volume"]["shape"] == [20, 20, 20]
         assert stage1_payload["mesh"]["n_adjacency_edges"] == adjacency.shape[0]
-        assert stage1_payload["mesh"]["coordinate_system"] == "world"
 
         config_payload = json.loads(
-            (project_dir / "pipeline_config.json").read_text(encoding="utf-8")
+            (project_dir / "config" / "pipeline_config.json").read_text(encoding="utf-8")
         )
         assert config_payload["ese"]["ese_offset_mm"] == 4.0
         assert config_payload["closing_radius"] == 5
 
-        fiducials_payload = json.loads((project_dir / "fiducials.json").read_text(encoding="utf-8"))
+        fiducials_payload = json.loads(
+            (project_dir / "fiducials" / "fiducials.json").read_text(encoding="utf-8")
+        )
         assert fiducials_payload["fiducials"][0]["fiducial_id"] == "NAS"
+
+        mask_path = project_dir / "segmentation" / "head_mask.nii.gz"
+        assert mask_path.is_file()
+        loaded_mask = nib.load(mask_path)
+        assert isinstance(loaded_mask, nib.Nifti1Image)
+        np.testing.assert_allclose(loaded_mask.affine, np.eye(4))
+        assert loaded_mask.shape == (20, 20, 20)
+        stored_voxels = int(np.asanyarray(loaded_mask.dataobj).astype(bool).sum())
+        assert stored_voxels == int(result.segmentation_mask.sum())
+
+        provenance = json.loads(
+            (project_dir / "input_mri" / "provenance.json").read_text(encoding="utf-8")
+        )
+        assert provenance["shape"] == [20, 20, 20]
+        assert provenance["source"] is not None
+
+        report = json.loads(
+            (project_dir / "quality_control" / "report.json").read_text(encoding="utf-8")
+        )
+        assert "status" in report
+        assert any(check["name"] == "mri_metadata" for check in report["checks"])
+        assert (project_dir / "logs" / "stage1.log").is_file()
+        assert (project_dir / "quality_control" / "qc_overlay_sagittal.png").is_file()
+        assert (project_dir / "quality_control" / "qc_overlay_coronal.png").is_file()
+        assert (project_dir / "quality_control" / "qc_overlay_axial.png").is_file()
+        assert (project_dir / "quality_control" / "qc_3d_front.png").is_file()
 
     def test_run_without_fiducials_raises(self, synthetic_nifti_path: Path) -> None:
         pipeline = Stage1Pipeline(
