@@ -38,6 +38,7 @@ class TrimeshCleaner:
         ) = DEFAULT_FACE_REGION,
         fill_small_holes: bool = True,
         fill_small_holes_max_mm: float = 15.0,
+        subdivide_max_edge: float | None = None,
     ) -> None:
         if internal_face_method not in _INTERNAL_FACE_METHODS:
             raise ValueError(
@@ -57,6 +58,7 @@ class TrimeshCleaner:
         self._internal_face_region = internal_face_region
         self._fill_small_holes = fill_small_holes
         self._fill_small_holes_max_mm = fill_small_holes_max_mm
+        self._subdivide_max_edge = subdivide_max_edge
 
     def clean(
         self,
@@ -78,7 +80,11 @@ class TrimeshCleaner:
                 if self._fill_small_holes:
                     fill_small_boundary_holes(trimesh_mesh, self._fill_small_holes_max_mm)
                     trimesh_mesh.process(validate=True)
-        trimesh_mesh = cast(trimesh.Trimesh, trimesh_mesh.subdivide_to_size(max_edge=5.0))
+        if self._subdivide_max_edge is not None:
+            trimesh_mesh = cast(
+                trimesh.Trimesh,
+                trimesh_mesh.subdivide_to_size(max_edge=self._subdivide_max_edge),
+            )
         components = trimesh_mesh.split(only_watertight=False)
         if len(components) > 1:
             main_body = _keep_largest_component(components)

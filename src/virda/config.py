@@ -25,6 +25,7 @@ class VirdaSettings(BaseSettings):
     internal_face_ray_length_mm: float = 90.0
     fill_small_holes: bool = True
     fill_small_holes_max_mm: float = 15.0
+    subdivide_max_edge: float | None = None
 
     smoother_type: str = "laplacian"
     smoother_iterations: int = 5

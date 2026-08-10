@@ -54,6 +54,7 @@ def run(
         internal_face_ray_length_mm=settings.internal_face_ray_length_mm,
         fill_small_holes=settings.fill_small_holes,
         fill_small_holes_max_mm=settings.fill_small_holes_max_mm,
+        subdivide_max_edge=settings.subdivide_max_edge,
     )
 
     smoother: MeshSmoother
