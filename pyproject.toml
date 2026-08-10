@@ -28,6 +28,10 @@ dev = [
     "pre-commit>=3.8",
     "scipy-stubs>=1.14",  # for strict mypy
 ]
+qc = [
+    "matplotlib>=3.11.1",
+    "pyvista>=0.43",
+]
 research = [
     "matplotlib>=3.11.1",
 ]
