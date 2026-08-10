@@ -69,3 +69,8 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 pythonpath = ["src"]
 addopts = "-v --cov=src/virda --cov-report=term-missing"
+
+[dependency-groups]
+dev = [
+    "scipy-stubs>=1.18.0.1",
+]

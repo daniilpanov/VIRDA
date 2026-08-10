@@ -15,6 +15,11 @@ class VirdaSettings(BaseSettings):
     cleaner_min_vertices: int = 100
     cleaner_merge_digits: int = 7
 
+    remove_internal_faces: bool = True
+    internal_face_wide_mm: float = 10.0
+    internal_face_seed_mm: float = 20.0
+    internal_face_flood_mm: float = 12.0
+
     smoother_type: str = "laplacian"
     smoother_iterations: int = 5
     smoother_lamb: float = 0.5

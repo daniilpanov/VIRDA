@@ -19,7 +19,7 @@ def clean_sphere_mesh() -> ScalpMesh:
 
 class TestTrimeshCleaner:
     def test_clean_preserves_valid_mesh(self, clean_sphere_mesh: ScalpMesh) -> None:
-        cleaner = TrimeshCleaner()
+        cleaner = TrimeshCleaner(remove_internal_faces=False)
         cleaned = cleaner.clean(clean_sphere_mesh)
 
         assert isinstance(cleaned, ScalpMesh)
@@ -38,7 +38,7 @@ class TestTrimeshCleaner:
 
         corrupted_mesh = ScalpMesh(vertices=combined_vertices, faces=combined_faces)
 
-        cleaner = TrimeshCleaner(min_component_vertices=50)
+        cleaner = TrimeshCleaner(min_component_vertices=50, remove_internal_faces=False)
         cleaned = cleaner.clean(corrupted_mesh)
 
         original_vertex_count = clean_sphere_mesh.vertices.shape[0]
@@ -59,7 +59,7 @@ class TestTrimeshCleaner:
         faces = np.array([[0, 1, 2], [3, 4, 5]])
         mesh = ScalpMesh(vertices=vertices, faces=faces)
 
-        cleaner = TrimeshCleaner()
+        cleaner = TrimeshCleaner(remove_internal_faces=False)
         cleaned = cleaner.clean(mesh)
 
         assert cleaned.faces.shape[0] <= 2

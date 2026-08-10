@@ -44,6 +44,10 @@ def run(
     cleaner = TrimeshCleaner(
         min_component_vertices=settings.cleaner_min_vertices,
         merge_digits=settings.cleaner_merge_digits,
+        remove_internal_faces=settings.remove_internal_faces,
+        internal_face_wide_mm=settings.internal_face_wide_mm,
+        internal_face_seed_mm=settings.internal_face_seed_mm,
+        internal_face_flood_mm=settings.internal_face_flood_mm,
     )
 
     smoother: MeshSmoother
