@@ -80,7 +80,11 @@ def run(
 
     exporter = Stage1Exporter(
         settings=settings,
-        ese_config=ESEConfig(),
+        ese_config=ESEConfig(
+            n_electrodes=settings.n_electrodes,
+            ese_offset_mm=settings.ese_offset_mm,
+            ese_reference=settings.ese_reference,
+        ),
         fiducials=fiducials,
         skip_fiducials=resolved_skip_fiducials,
     )

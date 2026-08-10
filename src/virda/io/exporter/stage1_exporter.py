@@ -50,7 +50,9 @@ class Stage1Exporter:
         return project_dir
 
     def _pipeline_config(self) -> dict[str, Any]:
-        config: dict[str, Any] = self._settings.model_dump()
+        config: dict[str, Any] = self._settings.model_dump(
+            exclude={"n_electrodes", "ese_offset_mm", "ese_reference"}
+        )
         if self._ese_config is not None:
             config["ese"] = asdict(self._ese_config)
         return config
