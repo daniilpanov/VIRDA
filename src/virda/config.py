@@ -20,6 +20,10 @@ class VirdaSettings(BaseSettings):
     smoother_lamb: float = 0.5
     smoother_nu: float = -0.53
 
+    n_electrodes: int = 67
+    ese_offset_mm: float = 5.0
+    ese_reference: str = "electrode_external_surface"
+
     model_config = SettingsConfigDict(
         cli_parse_args=True,
         env_file=".env",
