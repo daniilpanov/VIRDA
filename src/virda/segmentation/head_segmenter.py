@@ -9,8 +9,13 @@ from virda.models.mri_volume import MRIVolume
 
 
 class OtsuHeadSegmenter:
-    def segment(self, volume: MRIVolume, closing_radius: int = 5) -> np.ndarray:
-        intensity_threshold = threshold_otsu(volume.data)
+    def segment(
+        self,
+        volume: MRIVolume,
+        closing_radius: int = 5,
+        threshold: float | None = None,
+    ) -> np.ndarray:
+        intensity_threshold = threshold if threshold is not None else threshold_otsu(volume.data)
         above_threshold_mask = volume.data > intensity_threshold
 
         connected_components = label(above_threshold_mask)
@@ -33,7 +38,7 @@ class OtsuHeadSegmenter:
         connected_components: np.ndarray, background_label: int
     ) -> int:
         labels, counts = np.unique(connected_components, return_counts=True)
-        label_to_count = dict(zip(labels, counts))
+        label_to_count = dict(zip(labels, counts, strict=False))
         label_to_count.pop(background_label, None)
         largest_label = max(
             label_to_count, key=lambda component_label: label_to_count[component_label]

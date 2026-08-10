@@ -11,6 +11,7 @@ class VirdaSettings(BaseSettings):
     skip_fiducials: bool = False
 
     closing_radius: int = 5
+    threshold: float | None = None
 
     cleaner_min_vertices: int = 100
     cleaner_merge_digits: int = 7
