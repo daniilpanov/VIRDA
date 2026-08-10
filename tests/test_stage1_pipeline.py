@@ -115,12 +115,20 @@ class TestStage1Pipeline:
         np.testing.assert_allclose(loaded_mesh.vertices, result.mesh.vertices)
         np.testing.assert_allclose(loaded_mesh.faces, result.mesh.faces)
 
+        adjacency_path = project_dir / "scalp_face_adjacency.npy"
+        assert adjacency_path.is_file()
+        adjacency = np.load(adjacency_path)
+        assert adjacency.ndim == 2 and adjacency.shape[1] == 2
+        assert adjacency.max() < result.mesh.faces.shape[0]
+
         stage1_payload = json.loads(
             (project_dir / "stage1_result.json").read_text(encoding="utf-8")
         )
         np.testing.assert_allclose(np.asarray(stage1_payload["mri_volume"]["affine"]), np.eye(4))
         assert stage1_payload["mri_volume"]["spacing"] == [1.0, 1.0, 1.0]
         assert stage1_payload["mri_volume"]["shape"] == [20, 20, 20]
+        assert stage1_payload["mesh"]["n_adjacency_edges"] == adjacency.shape[0]
+        assert stage1_payload["mesh"]["coordinate_system"] == "world"
 
         config_payload = json.loads(
             (project_dir / "pipeline_config.json").read_text(encoding="utf-8")
