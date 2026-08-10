@@ -88,14 +88,8 @@ class TrimeshCleaner:
         components = trimesh_mesh.split(only_watertight=False)
         if len(components) > 1:
             main_body = _keep_largest_component(components)
-            return ScalpMesh(
-                vertices=np.asarray(main_body.vertices, dtype=np.float64),
-                faces=np.asarray(main_body.faces, dtype=np.int64),
-            )
-        return ScalpMesh(
-            vertices=np.asarray(trimesh_mesh.vertices, dtype=np.float64),
-            faces=np.asarray(trimesh_mesh.faces, dtype=np.int64),
-        )
+            return _from_trimesh(main_body)
+        return _from_trimesh(trimesh_mesh)
 
     def _internal_face_mask(
         self,
@@ -129,6 +123,15 @@ class TrimeshCleaner:
 
 def _keep_largest_component(components: list[trimesh.Trimesh]) -> trimesh.Trimesh:
     return max(components, key=lambda component: len(component.vertices))
+
+
+def _from_trimesh(mesh: trimesh.Trimesh) -> ScalpMesh:
+    return ScalpMesh(
+        vertices=np.asarray(mesh.vertices, dtype=np.float64),
+        faces=np.asarray(mesh.faces, dtype=np.int64),
+        face_adjacency=np.asarray(mesh.face_adjacency, dtype=np.int64),
+        coordinate_system="world",
+    )
 
 
 def _ray_internal_face_mask(
