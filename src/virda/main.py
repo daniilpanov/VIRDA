@@ -2,6 +2,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from virda.config import VirdaSettings, get_virda_settings
+from virda.io.exporter.stage1_exporter import Stage1Exporter
 from virda.io.loader.nifti_loader import NiftiLoader
 from virda.mesh.air_depth import AirDepthCleaner
 from virda.mesh.cleaners import LargestComponentCleaner, MergeCleaner
@@ -9,6 +10,7 @@ from virda.mesh.contracts import MeshCleaner, MeshSmoother
 from virda.mesh.hole_fill import HoleFillCleaner
 from virda.mesh.laplacian_smoother import LaplacianSmoother
 from virda.mesh.taubin_smoother import TaubinSmoother
+from virda.models.ese_config import ESEConfig
 from virda.models.stage1_result import Stage1Result
 from virda.pipelines.stage1 import Stage1Pipeline
 from virda.segmentation.head_segmenter import OtsuHeadSegmenter
@@ -33,14 +35,19 @@ def build_cleaners(settings: VirdaSettings) -> list[MeshCleaner]:
     return [CLEANER_FACTORIES[name](settings) for name in settings.cleaner_sequence]
 
 
-def run(nifti_path: str | Path | None = None) -> Stage1Result:
+def run(
+    nifti_path: str | Path | None = None,
+    output_dir: str | Path | None = None,
+) -> Stage1Result:
     settings = get_virda_settings()
 
     resolved_path = nifti_path or settings.nifti_path
     if resolved_path is None:
         raise ValueError(
-            "NIfTI path not provided. Pass it as an argument or set the VIRDA_NIFTI_PATH environment variable."
+            "NIfTI path not provided. Pass it as an argument or set the "
+            "NIFTI_PATH environment variable."
         )
+    resolved_output_dir = output_dir or settings.output_dir
 
     loader = NiftiLoader()
     segmenter = OtsuHeadSegmenter()
@@ -60,10 +67,22 @@ def run(nifti_path: str | Path | None = None) -> Stage1Result:
             lamb=settings.smoother_lamb,
         )
 
+    exporter = Stage1Exporter(settings=settings, ese_config=ESEConfig())
+
     pipeline = Stage1Pipeline(
         loader=loader,
         segmenter=segmenter,
         cleaners=cleaners,
         smoother=smoother,
+        exporter=exporter,
     )
-    return pipeline.run(resolved_path, closing_radius=settings.closing_radius)
+    return pipeline.run(
+        resolved_path,
+        output_dir=resolved_output_dir,
+        closing_radius=settings.closing_radius,
+    )
+
+
+if __name__ == "__main__":
+    result = run()
+    print(f"Stage 1 done. Mesh: {result.mesh.vertices.shape[0]} vertices")
