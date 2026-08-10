@@ -100,6 +100,7 @@ def run(
         resolved_path,
         output_dir=resolved_output_dir,
         closing_radius=settings.closing_radius,
+        threshold=settings.threshold,
     )
 
 
