@@ -1,3 +1,4 @@
+import sys
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -16,18 +17,36 @@ class Stage1Exporter:
         settings: VirdaSettings,
         ese_config: ESEConfig | None = None,
         fiducials: list[Fiducial] | None = None,
+        skip_fiducials: bool = False,
     ) -> None:
         self._settings = settings
         self._ese_config = ese_config
         self._fiducials = fiducials or []
+        self._skip_fiducials = skip_fiducials
 
     def export(self, result: Stage1Result, output_dir: str | Path) -> Path:
         project_dir = Path(output_dir) / "patient_project"
         project_dir.mkdir(parents=True, exist_ok=True)
         export_ply(project_dir / "mesh.ply", result.mesh)
-        save_json(project_dir / "stage1_result.json", _stage1_result_to_dict(result))
+
+        if self._skip_fiducials:
+            print(
+                "[info] --skip-fiducials: fiducial-dependent steps disabled "
+                "(fiducials.json not written)",
+                file=sys.stderr,
+            )
+        else:
+            save_fiducials(project_dir / "fiducials.json", self._fiducials)
+
+        save_json(
+            project_dir / "stage1_result.json",
+            _stage1_result_to_dict(
+                result,
+                fiducials=self._fiducials,
+                skipped=self._skip_fiducials,
+            ),
+        )
         save_config(project_dir / "pipeline_config.json", self._pipeline_config())
-        save_fiducials(project_dir / "fiducials.json", self._fiducials)
         return project_dir
 
     def _pipeline_config(self) -> dict[str, Any]:
@@ -37,7 +56,21 @@ class Stage1Exporter:
         return config
 
 
-def _stage1_result_to_dict(result: Stage1Result) -> dict[str, Any]:
+def _stage1_result_to_dict(
+    result: Stage1Result,
+    fiducials: list[Fiducial] | None = None,
+    skipped: bool = False,
+) -> dict[str, Any]:
+    fiducial_count = len(fiducials or [])
+    fiducials_section: dict[str, Any]
+    if skipped:
+        fiducials_section = {
+            "skipped": True,
+            "note": "--skip-fiducials: fiducial-dependent steps disabled",
+        }
+    else:
+        fiducials_section = {"count": fiducial_count}
+
     mri = result.mri_volume
     return {
         "mri_volume": {
@@ -57,4 +90,5 @@ def _stage1_result_to_dict(result: Stage1Result) -> dict[str, Any]:
             "vertices_min": result.mesh.vertices.min(axis=0).tolist(),
             "vertices_max": result.mesh.vertices.max(axis=0).tolist(),
         },
+        "fiducials": fiducials_section,
     }

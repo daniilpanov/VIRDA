@@ -7,6 +7,9 @@ class VirdaSettings(BaseSettings):
     nifti_path: str | None = None
     output_dir: str | None = None
 
+    fiducials_path: str | None = None
+    skip_fiducials: bool = False
+
     closing_radius: int = 5
 
     cleaner_min_vertices: int = 100
