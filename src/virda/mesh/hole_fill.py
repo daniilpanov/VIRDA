@@ -5,6 +5,9 @@ from collections import defaultdict
 import numpy as np
 import trimesh
 
+from virda.mesh.air_depth import from_trimesh, to_trimesh
+from virda.models.scalp_mesh import ScalpMesh
+
 
 def fill_small_boundary_holes(mesh: trimesh.Trimesh, max_perimeter_mm: float = 15.0) -> int:
     """Close small boundary rings of ``mesh`` in place.
@@ -94,3 +97,20 @@ def fill_small_boundary_holes(mesh: trimesh.Trimesh, max_perimeter_mm: float = 1
     mesh.vertices = np.vstack([mesh.vertices, np.asarray(added_vertices)])
     mesh.faces = np.vstack([mesh.faces, np.asarray(added_faces)])
     return filled
+
+
+class HoleFillCleaner:
+    def __init__(self, max_perimeter_mm: float = 15.0) -> None:
+        self._max_perimeter_mm = max_perimeter_mm
+
+    def clean(
+        self,
+        mesh: ScalpMesh,
+        *,
+        mask: np.ndarray | None = None,
+        affine: np.ndarray | None = None,
+    ) -> ScalpMesh:
+        trimesh_mesh = to_trimesh(mesh)
+        fill_small_boundary_holes(trimesh_mesh, self._max_perimeter_mm)
+        trimesh_mesh.process(validate=True)
+        return from_trimesh(trimesh_mesh)

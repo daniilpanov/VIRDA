@@ -3,7 +3,8 @@ from typing import cast
 import numpy as np
 import trimesh
 
-from virda.mesh.hole_fill import fill_small_boundary_holes
+from virda.mesh.contracts import MeshCleaner
+from virda.mesh.hole_fill import HoleFillCleaner, fill_small_boundary_holes
 
 
 def _box_mesh(extents: float = 2.0) -> trimesh.Trimesh:
@@ -45,3 +46,8 @@ class TestFillSmallBoundaryHoles:
         )
 
         assert fill_small_boundary_holes(mesh) == 0
+
+
+class TestHoleFillCleaner:
+    def test_is_mesh_cleaner(self) -> None:
+        assert isinstance(HoleFillCleaner(), MeshCleaner)
