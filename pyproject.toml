@@ -8,10 +8,12 @@ dependencies = [
     "scipy>=1.14",  # core package
     "nibabel>=5.0",  # for NIfTI loader adapter
     "scikit-image>=0.24",  # core package
-    "trimesh>=4.0",  # for
+    "trimesh>=4.0",  # for mesh generation
+    "rtree>=1.0",  # for trimesh ray queries
     "tqdm>=4.66",  # for progress visualization
     "pydantic>=2.9",  # core package
     "pydantic-settings>=2.14.2",
+    "pyyaml>=6.0",  # for YAML settings source
 ]
 
 [project.optional-dependencies]
@@ -24,6 +26,7 @@ dev = [
     "mypy>=2.3.0",
     "ruff>=0.16.0",
     "pre-commit>=3.8",
+    "scipy-stubs>=1.14",  # for strict mypy
 ]
 research = [
     "matplotlib>=3.11.1",
