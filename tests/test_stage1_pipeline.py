@@ -187,3 +187,68 @@ class TestStage1Pipeline:
 
         with pytest.raises(ValueError, match="exporter"):
             pipeline.run(synthetic_nifti_path, output_dir=tmp_path, closing_radius=0)
+
+
+class TestStage1PipelineCutoff:
+    def test_cutoff_skipped_gracefully_when_fiducials_missing(
+        self, synthetic_nifti_path: Path, tmp_path: Path
+    ) -> None:
+        def run_mask(cutoff: bool) -> np.ndarray:
+            pipeline = Stage1Pipeline(
+                loader=NiftiLoader(),
+                segmenter=OtsuHeadSegmenter(),
+                fiducial_provider=ManualFiducialProvider(None, skip=True),
+                seal=True,
+                cutoff=cutoff,
+                cutoff_below_nasion_mm=5.0,
+            )
+            result = pipeline.run(synthetic_nifti_path, closing_radius=0)
+            assert result.fiducials == []
+            return result.segmentation_mask
+
+        np.testing.assert_array_equal(run_mask(cutoff=True), run_mask(cutoff=False))
+
+    def test_cutoff_reuses_anchor_fiducials(
+        self, synthetic_nifti_path: Path, tmp_path: Path
+    ) -> None:
+        fiducials = [
+            Fiducial(
+                fiducial_id="NAS",
+                name="nasion",
+                coordinates=np.array([10.0, 18.0, 10.0]),
+                coordinate_system="world",
+            ),
+            Fiducial(
+                fiducial_id="LPA",
+                name="left",
+                coordinates=np.array([2.0, 12.0, 10.0]),
+                coordinate_system="world",
+            ),
+            Fiducial(
+                fiducial_id="RPA",
+                name="right",
+                coordinates=np.array([18.0, 12.0, 10.0]),
+                coordinate_system="world",
+            ),
+        ]
+        fiducials_path = tmp_path / "fiducials.json"
+        save_fiducials(fiducials_path, fiducials)
+        provider = ManualFiducialProvider(fiducials_path)
+
+        pipeline = Stage1Pipeline(
+            loader=NiftiLoader(),
+            segmenter=OtsuHeadSegmenter(),
+            cleaners=[MergeCleaner(), LargestComponentCleaner()],
+            fiducial_provider=provider,
+            seal=True,
+            cutoff=True,
+            cutoff_below_nasion_mm=5.0,
+        )
+        result = pipeline.run(synthetic_nifti_path, closing_radius=0)
+
+        assert result.mesh.vertices.shape[0] > 0
+        assert len(result.fiducials) == 3
+        assert {f.fiducial_id for f in result.fiducials} == {"NAS", "LPA", "RPA"}
+
+        kept_voxels = np.argwhere(result.segmentation_mask)
+        assert kept_voxels[:, 2].min() >= 5  # material below the plane was cut

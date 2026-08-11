@@ -100,6 +100,10 @@ def run(
         smoother=smoother,
         exporter=exporter,
         fiducial_provider=fiducial_provider,
+        seal=settings.seal_enabled,
+        seal_radius=settings.seal_radius,
+        cutoff=settings.cutoff_enabled,
+        cutoff_below_nasion_mm=settings.cutoff_below_nasion_mm,
     )
     return pipeline.run(
         resolved_path,

@@ -23,6 +23,12 @@ class VirdaSettings(BaseSettings):
     closing_radius: int = 5
     threshold: float | None = None
 
+    seal_enabled: bool = True
+    seal_radius: int = 4
+
+    cutoff_enabled: bool = True
+    cutoff_below_nasion_mm: float = 30.0
+
     cleaner_sequence: list[str] = ["merge", "air_depth", "hole_fill", "largest_component"]
     cleaner_min_vertices: int = 100
     cleaner_merge_digits: int = 7

@@ -1,6 +1,7 @@
+from dataclasses import replace
+
 import numpy as np
 import pytest
-from dataclasses import replace
 
 from virda.mesh.laplacian_smoother import LaplacianSmoother
 from virda.mesh.taubin_smoother import TaubinSmoother
