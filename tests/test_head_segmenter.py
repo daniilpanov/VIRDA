@@ -40,8 +40,8 @@ class TestHeadSegmenter:
     ) -> None:
         segmentation_mask = self.segmenter.segment(sphere_volume, closing_radius=0)
 
-        assert segmentation_mask.shape == (30, 30, 30)
-        assert segmentation_mask.dtype == bool
+        assert segmentation_mask.mask.shape == (30, 30, 30)
+        assert segmentation_mask.mask.dtype == bool
 
     def test_segment_sphere_covers_all_foreground_voxels(self, sphere_volume: MRIVolume) -> None:
         sphere_center = np.array([15, 15, 15])
@@ -52,8 +52,8 @@ class TestHeadSegmenter:
 
         segmentation_mask = self.segmenter.segment(sphere_volume, closing_radius=0)
 
-        assert np.all(segmentation_mask[expected_inside])
-        assert segmentation_mask.sum() == expected_inside.sum()
+        assert np.all(segmentation_mask.mask[expected_inside])
+        assert segmentation_mask.mask.sum() == expected_inside.sum()
 
     def test_segment_sphere_excludes_background(self, sphere_volume: MRIVolume) -> None:
         sphere_center = np.array([15, 15, 15])
@@ -64,7 +64,7 @@ class TestHeadSegmenter:
 
         segmentation_mask = self.segmenter.segment(sphere_volume, closing_radius=0)
 
-        assert not np.any(segmentation_mask[expected_outside])
+        assert not np.any(segmentation_mask.mask[expected_outside])
 
     def test_all_zero_volume_returns_empty_mask(self) -> None:
         empty_data = np.zeros((10, 10, 10), dtype=np.float32)
@@ -77,6 +77,6 @@ class TestHeadSegmenter:
 
         segmentation_mask = self.segmenter.segment(volume)
 
-        assert segmentation_mask.shape == (10, 10, 10)
-        assert segmentation_mask.dtype == bool
-        assert not np.any(segmentation_mask)
+        assert segmentation_mask.mask.shape == (10, 10, 10)
+        assert segmentation_mask.mask.dtype == bool
+        assert not np.any(segmentation_mask.mask)

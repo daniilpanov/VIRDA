@@ -44,8 +44,8 @@ class TestStage1Pipeline:
 
         assert isinstance(result, Stage1Result)
         assert result.mri_volume.data.shape == (20, 20, 20)
-        assert result.segmentation_mask.shape == (20, 20, 20)
-        assert result.segmentation_mask.dtype == bool
+        assert result.segmentation_mask.mask.shape == (20, 20, 20)
+        assert result.segmentation_mask.mask.dtype == bool
         assert result.mesh.vertices.shape[1] == 3
         assert result.mesh.faces.shape[1] == 3
         assert result.mesh.faces.min() >= 0
