@@ -21,7 +21,23 @@ from scipy import ndimage as ndi
 from scipy import sparse
 from scipy.sparse import csgraph
 
+from virda.models.scalp_mesh import ScalpMesh
+
 _MAX_AIR_LAYERS = 150
+
+
+def to_trimesh(mesh: ScalpMesh) -> trimesh.Trimesh:
+    return trimesh.Trimesh(vertices=mesh.vertices, faces=mesh.faces)
+
+
+def from_trimesh(mesh: trimesh.Trimesh) -> ScalpMesh:
+    return ScalpMesh(
+        vertices=np.asarray(mesh.vertices, dtype=np.float64),
+        faces=np.asarray(mesh.faces, dtype=np.int64),
+        face_adjacency=np.asarray(mesh.face_adjacency, dtype=np.int64),
+        coordinate_system="world",
+        metadata={},
+    )
 
 
 def air_depth_score(mask: np.ndarray, wide_mm: float = 10.0) -> np.ndarray:
@@ -154,3 +170,40 @@ def connected_components_containing_seeds(
     seed_labels = np.unique(labels[seed_positions[seed_positions >= 0]])
     result[eligible_idx] = np.isin(labels, seed_labels)
     return cast(np.ndarray, result)
+
+
+class AirDepthCleaner:
+    """Remove internal (cavity-wall) faces using geodesic air depth."""
+
+    def __init__(
+        self, wide_mm: float = 10.0, seed_mm: float = 20.0, flood_mm: float = 12.0
+    ) -> None:
+        self._wide_mm = wide_mm
+        self._seed_mm = seed_mm
+        self._flood_mm = flood_mm
+
+    def clean(
+        self,
+        mesh: ScalpMesh,
+        *,
+        mask: np.ndarray | None = None,
+        affine: np.ndarray | None = None,
+    ) -> ScalpMesh:
+        if mask is None or affine is None:
+            raise ValueError(
+                "AirDepthCleaner requires the segmentation mask and affine; "
+                "pass mask= and affine= to clean()"
+            )
+        trimesh_mesh = to_trimesh(mesh)
+        remove_mask = internal_face_mask(
+            trimesh_mesh,
+            mask,
+            affine,
+            wide_mm=self._wide_mm,
+            seed_mm=self._seed_mm,
+            flood_mm=self._flood_mm,
+        )
+        if remove_mask.any():
+            trimesh_mesh.update_faces(~remove_mask)
+            trimesh_mesh.process(validate=True)
+        return from_trimesh(trimesh_mesh)

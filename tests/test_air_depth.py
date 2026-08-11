@@ -1,8 +1,11 @@
 import numpy as np
+import pytest
 import trimesh
 
-from virda.mesh.air_depth import air_depth_score, internal_face_mask
+from virda.mesh.air_depth import AirDepthCleaner, air_depth_score, internal_face_mask
+from virda.mesh.contracts import MeshCleaner
 from virda.mesh.mesh_extractor import MarchingCubesExtractor
+from virda.models.scalp_mesh import ScalpMesh
 
 
 def _box_with_inner_cavity() -> tuple[np.ndarray, np.ndarray]:
@@ -34,18 +37,21 @@ def _box_with_inner_cavity() -> tuple[np.ndarray, np.ndarray]:
     return mask, np.eye(4)
 
 
-def _cavity_mesh(mask: np.ndarray, affine: np.ndarray) -> trimesh.Trimesh:
-    mesh = MarchingCubesExtractor().extract(mask, affine)
+def _cavity_mesh(mask: np.ndarray, affine: np.ndarray) -> ScalpMesh:
+    return MarchingCubesExtractor().extract(mask, affine)
+
+
+def _as_trimesh(mesh: ScalpMesh) -> trimesh.Trimesh:
     return trimesh.Trimesh(vertices=mesh.vertices, faces=mesh.faces)
 
 
-def _cavity_shell_faces(mesh: trimesh.Trimesh, center: np.ndarray) -> np.ndarray:
+def _cavity_shell_faces(mesh: ScalpMesh | trimesh.Trimesh, center: np.ndarray) -> np.ndarray:
     centroids = mesh.vertices[mesh.faces].mean(axis=1)
     distance = np.linalg.norm(centroids - center, axis=1)
     return np.asarray((distance >= 7.0) & (distance <= 11.0))
 
 
-def _outer_shell_faces(mesh: trimesh.Trimesh, center: np.ndarray) -> np.ndarray:
+def _outer_shell_faces(mesh: ScalpMesh | trimesh.Trimesh, center: np.ndarray) -> np.ndarray:
     centroids = mesh.vertices[mesh.faces].mean(axis=1)
     distance = np.linalg.norm(centroids - center, axis=1)
     return np.asarray((distance >= 15.0) & (distance <= 17.0))
@@ -71,7 +77,7 @@ class TestAirDepthScore:
 class TestInternalFaceMask:
     def test_flags_cavity_walls(self) -> None:
         mask, affine = _box_with_inner_cavity()
-        mesh = _cavity_mesh(mask, affine)
+        mesh = _as_trimesh(_cavity_mesh(mask, affine))
         center = np.array([48.0, 48.0, 48.0])
         shell = _cavity_shell_faces(mesh, center)
         outer = _outer_shell_faces(mesh, center)
@@ -91,3 +97,38 @@ class TestInternalFaceMask:
 
         assert result.dtype == bool
         assert len(result) == 0
+
+
+class TestAirDepthCleaner:
+    def test_is_mesh_cleaner(self) -> None:
+        assert isinstance(AirDepthCleaner(), MeshCleaner)
+
+    def test_removes_cavity_walls(self) -> None:
+        mask, affine = _box_with_inner_cavity()
+        mesh = _cavity_mesh(mask, affine)
+        center = np.array([48.0, 48.0, 48.0])
+        assert _cavity_shell_faces(mesh, center).sum() > 900
+
+        cleaned = AirDepthCleaner().clean(mesh, mask=mask, affine=affine)
+
+        assert _cavity_shell_faces(cleaned, center).sum() < 50
+        assert cleaned.vertices.shape[0] > 1000
+        assert cleaned.face_adjacency is not None
+
+    def test_preserves_outer_surface(self) -> None:
+        mask, affine = _box_with_inner_cavity()
+        mesh = _cavity_mesh(mask, affine)
+        center = np.array([48.0, 48.0, 48.0])
+        outer_before = int(_outer_shell_faces(mesh, center).sum())
+
+        cleaned = AirDepthCleaner().clean(mesh, mask=mask, affine=affine)
+        outer_after = int(_outer_shell_faces(cleaned, center).sum())
+
+        assert outer_after > outer_before * 0.9
+
+    def test_requires_mask_and_affine(self) -> None:
+        mask, affine = _box_with_inner_cavity()
+        mesh = _cavity_mesh(mask, affine)
+
+        with pytest.raises(ValueError, match="segmentation mask"):
+            AirDepthCleaner().clean(mesh)
