@@ -17,7 +17,8 @@ def run(nifti_path: str | Path | None = None) -> Stage1Result:
     resolved_path = nifti_path or settings.nifti_path
     if resolved_path is None:
         raise ValueError(
-            "NIfTI path not provided. Pass it as an argument or set the NIFTI_PATH environment variable."
+            "NIfTI path not provided."
+            "Pass it as an argument or set the NIFTI_PATH environment variable."
         )
 
     loader = NiftiLoader()

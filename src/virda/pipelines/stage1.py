@@ -3,7 +3,6 @@ from pathlib import Path
 from virda.io.loader.contracts import MRILoader
 from virda.mesh.contracts import MeshCleaner, MeshExtractor, MeshSmoother
 from virda.mesh.mesh_extractor import MarchingCubesExtractor
-from virda.models.segmentation_mask import SegmentationMask
 from virda.models.stage1_result import Stage1Result
 from virda.segmentation.contracts import HeadSegmenter
 
