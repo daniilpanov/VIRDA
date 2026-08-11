@@ -8,7 +8,7 @@ from virda.models.mri_volume import MRIVolume
 
 
 class NiftiLoader:
-    def load(self, path: str | Path) -> MRIVolume:
+    def run(self, path: str | Path) -> MRIVolume:
         resolved_path = Path(path)
 
         if not resolved_path.exists():
