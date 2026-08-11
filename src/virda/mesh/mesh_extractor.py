@@ -7,7 +7,7 @@ from virda.models.segmentation_mask import SegmentationMask
 
 
 class MarchingCubesExtractor:
-    def extract(self, mask: SegmentationMask, mri_volume: MRIVolume) -> ScalpMesh:
+    def run(self, mask: SegmentationMask, mri_volume: MRIVolume) -> ScalpMesh:
         affine = mri_volume.affine
 
         voxel_vertices, triangle_faces, _, _ = marching_cubes(mask.mask, level=0.5)

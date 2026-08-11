@@ -53,7 +53,7 @@ class TestMeshExtractor:
     def test_extract_surface_returns_valid_mesh(
         self, sphere_mask: SegmentationMask, sphere_volume: MRIVolume
     ) -> None:
-        mesh = self.extractor.extract(sphere_mask, sphere_volume)
+        mesh = self.extractor.run(sphere_mask, sphere_volume)
 
         assert isinstance(mesh, ScalpMesh)
         assert mesh.vertices.ndim == 2
@@ -67,7 +67,7 @@ class TestMeshExtractor:
         self, sphere_mask: SegmentationMask, sphere_volume: MRIVolume
     ) -> None:
         sphere_volume = replace(sphere_volume, affine=np.eye(4))
-        mesh = self.extractor.extract(sphere_mask, sphere_volume)
+        mesh = self.extractor.run(sphere_mask, sphere_volume)
 
         sphere_surface_area_pixels = 4 * np.pi * 10**2
         expected_vertex_range = (
@@ -90,10 +90,10 @@ class TestMeshExtractor:
         )
         identity_affine = np.eye(4)
 
-        mesh_world = self.extractor.extract(
+        mesh_world = self.extractor.run(
             sphere_mask, replace(sphere_volume, affine=voxel_to_world)
         )
-        mesh_voxel = self.extractor.extract(
+        mesh_voxel = self.extractor.run(
             sphere_mask, replace(sphere_volume, affine=identity_affine)
         )
 
@@ -107,4 +107,4 @@ class TestMeshExtractor:
         empty_volume = replace(sphere_volume, affine=np.eye(4))
 
         with pytest.raises(ValueError):
-            self.extractor.extract(empty_mask, empty_volume)
+            self.extractor.run(empty_mask, empty_volume)

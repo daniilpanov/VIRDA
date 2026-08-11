@@ -9,7 +9,7 @@ class TaubinSmoother:
         self._lamb = lamb
         self._nu = nu
 
-    def smooth(self, mesh: ScalpMesh) -> ScalpMesh:
+    def run(self, mesh: ScalpMesh) -> ScalpMesh:
         trimesh_mesh = trimesh.Trimesh(vertices=mesh.vertices, faces=mesh.faces)
         trimesh.smoothing.filter_taubin(
             trimesh_mesh, lamb=self._lamb, nu=self._nu, iterations=self._iterations

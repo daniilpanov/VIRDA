@@ -41,13 +41,13 @@ def clean_sphere_mesh(sphere_volume: MRIVolume) -> ScalpMesh:
 
     from virda.mesh.mesh_extractor import MarchingCubesExtractor
 
-    return MarchingCubesExtractor().extract(mask, sphere_volume)
+    return MarchingCubesExtractor().run(mask, sphere_volume)
 
 
 class TestTrimeshCleaner:
     def test_clean_preserves_valid_mesh(self, clean_sphere_mesh: ScalpMesh) -> None:
         cleaner = TrimeshCleaner()
-        cleaned = cleaner.clean(clean_sphere_mesh)
+        cleaned = cleaner.run(clean_sphere_mesh)
 
         assert isinstance(cleaned, ScalpMesh)
         assert cleaned.vertices.shape[1] == 3
@@ -66,7 +66,7 @@ class TestTrimeshCleaner:
         corrupted_mesh = ScalpMesh(vertices=combined_vertices, faces=combined_faces)
 
         cleaner = TrimeshCleaner(min_component_vertices=50)
-        cleaned = cleaner.clean(corrupted_mesh)
+        cleaned = cleaner.run(corrupted_mesh)
 
         original_vertex_count = clean_sphere_mesh.vertices.shape[0]
         assert cleaned.vertices.shape[0] <= original_vertex_count + 3
@@ -87,6 +87,6 @@ class TestTrimeshCleaner:
         mesh = ScalpMesh(vertices=vertices, faces=faces)
 
         cleaner = TrimeshCleaner()
-        cleaned = cleaner.clean(mesh)
+        cleaned = cleaner.run(mesh)
 
         assert cleaned.faces.shape[0] <= 2
