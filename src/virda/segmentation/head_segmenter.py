@@ -10,7 +10,7 @@ from virda.models.segmentation_mask import SegmentationMask
 
 
 class OtsuHeadSegmenter:
-    def segment(self, volume: MRIVolume, closing_radius: int = 5) -> SegmentationMask:
+    def run(self, volume: MRIVolume, closing_radius: int = 5) -> SegmentationMask:
         intensity_threshold = threshold_otsu(volume.data)
         above_threshold_mask = volume.data > intensity_threshold
 

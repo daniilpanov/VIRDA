@@ -24,7 +24,7 @@ class Stage1Pipeline:
 
     def run(self, path: str | Path, closing_radius: int = 5) -> Stage1Result:
         mri_volume = self._loader.run(path)
-        segmentation_mask = self._segmenter.segment(mri_volume, closing_radius=closing_radius)
+        segmentation_mask = self._segmenter.run(mri_volume, closing_radius=closing_radius)
         raw_mesh = self._extractor.run(segmentation_mask, mri_volume)
         mesh = raw_mesh
 
