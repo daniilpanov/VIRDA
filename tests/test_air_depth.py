@@ -1,0 +1,93 @@
+import numpy as np
+import trimesh
+
+from virda.mesh.air_depth import air_depth_score, internal_face_mask
+from virda.mesh.mesh_extractor import MarchingCubesExtractor
+
+
+def _box_with_inner_cavity() -> tuple[np.ndarray, np.ndarray]:
+    """Solid box surrounded by thick air, with a spherical cavity open to the
+    exterior via a narrow deep tunnel (mimics a head with a cavity).
+
+    The thick air layer guarantees a deep-exterior-air seed (air EDT >= 10 mm),
+    so the cavity air is reached only through the long tunnel and scores as deep.
+    """
+    n = 96
+    center = np.array([48.0, 48.0, 48.0])
+    grid = np.indices((n, n, n)).astype(float)
+    radius = np.linalg.norm(grid - center.reshape(-1, 1, 1, 1), axis=0)
+    cavity = radius <= 9.0
+    tunnel = (
+        (np.abs(grid[0] - 48) <= 4)
+        & (np.abs(grid[1] - 48) <= 4)
+        & (grid[2] >= 48)
+        & (grid[2] <= 63)
+    )
+    mask = np.ones((n, n, n), dtype=bool)
+    mask &= ~(cavity | tunnel)
+    mask[:32, :, :] = False
+    mask[-32:, :, :] = False
+    mask[:, :32, :] = False
+    mask[:, -32:, :] = False
+    mask[:, :, :32] = False
+    mask[:, :, -32:] = False
+    return mask, np.eye(4)
+
+
+def _cavity_mesh(mask: np.ndarray, affine: np.ndarray) -> trimesh.Trimesh:
+    mesh = MarchingCubesExtractor().extract(mask, affine)
+    return trimesh.Trimesh(vertices=mesh.vertices, faces=mesh.faces)
+
+
+def _cavity_shell_faces(mesh: trimesh.Trimesh, center: np.ndarray) -> np.ndarray:
+    centroids = mesh.vertices[mesh.faces].mean(axis=1)
+    distance = np.linalg.norm(centroids - center, axis=1)
+    return np.asarray((distance >= 7.0) & (distance <= 11.0))
+
+
+def _outer_shell_faces(mesh: trimesh.Trimesh, center: np.ndarray) -> np.ndarray:
+    centroids = mesh.vertices[mesh.faces].mean(axis=1)
+    distance = np.linalg.norm(centroids - center, axis=1)
+    return np.asarray((distance >= 15.0) & (distance <= 17.0))
+
+
+class TestAirDepthScore:
+    def test_score_shape_and_dtype(self) -> None:
+        mask, _ = _box_with_inner_cavity()
+        score = air_depth_score(mask, wide_mm=10.0)
+
+        assert score.shape == mask.shape
+        assert score.dtype == np.float64
+        assert np.all(score >= 0.0)
+
+    def test_cavity_air_is_deep(self) -> None:
+        mask, _ = _box_with_inner_cavity()
+        score = air_depth_score(mask, wide_mm=10.0)
+
+        cavity_voxel = score[48, 48, 42]
+        assert cavity_voxel >= 20.0
+
+
+class TestInternalFaceMask:
+    def test_flags_cavity_walls(self) -> None:
+        mask, affine = _box_with_inner_cavity()
+        mesh = _cavity_mesh(mask, affine)
+        center = np.array([48.0, 48.0, 48.0])
+        shell = _cavity_shell_faces(mesh, center)
+        outer = _outer_shell_faces(mesh, center)
+        assert shell.sum() > 900
+
+        remove = internal_face_mask(mesh, mask, affine)
+
+        assert remove.dtype == bool
+        assert remove.shape == (len(mesh.faces),)
+        assert int((shell & remove).sum()) > 0.7 * int(shell.sum())
+        assert int((outer & remove).sum()) < 50
+
+    def test_empty_mesh_returns_empty_mask(self) -> None:
+        mask, affine = _box_with_inner_cavity()
+
+        result = internal_face_mask(trimesh.Trimesh(vertices=[], faces=[]), mask, affine)
+
+        assert result.dtype == bool
+        assert len(result) == 0
