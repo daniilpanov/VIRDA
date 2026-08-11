@@ -5,8 +5,10 @@ import numpy as np
 import pytest
 
 from virda.io.loader.nifti_loader import NiftiLoader
+from virda.mesh.air_depth import AirDepthCleaner
+from virda.mesh.cleaners import LargestComponentCleaner, MergeCleaner
 from virda.mesh.contracts import MeshCleaner
-from virda.mesh.mesh_cleaner import TrimeshCleaner
+from virda.mesh.hole_fill import HoleFillCleaner
 from virda.models.stage1_result import Stage1Result
 from virda.pipelines.stage1 import Stage1Pipeline
 from virda.segmentation.head_segmenter import OtsuHeadSegmenter
@@ -36,7 +38,12 @@ class TestStage1Pipeline:
     def test_run_returns_stage1_result(self, synthetic_nifti_path: Path) -> None:
         loader = NiftiLoader()
         segmenter = OtsuHeadSegmenter()
-        cleaners: list[MeshCleaner] = [TrimeshCleaner()]
+        cleaners: list[MeshCleaner] = [
+            MergeCleaner(),
+            AirDepthCleaner(),
+            HoleFillCleaner(),
+            LargestComponentCleaner(),
+        ]
 
         pipeline = Stage1Pipeline(
             loader=loader, segmenter=segmenter, cleaners=cleaners, smoother=None
@@ -57,7 +64,7 @@ class TestStage1Pipeline:
 
         loader = NiftiLoader()
         segmenter = OtsuHeadSegmenter()
-        cleaners: list[MeshCleaner] = [TrimeshCleaner()]
+        cleaners: list[MeshCleaner] = [MergeCleaner(), LargestComponentCleaner()]
         smoother = LaplacianSmoother(iterations=2, lamb=0.5)
 
         pipeline = Stage1Pipeline(

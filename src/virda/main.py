@@ -3,10 +3,10 @@ from pathlib import Path
 from virda.config import get_virda_settings
 from virda.io.loader.nifti_loader import NiftiLoader
 from virda.mesh.air_depth import AirDepthCleaner
+from virda.mesh.cleaners import LargestComponentCleaner, MergeCleaner
 from virda.mesh.contracts import MeshCleaner, MeshSmoother
 from virda.mesh.hole_fill import HoleFillCleaner
 from virda.mesh.laplacian_smoother import LaplacianSmoother
-from virda.mesh.mesh_cleaner import TrimeshCleaner
 from virda.mesh.taubin_smoother import TaubinSmoother
 from virda.models.stage1_result import Stage1Result
 from virda.pipelines.stage1 import Stage1Pipeline
@@ -26,12 +26,10 @@ def run(nifti_path: str | Path | None = None) -> Stage1Result:
     segmenter = OtsuHeadSegmenter()
 
     cleaners: list[MeshCleaner] = [
-        TrimeshCleaner(
-            min_component_vertices=settings.cleaner_min_vertices,
-            merge_digits=settings.cleaner_merge_digits,
-        ),
+        MergeCleaner(merge_digits=settings.cleaner_merge_digits),
         AirDepthCleaner(),
         HoleFillCleaner(),
+        LargestComponentCleaner(min_vertices=settings.cleaner_min_vertices),
     ]
 
     smoother: MeshSmoother
