@@ -2,7 +2,7 @@ from pathlib import Path
 
 from virda.config import get_virda_settings
 from virda.io.loader.nifti_loader import NiftiLoader
-from virda.mesh.contracts import MeshSmoother
+from virda.mesh.contracts import MeshCleaner, MeshSmoother
 from virda.mesh.laplacian_smoother import LaplacianSmoother
 from virda.mesh.mesh_cleaner import TrimeshCleaner
 from virda.mesh.taubin_smoother import TaubinSmoother
@@ -23,10 +23,12 @@ def run(nifti_path: str | Path | None = None) -> Stage1Result:
     loader = NiftiLoader()
     segmenter = OtsuHeadSegmenter()
 
-    cleaner = TrimeshCleaner(
-        min_component_vertices=settings.cleaner_min_vertices,
-        merge_digits=settings.cleaner_merge_digits,
-    )
+    cleaners: list[MeshCleaner] = [
+        TrimeshCleaner(
+            min_component_vertices=settings.cleaner_min_vertices,
+            merge_digits=settings.cleaner_merge_digits,
+        )
+    ]
 
     smoother: MeshSmoother
     if settings.smoother_type == "taubin":
@@ -44,7 +46,7 @@ def run(nifti_path: str | Path | None = None) -> Stage1Result:
     pipeline = Stage1Pipeline(
         loader=loader,
         segmenter=segmenter,
-        cleaner=cleaner,
+        cleaners=cleaners,
         smoother=smoother,
     )
     return pipeline.run(resolved_path, closing_radius=settings.closing_radius)

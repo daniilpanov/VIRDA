@@ -13,13 +13,13 @@ class Stage1Pipeline:
         loader: MRILoader,
         segmenter: HeadSegmenter,
         extractor: MeshExtractor | None = None,
-        cleaner: MeshCleaner | None = None,
+        cleaners: list[MeshCleaner] | None = None,
         smoother: MeshSmoother | None = None,
     ):
         self._loader = loader
         self._segmenter = segmenter
         self._extractor = extractor or MarchingCubesExtractor()
-        self._cleaner = cleaner
+        self._cleaners = list(cleaners or [])
         self._smoother = smoother
 
     def run(self, path: str | Path, closing_radius: int = 5) -> Stage1Result:
@@ -27,8 +27,8 @@ class Stage1Pipeline:
         segmentation_mask = self._segmenter.segment(mri_volume, closing_radius=closing_radius)
         raw_mesh = self._extractor.extract(segmentation_mask, mri_volume.affine)
         mesh = raw_mesh
-        if self._cleaner is not None:
-            mesh = self._cleaner.clean(mesh)
+        for cleaner in self._cleaners:
+            mesh = cleaner.clean(mesh, mask=segmentation_mask, affine=mri_volume.affine)
         if self._smoother is not None:
             mesh = self._smoother.smooth(mesh)
         return Stage1Result(

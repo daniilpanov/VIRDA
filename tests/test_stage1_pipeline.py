@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from virda.io.loader.nifti_loader import NiftiLoader
+from virda.mesh.contracts import MeshCleaner
 from virda.mesh.mesh_cleaner import TrimeshCleaner
 from virda.models.stage1_result import Stage1Result
 from virda.pipelines.stage1 import Stage1Pipeline
@@ -35,10 +36,10 @@ class TestStage1Pipeline:
     def test_run_returns_stage1_result(self, synthetic_nifti_path: Path) -> None:
         loader = NiftiLoader()
         segmenter = OtsuHeadSegmenter()
-        cleaner = TrimeshCleaner()
+        cleaners: list[MeshCleaner] = [TrimeshCleaner()]
 
         pipeline = Stage1Pipeline(
-            loader=loader, segmenter=segmenter, cleaner=cleaner, smoother=None
+            loader=loader, segmenter=segmenter, cleaners=cleaners, smoother=None
         )
         result = pipeline.run(synthetic_nifti_path, closing_radius=0)
 
@@ -56,11 +57,11 @@ class TestStage1Pipeline:
 
         loader = NiftiLoader()
         segmenter = OtsuHeadSegmenter()
-        cleaner = TrimeshCleaner()
+        cleaners: list[MeshCleaner] = [TrimeshCleaner()]
         smoother = LaplacianSmoother(iterations=2, lamb=0.5)
 
         pipeline = Stage1Pipeline(
-            loader=loader, segmenter=segmenter, cleaner=cleaner, smoother=smoother
+            loader=loader, segmenter=segmenter, cleaners=cleaners, smoother=smoother
         )
         result = pipeline.run(synthetic_nifti_path, closing_radius=0)
 

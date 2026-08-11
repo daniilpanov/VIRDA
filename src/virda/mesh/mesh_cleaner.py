@@ -11,7 +11,13 @@ class TrimeshCleaner:
         self._min_component_vertices = min_component_vertices
         self._merge_digits = merge_digits
 
-    def clean(self, mesh: ScalpMesh) -> ScalpMesh:
+    def clean(
+        self,
+        mesh: ScalpMesh,
+        *,
+        mask: np.ndarray | None = None,
+        affine: np.ndarray | None = None,
+    ) -> ScalpMesh:
         trimesh_mesh = trimesh.Trimesh(vertices=mesh.vertices, faces=mesh.faces)
         trimesh_mesh.merge_vertices(
             merge_tex=True, merge_norm=True, digits_vertex=self._merge_digits
