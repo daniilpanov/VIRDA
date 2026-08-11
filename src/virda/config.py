@@ -18,6 +18,8 @@ class VirdaSettings(BaseSettings):
     skip_fiducials: bool = False
     auto_detect_fiducials: bool = False
 
+    qc_html: bool = False
+
     closing_radius: int = 5
     threshold: float | None = None
 

@@ -1,15 +1,20 @@
+import logging
 import sys
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+
 from virda.config import VirdaSettings
 from virda.io.exporter.json_io import save_config, save_fiducials, save_json
+from virda.io.exporter.nifti_exporter import export_segmentation
 from virda.io.exporter.ply_exporter import export_ply
 from virda.models.ese_config import ESEConfig
 from virda.models.fiducial import Fiducial
 from virda.models.stage1_result import Stage1Result
+from virda.qc.checks import run_checks
+from virda.visualization import write_visual_artifacts
 
 
 class Stage1Exporter:
@@ -22,33 +27,63 @@ class Stage1Exporter:
         self._settings = settings
         self._ese_config = ese_config
         self._skip_fiducials = skip_fiducials
+        self._qc_html = settings.qc_html
 
     def export(self, result: Stage1Result, output_dir: str | Path) -> Path:
         project_dir = Path(output_dir) / "patient_project"
-        project_dir.mkdir(parents=True, exist_ok=True)
-        export_ply(project_dir / "mesh.ply", result.mesh)
+        mesh_dir = project_dir / "mesh"
+        segmentation_dir = project_dir / "segmentation"
+        fiducials_dir = project_dir / "fiducials"
+        config_dir = project_dir / "config"
+        quality_control_dir = project_dir / "quality_control"
+        input_mri_dir = project_dir / "input_mri"
+        for directory in (
+            mesh_dir,
+            segmentation_dir,
+            fiducials_dir,
+            config_dir,
+            quality_control_dir,
+            input_mri_dir,
+        ):
+            directory.mkdir(parents=True, exist_ok=True)
+        log = _configure_logging(project_dir / "logs" / "stage1.log")
+
+        mesh_path = mesh_dir / "scalp.ply"
+        export_ply(mesh_path, result.mesh)
         if result.mesh.face_adjacency is not None:
-            np.save(project_dir / "scalp_face_adjacency.npy", result.mesh.face_adjacency)
+            np.save(mesh_dir / "scalp_face_adjacency.npy", result.mesh.face_adjacency)
 
         fiducials = result.fiducials
         if self._skip_fiducials:
-            print(
-                "[info] --skip-fiducials: fiducial-dependent steps disabled "
-                "(fiducials.json not written)",
-                file=sys.stderr,
+            log.info(
+                "--skip-fiducials: fiducial-dependent steps disabled (fiducials.json not written)"
             )
         else:
-            save_fiducials(project_dir / "fiducials.json", fiducials)
+            save_fiducials(fiducials_dir / "fiducials.json", fiducials)
+
+        mask_path = segmentation_dir / "head_mask.nii.gz"
+        export_segmentation(mask_path, result.segmentation_mask, result.mri_volume.affine)
+
+        report = run_checks(result, nifti_mask_path=mask_path)
+        fiducials_qc = report["fiducials"]
+        for warning in report["warnings"]:
+            log.warning(warning)
+        save_json(quality_control_dir / "report.json", report)
 
         save_json(
             project_dir / "stage1_result.json",
             _stage1_result_to_dict(
                 result,
                 fiducials=fiducials,
+                fiducials_qc=fiducials_qc,
                 skipped=self._skip_fiducials,
             ),
         )
-        save_config(project_dir / "pipeline_config.json", self._pipeline_config())
+        save_config(config_dir / "pipeline_config.json", self._pipeline_config())
+        save_json(input_mri_dir / "provenance.json", _input_provenance(result))
+        write_visual_artifacts(
+            result, quality_control_dir, mesh_path=mesh_path, with_html=self._qc_html
+        )
         return project_dir
 
     def _pipeline_config(self) -> dict[str, Any]:
@@ -60,9 +95,37 @@ class Stage1Exporter:
         return config
 
 
+def _configure_logging(log_path: Path) -> logging.Logger:
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    logger = logging.getLogger("virda.stage1")
+    logger.setLevel(logging.INFO)
+    logger.handlers.clear()
+    logger.propagate = False
+    formatter = logging.Formatter("[%(levelname)s] %(message)s")
+    file_handler = logging.FileHandler(log_path, encoding="utf-8")
+    file_handler.setFormatter(formatter)
+    stream_handler = logging.StreamHandler(sys.stderr)
+    stream_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+    logger.addHandler(stream_handler)
+    return logger
+
+
+def _input_provenance(result: Stage1Result) -> dict[str, Any]:
+    mri = result.mri_volume
+    return {
+        "source": mri.metadata.get("source"),
+        "shape": list(mri.data.shape),
+        "spacing": list(mri.spacing),
+        "orientation": list(mri.orientation),
+        "affine": mri.affine.tolist(),
+    }
+
+
 def _stage1_result_to_dict(
     result: Stage1Result,
     fiducials: list[Fiducial] | None = None,
+    fiducials_qc: dict[str, Any] | None = None,
     skipped: bool = False,
 ) -> dict[str, Any]:
     fiducial_count = len(fiducials or [])
@@ -72,6 +135,8 @@ def _stage1_result_to_dict(
             "skipped": True,
             "note": "--skip-fiducials: fiducial-dependent steps disabled",
         }
+    elif fiducials_qc is not None:
+        fiducials_section = {"count": fiducial_count, "qc": fiducials_qc}
     else:
         fiducials_section = {"count": fiducial_count}
 
