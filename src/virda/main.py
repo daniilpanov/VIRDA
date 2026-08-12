@@ -49,3 +49,7 @@ def run(nifti_path: str | Path | None = None) -> Stage1Result:
         smoother=smoother,
     )
     return pipeline.run(resolved_path, closing_radius=settings.closing_radius)
+
+
+if __name__ == "__main__":
+    run()
