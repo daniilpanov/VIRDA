@@ -1,13 +1,14 @@
 import numpy as np
 from skimage.measure import marching_cubes
 
+from virda.mesh import MeshExtractor
 from virda.models.mri_volume import MRIVolume
 from virda.models.scalp_mesh import ScalpMesh
 from virda.models.segmentation_mask import SegmentationMask
 
 
-class MarchingCubesExtractor:
-    def run(self, mask: SegmentationMask, mri_volume: MRIVolume) -> ScalpMesh:
+class MarchingCubesExtractor(MeshExtractor):
+    def _process(self, mask: SegmentationMask, mri_volume: MRIVolume) -> ScalpMesh:
         affine = mri_volume.affine
 
         voxel_vertices, triangle_faces, _, _ = marching_cubes(mask.mask, level=0.5)

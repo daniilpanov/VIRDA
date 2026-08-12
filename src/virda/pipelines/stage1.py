@@ -1,40 +1,63 @@
 from pathlib import Path
+from typing import Self
 
-from virda.io.loader.contracts import MRILoader
-from virda.mesh.contracts import MeshCleaner, MeshExtractor, MeshSmoother
-from virda.mesh.mesh_extractor import MarchingCubesExtractor
+from virda.io.loader import MRILoader
+from virda.mesh import MeshExtractor, MeshPostprocessor
+from virda.models.mri_volume import MRIVolume
+from virda.models.path import NiftiPath
+from virda.models.scalp_mesh import ScalpMesh
+from virda.models.segmentation_mask import SegmentationMask
 from virda.models.stage1_result import Stage1Result
-from virda.segmentation.contracts import HeadSegmenter
+from virda.pipeline import PipelineController
+from virda.pipeline_context import PipelineContext
+from virda.segmentation import HeadSegmenter
 
 
-class Stage1Pipeline:
+class OutputGenerator:
+    def run(self, context: PipelineContext) -> Stage1Result:
+        return Stage1Result(
+            mri_volume=context.get_store_notnull(MRIVolume),
+            segmentation_mask=context.get_store_notnull(SegmentationMask),
+            mesh=context.get_store_notnull(ScalpMesh),
+        )
+
+
+class Stage1PipelineBuilder:
     def __init__(
         self,
-        loader: MRILoader,
+        nifti_path: str | Path,
+        mri_loader: MRILoader,
         segmenter: HeadSegmenter,
-        extractor: MeshExtractor | None = None,
-        cleaner: MeshCleaner | None = None,
-        smoother: MeshSmoother | None = None,
-    ):
-        self._loader = loader
-        self._segmenter = segmenter
-        self._extractor = extractor or MarchingCubesExtractor()
-        self._cleaner = cleaner
-        self._smoother = smoother
+        extractor: MeshExtractor,
+    ) -> None:
+        self._nifti_path: Path = Path(nifti_path)
+        self._loader: MRILoader = mri_loader
+        self._segmenter: HeadSegmenter = segmenter
+        self._mesh_extractor: MeshExtractor = extractor
+        self._mesh_postprocessors: list[MeshPostprocessor] = []
 
-    def run(self, path: str | Path, closing_radius: int = 5) -> Stage1Result:
-        mri_volume = self._loader.run(path)
-        segmentation_mask = self._segmenter.run(mri_volume, closing_radius=closing_radius)
-        raw_mesh = self._extractor.run(segmentation_mask, mri_volume)
-        mesh = raw_mesh
+    def setup_mesh_postprocessors(self, postprocessors: list[MeshPostprocessor]) -> Self:
+        """Add mesh cleaners, smoothers, etc."""
+        self._mesh_postprocessors.extend(postprocessors)
+        return self
 
-        if self._cleaner is not None:
-            mesh = self._cleaner.run(mesh)
-        if self._smoother is not None:
-            mesh = self._smoother.run(mesh)
+    def build(self) -> PipelineController:
+        controller = PipelineController()
 
-        return Stage1Result(
-            mri_volume=mri_volume,
-            segmentation_mask=segmentation_mask,
-            mesh=mesh,
-        )
+        # -- Steps --
+        controller.register_step(self._loader)
+        controller.register_step(self._segmenter)
+        controller.register_step(self._mesh_extractor)
+
+        for postprocessor in self._mesh_postprocessors:
+            controller.register_step(postprocessor)
+
+        controller.register_step(OutputGenerator())
+
+        # -- Stores --
+        controller.register_store(NiftiPath, NiftiPath(self._nifti_path))
+        controller.register_store(MRIVolume)
+        controller.register_store(SegmentationMask)
+        controller.register_store(ScalpMesh)
+
+        return controller

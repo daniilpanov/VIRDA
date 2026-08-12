@@ -7,10 +7,14 @@ from skimage.morphology import ball, closing
 
 from virda.models.mri_volume import MRIVolume
 from virda.models.segmentation_mask import SegmentationMask
+from virda.segmentation import HeadSegmenter
 
 
-class OtsuHeadSegmenter:
-    def run(self, volume: MRIVolume, closing_radius: int = 5) -> SegmentationMask:
+class OtsuHeadSegmenter(HeadSegmenter):
+    def __init__(self, closing_radius: int = 5):
+        self._closing_radius: int = closing_radius
+
+    def _process(self, volume: MRIVolume) -> SegmentationMask:
         intensity_threshold = threshold_otsu(volume.data)
         above_threshold_mask = volume.data > intensity_threshold
 
@@ -24,7 +28,7 @@ class OtsuHeadSegmenter:
         )
         largest_component_mask = connected_components == largest_component_label
 
-        structuring_element = ball(closing_radius)
+        structuring_element = ball(self._closing_radius)
         closed_mask = closing(largest_component_mask, structuring_element)
 
         return SegmentationMask(mask=cast(np.ndarray, closed_mask > 0))

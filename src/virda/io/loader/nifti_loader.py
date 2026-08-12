@@ -1,21 +1,19 @@
-from pathlib import Path
-
 import nibabel as nib
 import numpy as np
 from nibabel import aff2axcodes
 
+from virda.io.loader import MRILoader
 from virda.models.mri_volume import MRIVolume
+from virda.models.path import NiftiPath
 
 
-class NiftiLoader:
-    def run(self, path: str | Path) -> MRIVolume:
-        resolved_path = Path(path)
-
-        if not resolved_path.exists():
-            raise FileNotFoundError(f"NIfTI file not found: {resolved_path}")
+class NiftiLoader(MRILoader):
+    def _process(self, path: NiftiPath) -> MRIVolume:
+        if not path.nifti_path.exists():
+            raise FileNotFoundError(f"NIfTI file not found: {path.nifti_path}")
 
         try:
-            nifti_image = nib.load(resolved_path)
+            nifti_image = nib.load(path.nifti_path)
         except Exception as error:
             raise ValueError(f"Failed to parse NIfTI file: {error}") from error
 

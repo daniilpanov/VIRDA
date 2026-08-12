@@ -1,3 +1,3 @@
-from virda.mesh.contracts import MeshCleaner, MeshExtractor, MeshSmoother
+from virda.mesh.contracts import MeshExtractor, MeshPostprocessor
 
-__all__ = ["MeshCleaner", "MeshExtractor", "MeshSmoother"]
+__all__ = ["MeshExtractor", "MeshPostprocessor"]

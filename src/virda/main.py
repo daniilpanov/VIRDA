@@ -2,12 +2,14 @@ from pathlib import Path
 
 from virda.config import get_virda_settings
 from virda.io.loader.nifti_loader import NiftiLoader
-from virda.mesh.contracts import MeshSmoother
+from virda.mesh.contracts import MeshPostprocessor
 from virda.mesh.laplacian_smoother import LaplacianSmoother
 from virda.mesh.mesh_cleaner import TrimeshCleaner
+from virda.mesh.mesh_extractor import MarchingCubesExtractor
 from virda.mesh.taubin_smoother import TaubinSmoother
 from virda.models.stage1_result import Stage1Result
-from virda.pipelines.stage1 import Stage1Pipeline
+from virda.pipeline import PipelineController
+from virda.pipelines.stage1 import Stage1PipelineBuilder
 from virda.segmentation.head_segmenter import OtsuHeadSegmenter
 
 
@@ -22,14 +24,15 @@ def run(nifti_path: str | Path | None = None) -> Stage1Result:
         )
 
     loader = NiftiLoader()
-    segmenter = OtsuHeadSegmenter()
+    segmenter = OtsuHeadSegmenter(closing_radius=settings.closing_radius)
+    extractor = MarchingCubesExtractor()
 
     cleaner = TrimeshCleaner(
         min_component_vertices=settings.cleaner_min_vertices,
         merge_digits=settings.cleaner_merge_digits,
     )
 
-    smoother: MeshSmoother
+    smoother: MeshPostprocessor
     if settings.smoother_type == "taubin":
         smoother = TaubinSmoother(
             iterations=settings.smoother_iterations,
@@ -42,13 +45,18 @@ def run(nifti_path: str | Path | None = None) -> Stage1Result:
             lamb=settings.smoother_lamb,
         )
 
-    pipeline = Stage1Pipeline(
-        loader=loader,
-        segmenter=segmenter,
-        cleaner=cleaner,
-        smoother=smoother,
+    stage1_pipeline: PipelineController = (
+        Stage1PipelineBuilder(
+            nifti_path=resolved_path,
+            mri_loader=loader,
+            segmenter=segmenter,
+            extractor=extractor,
+        )
+        .setup_mesh_postprocessors([cleaner, smoother])
+        .build()
     )
-    return pipeline.run(resolved_path, closing_radius=settings.closing_radius)
+
+    return stage1_pipeline.run().get_store_notnull(Stage1Result)
 
 
 if __name__ == "__main__":

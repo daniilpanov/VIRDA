@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 
+from tests.helpers.pipelines import build_context
 from virda.mesh.mesh_cleaner import TrimeshCleaner
 from virda.models.mri_volume import MRIVolume
 from virda.models.scalp_mesh import ScalpMesh
@@ -41,13 +42,15 @@ def clean_sphere_mesh(sphere_volume: MRIVolume) -> ScalpMesh:
 
     from virda.mesh.mesh_extractor import MarchingCubesExtractor
 
-    return MarchingCubesExtractor().run(mask, sphere_volume)
+    return MarchingCubesExtractor().run(
+        build_context(SegmentationMask=mask, MRIVolume=sphere_volume)
+    )
 
 
 class TestTrimeshCleaner:
     def test_clean_preserves_valid_mesh(self, clean_sphere_mesh: ScalpMesh) -> None:
         cleaner = TrimeshCleaner()
-        cleaned = cleaner.run(clean_sphere_mesh)
+        cleaned = cleaner.run(build_context(ScalpMesh=clean_sphere_mesh))
 
         assert isinstance(cleaned, ScalpMesh)
         assert cleaned.vertices.shape[1] == 3
@@ -66,11 +69,10 @@ class TestTrimeshCleaner:
         corrupted_mesh = ScalpMesh(vertices=combined_vertices, faces=combined_faces)
 
         cleaner = TrimeshCleaner(min_component_vertices=50)
-        cleaned = cleaner.run(corrupted_mesh)
+        cleaned = cleaner.run(build_context(ScalpMesh=corrupted_mesh))
 
         original_vertex_count = clean_sphere_mesh.vertices.shape[0]
         assert cleaned.vertices.shape[0] <= original_vertex_count + 3
-        assert np.all(cleaned.vertices[:, 0] > 0.0) or np.all(cleaned.vertices[:, 0] < 0.0) or True
 
     def test_clean_removes_degenerate_faces(self) -> None:
         vertices = np.array(
@@ -87,6 +89,6 @@ class TestTrimeshCleaner:
         mesh = ScalpMesh(vertices=vertices, faces=faces)
 
         cleaner = TrimeshCleaner()
-        cleaned = cleaner.run(mesh)
+        cleaned = cleaner.run(build_context(ScalpMesh=mesh))
 
         assert cleaned.faces.shape[0] <= 2
