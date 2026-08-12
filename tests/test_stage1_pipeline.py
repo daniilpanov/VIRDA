@@ -13,6 +13,7 @@ from virda.mesh.mesh_extractor import MarchingCubesExtractor
 from virda.models.stage1_result import Stage1Result
 from virda.pipelines.stage1 import Stage1PipelineBuilder
 from virda.segmentation.head_segmenter import OtsuHeadSegmenter
+from virda.segmentation.seal import MaskSealer
 
 
 @pytest.fixture
@@ -172,3 +173,20 @@ class TestStage1Pipeline:
 
         with pytest.raises(ValueError, match="No fiducials available"):
             pipeline.run()
+
+    def test_run_with_mask_sealer(self, synthetic_nifti_path: Path, fiducials_file: Path) -> None:
+        builder = Stage1PipelineBuilder(
+            nifti_path=synthetic_nifti_path,
+            mri_loader=NiftiLoader(),
+            segmenter=OtsuHeadSegmenter(closing_radius=0),
+            extractor=MarchingCubesExtractor(),
+            fiducials_path=fiducials_file,
+        )
+        builder.setup_mask_postprocessors([MaskSealer(radius=2)])
+        pipeline = builder.build()
+
+        result = pipeline.run().get_store_notnull(Stage1Result)
+
+        assert isinstance(result, Stage1Result)
+        assert result.segmentation_mask.mask.dtype == bool
+        assert result.mesh.vertices.shape[0] > 0

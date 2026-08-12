@@ -11,6 +11,9 @@ class VirdaSettings(BaseSettings):
 
     closing_radius: int = 5
 
+    seal_enabled: bool = True
+    seal_radius: int = 4
+
     cleaner_min_vertices: int = 100
     cleaner_merge_digits: int = 7
 
