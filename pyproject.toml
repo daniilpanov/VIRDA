@@ -30,6 +30,7 @@ dev = [
 ]
 research = [
     "matplotlib>=3.11.1",
+    "pyvista>=0.44",
 ]
 
 [tool.black]
