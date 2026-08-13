@@ -84,6 +84,8 @@ class TestStage1Pipeline:
         result = pipeline.run().get_store_notnull(Stage1Result)
 
         vertices = np.load(tmp_path / "mesh" / "scalp_vertices.npy")
+        faces = np.load(tmp_path / "mesh" / "scalp_faces.npy")
 
         assert np.array_equal(vertices, result.mesh.vertices)
+        assert np.array_equal(faces, result.mesh.faces)
         assert (tmp_path / "mesh" / "final_mesh.ply").exists()
