@@ -131,6 +131,8 @@ class Stage1PipelineBuilder:
                     project_dir=self._project_dir,
                     ese_config=self._ese_config,
                     settings=self._settings,
+                    nifti_path=self._nifti_path,
+                    logger=self._logger,
                 ),
                 Stage1Result,
             )

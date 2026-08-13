@@ -223,6 +223,46 @@ class TestStage1Pipeline:
 
         assert not (tmp_path / "input" / "pipeline_config.json").exists()
 
+    def test_run_copies_source_nifti(
+        self, synthetic_nifti_path: Path, tmp_path: Path, fiducials_file: Path
+    ) -> None:
+        pipeline = build_pipeline(
+            synthetic_nifti_path,
+            project_dir=tmp_path,
+            fiducials_path=fiducials_file,
+        )
+
+        pipeline.run().get_store_notnull(Stage1Result)
+
+        copied = tmp_path / "input" / synthetic_nifti_path.name
+        assert copied.read_bytes() == synthetic_nifti_path.read_bytes()
+
+    def test_run_copy_nifti_failure_logs_warning(
+        self,
+        synthetic_nifti_path: Path,
+        tmp_path: Path,
+        fiducials_file: Path,
+        caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import shutil
+
+        def raise_os_error(*args, **kwargs) -> None:
+            raise OSError("copy failed")
+
+        monkeypatch.setattr(shutil, "copy2", raise_os_error)
+        pipeline = build_pipeline(
+            synthetic_nifti_path,
+            project_dir=tmp_path,
+            fiducials_path=fiducials_file,
+        )
+
+        with caplog.at_level("WARNING"):
+            pipeline.run().get_store_notnull(Stage1Result)
+
+        assert not (tmp_path / "input" / synthetic_nifti_path.name).exists()
+        assert any("Failed to copy source NIfTI" in record.message for record in caplog.records)
+
     def test_run_auto_detects_fiducials_when_enabled(
         self, synthetic_nifti_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

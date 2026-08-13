@@ -1,5 +1,8 @@
 import json
+import logging
+import shutil
 from dataclasses import asdict
+from logging import Logger
 from pathlib import Path
 
 import nibabel as nib
@@ -27,6 +30,8 @@ class Stage1Exporter:
         project_dir: Path,
         ese_config: ESEConfig | None = None,
         settings: VirdaSettings | None = None,
+        nifti_path: Path | None = None,
+        logger: Logger | None = None,
     ) -> None:
         self.project = Path(project_dir)
         for subdir in ("input", "mesh", "segmentation", "fiducials", "config"):
@@ -34,6 +39,8 @@ class Stage1Exporter:
 
         self._ese_config = ese_config
         self._settings = settings
+        self._nifti_path = Path(nifti_path) if nifti_path else None
+        self._logger = logger
 
     def provide(self, result: Stage1Result | None) -> None:
         if not result:
@@ -69,3 +76,16 @@ class Stage1Exporter:
             (self.project / "input" / "pipeline_config.json").write_text(
                 json.dumps(self._settings.model_dump(), indent=2)
             )
+
+        # 6. Source NIfTI copy
+        if self._nifti_path is not None:
+            target_path = self.project / "input" / self._nifti_path.name
+            try:
+                shutil.copy2(self._nifti_path, target_path)
+            except OSError:
+                logger = self._logger or logging.getLogger(__name__)
+                logger.warning(
+                    f"Failed to copy source NIfTI ('{self._nifti_path}')"
+                    f" into patient project ('{target_path}')",
+                    exc_info=True,
+                )
