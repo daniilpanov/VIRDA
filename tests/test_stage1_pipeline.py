@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from tests.helpers.pipelines import save_test_fiducials
+from virda.config import VirdaSettings
 from virda.io.fiducial_helpers import load_fiducials
 from virda.io.loader.nifti_loader import NiftiLoader
 from virda.mesh.contracts import MeshPostprocessor
@@ -49,6 +50,7 @@ def build_pipeline(
     fiducials_path: Path | None = None,
     project_dir: Path | None = None,
     ese_config: ESEConfig | None = None,
+    settings: VirdaSettings | None = None,
 ):
     builder = Stage1PipelineBuilder(
         nifti_path=nifti_path,
@@ -58,6 +60,7 @@ def build_pipeline(
         project_dir=project_dir,
         fiducials_path=fiducials_path,
         ese_config=ese_config,
+        settings=settings,
     )
     if postprocessors:
         builder.setup_mesh_postprocessors(postprocessors)
@@ -182,6 +185,43 @@ class TestStage1Pipeline:
         pipeline.run().get_store_notnull(Stage1Result)
 
         assert not (tmp_path / "config" / "ese.json").exists()
+
+    def test_run_exports_settings(
+        self, synthetic_nifti_path: Path, tmp_path: Path, fiducials_file: Path
+    ) -> None:
+        settings = VirdaSettings(
+            n_electrodes=32,
+            ese_offset_mm=2.5,
+            ese_reference="electrode_body_center",
+            _cli_parse_args=False,  # type: ignore[call-arg]
+        )
+        pipeline = build_pipeline(
+            synthetic_nifti_path,
+            project_dir=tmp_path,
+            fiducials_path=fiducials_file,
+            settings=settings,
+        )
+
+        pipeline.run().get_store_notnull(Stage1Result)
+
+        config = json.loads((tmp_path / "input" / "pipeline_config.json").read_text())
+        assert config["n_electrodes"] == 32
+        assert config["ese_offset_mm"] == 2.5
+        assert config["ese_reference"] == "electrode_body_center"
+        assert config["auto_detect_fiducials"] is False
+
+    def test_run_without_settings_skips_pipeline_config(
+        self, synthetic_nifti_path: Path, tmp_path: Path, fiducials_file: Path
+    ) -> None:
+        pipeline = build_pipeline(
+            synthetic_nifti_path,
+            project_dir=tmp_path,
+            fiducials_path=fiducials_file,
+        )
+
+        pipeline.run().get_store_notnull(Stage1Result)
+
+        assert not (tmp_path / "input" / "pipeline_config.json").exists()
 
     def test_run_auto_detects_fiducials_when_enabled(
         self, synthetic_nifti_path: Path, monkeypatch: pytest.MonkeyPatch

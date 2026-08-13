@@ -6,20 +6,34 @@ import nibabel as nib
 import numpy as np
 import trimesh
 
+from virda.config import VirdaSettings
 from virda.io.fiducial_helpers import save_fiducials
 from virda.models.ese_config import ESEConfig
 from virda.models.stage1_result import Stage1Result
 
 
 class Stage1Exporter:
-    """Export Stage 1 artifacts: final mesh, segmentation mask, fiducials, ESE config."""
+    """
+    Export Stage 1 artifacts:
+        final mesh
+        segmentation mask
+        fiducials
+        ESE config
+        settings
+    """
 
-    def __init__(self, project_dir: Path, ese_config: ESEConfig | None = None) -> None:
+    def __init__(
+        self,
+        project_dir: Path,
+        ese_config: ESEConfig | None = None,
+        settings: VirdaSettings | None = None,
+    ) -> None:
         self.project = Path(project_dir)
-        for subdir in ("mesh", "segmentation", "fiducials", "config"):
+        for subdir in ("input", "mesh", "segmentation", "fiducials", "config"):
             (self.project / subdir).mkdir(parents=True, exist_ok=True)
 
         self._ese_config = ese_config
+        self._settings = settings
 
     def provide(self, result: Stage1Result | None) -> None:
         if not result:
@@ -49,3 +63,9 @@ class Stage1Exporter:
         if self._ese_config is not None:
             pipeline_config = {"ese": asdict(self._ese_config)}
             (self.project / "config" / "ese.json").write_text(json.dumps(pipeline_config, indent=2))
+
+        # 5. Processing settings as JSON
+        if self._settings is not None:
+            (self.project / "input" / "pipeline_config.json").write_text(
+                json.dumps(self._settings.model_dump(), indent=2)
+            )

@@ -118,6 +118,7 @@ def run(
             fiducials_path=resolved_fiducials_path,
             auto_detect_fiducials=settings.auto_detect_fiducials,
             ese_config=resolve_ese_config(settings),
+            settings=settings,
         )
         .setup_mask_postprocessors(_build_mask_postprocessors(settings))
         .setup_mesh_postprocessors([cleaner, smoother])

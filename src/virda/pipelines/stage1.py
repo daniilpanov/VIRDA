@@ -2,6 +2,7 @@ from logging import Logger
 from pathlib import Path
 from typing import Self
 
+from virda.config import VirdaSettings
 from virda.fiducials import AutoFiducialsDetector
 from virda.io.loader import MRILoader
 from virda.io.loader.manual_fiducials_loader import ManualFiducialsLoader
@@ -59,6 +60,7 @@ class Stage1PipelineBuilder:
         fiducials_path: Path | str | None = None,
         auto_detect_fiducials: bool = False,
         ese_config: ESEConfig | None = None,
+        settings: VirdaSettings | None = None,
     ) -> None:
         self._nifti_path: Path = Path(nifti_path)
         self._loader: MRILoader = mri_loader
@@ -71,6 +73,7 @@ class Stage1PipelineBuilder:
         self._fiducials_path: Path | None = Path(fiducials_path) if fiducials_path else None
         self._auto_detect_fiducials: bool = auto_detect_fiducials
         self._ese_config: ESEConfig | None = ese_config
+        self._settings: VirdaSettings | None = settings
 
     def setup_mask_postprocessors(
         self, postprocessors: list[SegmentationMaskPostprocessor]
@@ -127,6 +130,7 @@ class Stage1PipelineBuilder:
                 Stage1Exporter(
                     project_dir=self._project_dir,
                     ese_config=self._ese_config,
+                    settings=self._settings,
                 ),
                 Stage1Result,
             )
