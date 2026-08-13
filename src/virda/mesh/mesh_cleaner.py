@@ -3,15 +3,16 @@ from typing import cast
 import numpy as np
 import trimesh
 
+from virda.mesh.contracts import MeshPostprocessor
 from virda.models.scalp_mesh import ScalpMesh
 
 
-class TrimeshCleaner:
+class TrimeshCleaner(MeshPostprocessor):
     def __init__(self, min_component_vertices: int = 100, merge_digits: int = 6) -> None:
         self._min_component_vertices = min_component_vertices
         self._merge_digits = merge_digits
 
-    def clean(self, mesh: ScalpMesh) -> ScalpMesh:
+    def _process(self, mesh: ScalpMesh) -> ScalpMesh:
         trimesh_mesh = trimesh.Trimesh(vertices=mesh.vertices, faces=mesh.faces)
         trimesh_mesh.merge_vertices(
             merge_tex=True, merge_norm=True, digits_vertex=self._merge_digits

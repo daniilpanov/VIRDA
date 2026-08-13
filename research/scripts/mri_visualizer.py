@@ -165,10 +165,7 @@ def plot_interactive_slider(data, axis="axial", cmap="gray"):
 if __name__ == "__main__":
     import sys
 
-    if len(sys.argv) > 1:
-        filepath = sys.argv[1]
-    else:
-        filepath = "example.nii"
+    filepath = sys.argv[1] if len(sys.argv) > 1 else "example.nii"
 
     # Loading
     data, affine, header, img = load_nifti(filepath)

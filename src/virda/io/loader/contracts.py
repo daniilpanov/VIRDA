@@ -1,9 +1,14 @@
-from pathlib import Path
-from typing import Protocol, runtime_checkable
+from abc import ABC, abstractmethod
 
 from virda.models.mri_volume import MRIVolume
+from virda.models.path import NiftiPath
+from virda.pipeline_context import PipelineContext
 
 
-@runtime_checkable
-class MRILoader(Protocol):
-    def load(self, path: str | Path) -> MRIVolume: ...
+class MRILoader(ABC):
+    def run(self, context: PipelineContext) -> MRIVolume:
+        return self._process(context.get_store_notnull(NiftiPath))
+
+    @abstractmethod
+    def _process(self, path: NiftiPath) -> MRIVolume:
+        raise NotImplementedError

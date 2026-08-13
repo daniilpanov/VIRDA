@@ -5,8 +5,10 @@ import nibabel as nib
 import numpy as np
 import pytest
 
+from tests.helpers.pipelines import build_context
 from virda.io.loader.nifti_loader import NiftiLoader
 from virda.models.mri_volume import MRIVolume
+from virda.models.path import NiftiPath
 
 
 class TestNiftiLoader:
@@ -19,7 +21,7 @@ class TestNiftiLoader:
         nib.save(nifti_image, nifti_file_path)
 
         loader = NiftiLoader()
-        loaded_mri = loader.load(nifti_file_path)
+        loaded_mri = loader.run(build_context(NiftiPath=NiftiPath(nifti_file_path)))
 
         assert isinstance(loaded_mri, MRIVolume)
         assert loaded_mri.data.shape == (10, 10, 10)
@@ -54,7 +56,7 @@ class TestNiftiLoader:
         nib.save(nifti_image, nifti_file_path)
 
         loader = NiftiLoader()
-        loaded_mri = loader.load(nifti_file_path)
+        loaded_mri = loader.run(build_context(NiftiPath=NiftiPath(nifti_file_path)))
 
         # Assert: Spacing must be (1.0, 1.0, 2.0)
         np.testing.assert_array_almost_equal(
@@ -70,4 +72,4 @@ class TestNiftiLoader:
     def test_load_raises_on_missing_file(self) -> None:
         loader = NiftiLoader()
         with pytest.raises(FileNotFoundError):
-            loader.load(Path("/nonexistent/path/to/scan.nii.gz"))
+            loader.run(build_context(NiftiPath=NiftiPath(Path("/nonexistent/path/to/scan.nii.gz"))))

@@ -5,9 +5,11 @@ import numpy as np
 import pytest
 
 from virda.io.loader.nifti_loader import NiftiLoader
+from virda.mesh.contracts import MeshPostprocessor
 from virda.mesh.mesh_cleaner import TrimeshCleaner
+from virda.mesh.mesh_extractor import MarchingCubesExtractor
 from virda.models.stage1_result import Stage1Result
-from virda.pipelines.stage1 import Stage1Pipeline
+from virda.pipelines.stage1 import Stage1PipelineBuilder
 from virda.segmentation.head_segmenter import OtsuHeadSegmenter
 
 
@@ -31,21 +33,27 @@ def synthetic_nifti_path(tmp_path: Path) -> Path:
     return nifti_file_path
 
 
+def build_pipeline(nifti_path: Path, postprocessors: list[MeshPostprocessor] | None = None):
+    builder = Stage1PipelineBuilder(
+        nifti_path=nifti_path,
+        mri_loader=NiftiLoader(),
+        segmenter=OtsuHeadSegmenter(closing_radius=0),
+        extractor=MarchingCubesExtractor(),
+    )
+    if postprocessors:
+        builder.setup_mesh_postprocessors(postprocessors)
+    return builder.build()
+
+
 class TestStage1Pipeline:
     def test_run_returns_stage1_result(self, synthetic_nifti_path: Path) -> None:
-        loader = NiftiLoader()
-        segmenter = OtsuHeadSegmenter()
-        cleaner = TrimeshCleaner()
-
-        pipeline = Stage1Pipeline(
-            loader=loader, segmenter=segmenter, cleaner=cleaner, smoother=None
-        )
-        result = pipeline.run(synthetic_nifti_path, closing_radius=0)
+        pipeline = build_pipeline(synthetic_nifti_path)
+        result = pipeline.run().get_store_notnull(Stage1Result)
 
         assert isinstance(result, Stage1Result)
         assert result.mri_volume.data.shape == (20, 20, 20)
-        assert result.segmentation_mask.shape == (20, 20, 20)
-        assert result.segmentation_mask.dtype == bool
+        assert result.segmentation_mask.mask.shape == (20, 20, 20)
+        assert result.segmentation_mask.mask.dtype == bool
         assert result.mesh.vertices.shape[1] == 3
         assert result.mesh.faces.shape[1] == 3
         assert result.mesh.faces.min() >= 0
@@ -54,15 +62,11 @@ class TestStage1Pipeline:
     def test_run_with_smoother(self, synthetic_nifti_path: Path) -> None:
         from virda.mesh.laplacian_smoother import LaplacianSmoother
 
-        loader = NiftiLoader()
-        segmenter = OtsuHeadSegmenter()
-        cleaner = TrimeshCleaner()
-        smoother = LaplacianSmoother(iterations=2, lamb=0.5)
-
-        pipeline = Stage1Pipeline(
-            loader=loader, segmenter=segmenter, cleaner=cleaner, smoother=smoother
+        pipeline = build_pipeline(
+            synthetic_nifti_path,
+            postprocessors=[TrimeshCleaner(), LaplacianSmoother(iterations=2, lamb=0.5)],
         )
-        result = pipeline.run(synthetic_nifti_path, closing_radius=0)
+        result = pipeline.run().get_store_notnull(Stage1Result)
 
         assert isinstance(result, Stage1Result)
         assert result.mesh.vertices.shape[0] > 0
