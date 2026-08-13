@@ -1,5 +1,6 @@
 import trimesh
 
+from virda.mesh.adjacency import build_scalp_mesh
 from virda.mesh.contracts import MeshPostprocessor
 from virda.models.scalp_mesh import ScalpMesh
 
@@ -14,7 +15,7 @@ class LaplacianSmoother(MeshPostprocessor):
         trimesh.smoothing.filter_laplacian(
             trimesh_mesh, lamb=self._lamb, iterations=self._iterations
         )
-        return ScalpMesh(
+        return build_scalp_mesh(
             vertices=trimesh_mesh.vertices.copy(),
             faces=trimesh_mesh.faces.copy(),
         )

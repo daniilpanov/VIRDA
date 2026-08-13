@@ -7,9 +7,24 @@ import numpy as np
 class ScalpMesh:
     vertices: np.ndarray
     faces: np.ndarray
+    face_adjacency: np.ndarray
 
     def __post_init__(self) -> None:
         if self.vertices.ndim != 2 or self.vertices.shape[1] != 3:
             raise ValueError(f"Vertices must be (N, 3) array, got shape {self.vertices.shape}")
         if self.faces.ndim != 2 or self.faces.shape[1] != 3:
             raise ValueError(f"Faces must be (M, 3) array, got shape {self.faces.shape}")
+        if self.face_adjacency.ndim != 2 or self.face_adjacency.shape[1] != 2:
+            raise ValueError(
+                f"Face adjacency must be (E, 2) array, got shape {self.face_adjacency.shape}"
+            )
+        n_faces = self.faces.shape[0]
+        if (
+            n_faces
+            and self.face_adjacency.size
+            and (self.face_adjacency.min() < 0 or self.face_adjacency.max() >= n_faces)
+        ):
+            raise ValueError(
+                f"Face adjacency indices must be in [0, {n_faces}), "
+                f"got [{self.face_adjacency.min()}, {self.face_adjacency.max()}]"
+            )
