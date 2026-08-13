@@ -6,6 +6,29 @@ from virda.models.mri_volume import MRIVolume
 from virda.segmentation.head_segmenter import OtsuHeadSegmenter
 
 
+def _volume_from_flat_data(flat_data: np.ndarray, shape: tuple[int, int, int]) -> MRIVolume:
+    return MRIVolume(
+        data=flat_data.reshape(shape).astype(np.float32),
+        affine=np.eye(4),
+        spacing=(1.0, 1.0, 1.0),
+        orientation=("R", "A", "S"),
+    )
+
+
+@pytest.fixture
+def three_level_volume() -> MRIVolume:
+    """Background 0 (dominant), low tissue 40 (majority of foreground),
+    high tissue 100 (rare). Reproduces the real-data histogram shape where
+    background air drags the global Otsu threshold down to the background edge."""
+    total = 60 * 60 * 60
+    background = int(total * 0.7)
+    low_tissue = int(total * 0.29)
+    flat_data = np.zeros(total, dtype=np.float32)
+    flat_data[background : background + low_tissue] = 40.0
+    flat_data[background + low_tissue :] = 100.0
+    return _volume_from_flat_data(flat_data, (60, 60, 60))
+
+
 @pytest.fixture
 def sphere_volume() -> MRIVolume:
     volume_shape = (30, 30, 30)
@@ -81,3 +104,58 @@ class TestHeadSegmenter:
         assert segmentation_mask.mask.shape == (10, 10, 10)
         assert segmentation_mask.mask.dtype == bool
         assert not np.any(segmentation_mask.mask)
+
+
+class TestOtsuScopeAndScale:
+    N_LOW = int(60 * 60 * 60 * 0.29)
+    N_HIGH = 60 * 60 * 60 - int(60 * 60 * 60 * 0.7) - int(60 * 60 * 60 * 0.29)
+
+    def test_scope_all_keeps_low_intensity_tissue(self, three_level_volume: MRIVolume) -> None:
+        segmenter = OtsuHeadSegmenter(closing_radius=0, otsu_scope="all")
+
+        mask = segmenter.run(build_context(MRIVolume=three_level_volume)).mask
+
+        assert mask.sum() == self.N_LOW + self.N_HIGH
+
+    def test_scope_foreground_excludes_low_intensity_tissue(
+        self, three_level_volume: MRIVolume
+    ) -> None:
+        segmenter = OtsuHeadSegmenter(
+            closing_radius=0, otsu_scope="foreground", threshold_scale=1.0
+        )
+
+        mask = segmenter.run(build_context(MRIVolume=three_level_volume)).mask
+
+        assert mask.sum() == self.N_HIGH
+
+    def test_threshold_scale_brings_low_intensity_tissue_back(
+        self, three_level_volume: MRIVolume
+    ) -> None:
+        segmenter = OtsuHeadSegmenter(
+            closing_radius=0, otsu_scope="foreground", threshold_scale=0.4
+        )
+
+        mask = segmenter.run(build_context(MRIVolume=three_level_volume)).mask
+
+        assert mask.sum() == self.N_LOW + self.N_HIGH
+
+    def test_foreground_scope_matches_all_scope_on_uniform_sphere(
+        self, sphere_volume: MRIVolume
+    ) -> None:
+        foreground = OtsuHeadSegmenter(
+            closing_radius=0, otsu_scope="foreground", threshold_scale=1.0
+        )
+        all_scope = OtsuHeadSegmenter(closing_radius=0, otsu_scope="all")
+
+        foreground_mask = foreground.run(build_context(MRIVolume=sphere_volume)).mask
+        all_mask = all_scope.run(build_context(MRIVolume=sphere_volume)).mask
+
+        np.testing.assert_array_equal(foreground_mask, all_mask)
+
+    def test_invalid_scope_raises(self) -> None:
+        with pytest.raises(ValueError, match="otsu_scope"):
+            OtsuHeadSegmenter(otsu_scope="bogus")  # type: ignore[arg-type]
+
+    def test_nonpositive_threshold_scale_raises(self) -> None:
+        with pytest.raises(ValueError, match="threshold_scale"):
+            OtsuHeadSegmenter(threshold_scale=0)
