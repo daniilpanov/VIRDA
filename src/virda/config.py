@@ -10,6 +10,7 @@ from pydantic_settings import (
     YamlConfigSettingsSource,
 )
 
+from virda.models.ese_config import ESEConfig
 from virda.segmentation.head_segmenter import OtsuScope
 
 
@@ -47,6 +48,10 @@ class VirdaSettings(BaseSettings):
     smoother_lamb: float = 0.5
     smoother_nu: float = -0.53
 
+    n_electrodes: int | None = None
+    ese_offset_mm: float | None = None
+    ese_reference: str | None = None
+
     model_config = SettingsConfigDict(
         cli_parse_args=True,
         env_file=resolve_config_file(),
@@ -78,6 +83,21 @@ class VirdaSettings(BaseSettings):
             YamlConfigSettingsSource(settings_cls),
             file_secret_settings,
         )
+
+
+def resolve_ese_config(settings: VirdaSettings) -> ESEConfig | None:
+    """Build the ESE config when fully configured, otherwise return None."""
+    if (
+        settings.n_electrodes is None
+        or settings.ese_offset_mm is None
+        or settings.ese_reference is None
+    ):
+        return None
+    return ESEConfig(
+        n_electrodes=settings.n_electrodes,
+        ese_offset_mm=settings.ese_offset_mm,
+        ese_reference=settings.ese_reference,
+    )
 
 
 @cache

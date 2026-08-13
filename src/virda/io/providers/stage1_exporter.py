@@ -1,20 +1,46 @@
+import json
+import logging
+import shutil
+from dataclasses import asdict
+from logging import Logger
 from pathlib import Path
 
 import nibabel as nib
 import numpy as np
 import trimesh
 
+from virda.config import VirdaSettings
 from virda.io.fiducial_helpers import save_fiducials
+from virda.models.ese_config import ESEConfig
 from virda.models.stage1_result import Stage1Result
 
 
 class Stage1Exporter:
-    """Export Stage 1 artifacts: final mesh, segmentation mask, fiducials."""
+    """
+    Export Stage 1 artifacts:
+        final mesh
+        segmentation mask
+        fiducials
+        ESE config
+        settings
+    """
 
-    def __init__(self, project_dir: Path) -> None:
+    def __init__(
+        self,
+        project_dir: Path,
+        ese_config: ESEConfig | None = None,
+        settings: VirdaSettings | None = None,
+        nifti_path: Path | None = None,
+        logger: Logger | None = None,
+    ) -> None:
         self.project = Path(project_dir)
-        for subdir in ("mesh", "segmentation", "fiducials"):
+        for subdir in ("input", "mesh", "segmentation", "fiducials", "config"):
             (self.project / subdir).mkdir(parents=True, exist_ok=True)
+
+        self._ese_config = ese_config
+        self._settings = settings
+        self._nifti_path = Path(nifti_path) if nifti_path else None
+        self._logger = logger
 
     def provide(self, result: Stage1Result | None) -> None:
         if not result:
@@ -39,3 +65,27 @@ class Stage1Exporter:
 
         # 3. Fiducials as JSON
         save_fiducials(self.project / "fiducials" / "fiducials.json", result.fiducials)
+
+        # 4. Processing ESE config as JSON
+        if self._ese_config is not None:
+            pipeline_config = {"ese": asdict(self._ese_config)}
+            (self.project / "config" / "ese.json").write_text(json.dumps(pipeline_config, indent=2))
+
+        # 5. Processing settings as JSON
+        if self._settings is not None:
+            (self.project / "input" / "pipeline_config.json").write_text(
+                json.dumps(self._settings.model_dump(), indent=2)
+            )
+
+        # 6. Source NIfTI copy
+        if self._nifti_path is not None:
+            target_path = self.project / "input" / self._nifti_path.name
+            try:
+                shutil.copy2(self._nifti_path, target_path)
+            except OSError:
+                logger = self._logger or logging.getLogger(__name__)
+                logger.warning(
+                    f"Failed to copy source NIfTI ('{self._nifti_path}')"
+                    f" into patient project ('{target_path}')",
+                    exc_info=True,
+                )

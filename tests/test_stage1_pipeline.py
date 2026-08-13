@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import nibabel as nib
@@ -5,11 +6,13 @@ import numpy as np
 import pytest
 
 from tests.helpers.pipelines import save_test_fiducials
+from virda.config import VirdaSettings
 from virda.io.fiducial_helpers import load_fiducials
 from virda.io.loader.nifti_loader import NiftiLoader
 from virda.mesh.contracts import MeshPostprocessor
 from virda.mesh.mesh_cleaner import TrimeshCleaner
 from virda.mesh.mesh_extractor import MarchingCubesExtractor
+from virda.models.ese_config import ESEConfig
 from virda.models.stage1_result import Stage1Result
 from virda.pipelines.stage1 import Stage1PipelineBuilder
 from virda.segmentation.head_segmenter import OtsuHeadSegmenter
@@ -46,6 +49,8 @@ def build_pipeline(
     postprocessors: list[MeshPostprocessor] | None = None,
     fiducials_path: Path | None = None,
     project_dir: Path | None = None,
+    ese_config: ESEConfig | None = None,
+    settings: VirdaSettings | None = None,
 ):
     builder = Stage1PipelineBuilder(
         nifti_path=nifti_path,
@@ -54,6 +59,8 @@ def build_pipeline(
         extractor=MarchingCubesExtractor(),
         project_dir=project_dir,
         fiducials_path=fiducials_path,
+        ese_config=ese_config,
+        settings=settings,
     )
     if postprocessors:
         builder.setup_mesh_postprocessors(postprocessors)
@@ -141,6 +148,120 @@ class TestStage1Pipeline:
         assert exported_path.exists()
         restored = load_fiducials(exported_path)
         assert restored.ids == result.fiducials.ids
+
+    def test_run_exports_ese_config(
+        self, synthetic_nifti_path: Path, tmp_path: Path, fiducials_file: Path
+    ) -> None:
+        ese_config = ESEConfig(
+            n_electrodes=32, ese_offset_mm=2.5, ese_reference="electrode_body_center"
+        )
+        pipeline = build_pipeline(
+            synthetic_nifti_path,
+            project_dir=tmp_path,
+            fiducials_path=fiducials_file,
+            ese_config=ese_config,
+        )
+
+        pipeline.run().get_store_notnull(Stage1Result)
+
+        config = json.loads((tmp_path / "config" / "ese.json").read_text())
+        assert config == {
+            "ese": {
+                "n_electrodes": 32,
+                "ese_offset_mm": 2.5,
+                "ese_reference": "electrode_body_center",
+            }
+        }
+
+    def test_run_without_ese_config_skips_pipeline_config(
+        self, synthetic_nifti_path: Path, tmp_path: Path, fiducials_file: Path
+    ) -> None:
+        pipeline = build_pipeline(
+            synthetic_nifti_path,
+            project_dir=tmp_path,
+            fiducials_path=fiducials_file,
+        )
+
+        pipeline.run().get_store_notnull(Stage1Result)
+
+        assert not (tmp_path / "config" / "ese.json").exists()
+
+    def test_run_exports_settings(
+        self, synthetic_nifti_path: Path, tmp_path: Path, fiducials_file: Path
+    ) -> None:
+        settings = VirdaSettings(
+            n_electrodes=32,
+            ese_offset_mm=2.5,
+            ese_reference="electrode_body_center",
+            _cli_parse_args=False,  # type: ignore[call-arg]
+        )
+        pipeline = build_pipeline(
+            synthetic_nifti_path,
+            project_dir=tmp_path,
+            fiducials_path=fiducials_file,
+            settings=settings,
+        )
+
+        pipeline.run().get_store_notnull(Stage1Result)
+
+        config = json.loads((tmp_path / "input" / "pipeline_config.json").read_text())
+        assert config["n_electrodes"] == 32
+        assert config["ese_offset_mm"] == 2.5
+        assert config["ese_reference"] == "electrode_body_center"
+        assert config["auto_detect_fiducials"] is False
+
+    def test_run_without_settings_skips_pipeline_config(
+        self, synthetic_nifti_path: Path, tmp_path: Path, fiducials_file: Path
+    ) -> None:
+        pipeline = build_pipeline(
+            synthetic_nifti_path,
+            project_dir=tmp_path,
+            fiducials_path=fiducials_file,
+        )
+
+        pipeline.run().get_store_notnull(Stage1Result)
+
+        assert not (tmp_path / "input" / "pipeline_config.json").exists()
+
+    def test_run_copies_source_nifti(
+        self, synthetic_nifti_path: Path, tmp_path: Path, fiducials_file: Path
+    ) -> None:
+        pipeline = build_pipeline(
+            synthetic_nifti_path,
+            project_dir=tmp_path,
+            fiducials_path=fiducials_file,
+        )
+
+        pipeline.run().get_store_notnull(Stage1Result)
+
+        copied = tmp_path / "input" / synthetic_nifti_path.name
+        assert copied.read_bytes() == synthetic_nifti_path.read_bytes()
+
+    def test_run_copy_nifti_failure_logs_warning(
+        self,
+        synthetic_nifti_path: Path,
+        tmp_path: Path,
+        fiducials_file: Path,
+        caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import shutil
+
+        def raise_os_error(*args, **kwargs) -> None:
+            raise OSError("copy failed")
+
+        monkeypatch.setattr(shutil, "copy2", raise_os_error)
+        pipeline = build_pipeline(
+            synthetic_nifti_path,
+            project_dir=tmp_path,
+            fiducials_path=fiducials_file,
+        )
+
+        with caplog.at_level("WARNING"):
+            pipeline.run().get_store_notnull(Stage1Result)
+
+        assert not (tmp_path / "input" / synthetic_nifti_path.name).exists()
+        assert any("Failed to copy source NIfTI" in record.message for record in caplog.records)
 
     def test_run_auto_detects_fiducials_when_enabled(
         self, synthetic_nifti_path: Path, monkeypatch: pytest.MonkeyPatch

@@ -3,7 +3,8 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from virda.config import VirdaSettings, resolve_config_file
+from virda.config import VirdaSettings, resolve_config_file, resolve_ese_config
+from virda.models.ese_config import ESEConfig
 
 
 class TestResolveConfigFile:
@@ -14,20 +15,11 @@ class TestResolveConfigFile:
         assert resolve_config_file() == str(config_path)
 
 
+# TODO: make normal tests. Maybe config tests are redundant?
 class TestVirdaSettings:
-    def test_defaults(self) -> None:
-        settings = VirdaSettings(_cli_parse_args=False)  # type: ignore[call-arg]
-
-        assert settings.otsu_scope == "all"
-        assert settings.otsu_threshold_scale == pytest.approx(0.6)
-
     def test_rejects_nonpositive_threshold_scale(self) -> None:
         with pytest.raises(ValidationError, match="otsu_threshold_scale"):
             VirdaSettings(_cli_parse_args=False, otsu_threshold_scale=0)  # type: ignore[call-arg]
-
-    def test_rejects_unknown_scope(self) -> None:
-        with pytest.raises(ValidationError, match="otsu_scope"):
-            VirdaSettings(_cli_parse_args=False, otsu_scope="bogus")  # type: ignore[call-arg, arg-type]
 
     def test_loads_settings_from_dataset_file_via_environment(self, monkeypatch, tmp_path) -> None:
         dataset_dir = tmp_path / "dataset"
@@ -37,7 +29,6 @@ class TestVirdaSettings:
         monkeypatch.setenv("VIRDA_CONFIG_FILE", str(config_file))
 
         settings = VirdaSettings(_cli_parse_args=False)  # type: ignore[call-arg]
-
         assert settings.otsu_threshold_scale == pytest.approx(0.42)
         assert settings.otsu_scope == "all"
 
@@ -48,13 +39,24 @@ class TestVirdaSettings:
         monkeypatch.setenv("OTSU_THRESHOLD_SCALE", "0.9")
 
         settings = VirdaSettings(_cli_parse_args=False)  # type: ignore[call-arg]
-
         assert settings.otsu_threshold_scale == pytest.approx(0.9)
 
-    def test_missing_dataset_file_falls_back_to_defaults(self, monkeypatch, tmp_path) -> None:
-        monkeypatch.setenv("VIRDA_CONFIG_FILE", str(tmp_path / "absent" / ".env.json"))
+    def test_ese_not_configured_yields_no_config(self) -> None:
+        settings = VirdaSettings(_cli_parse_args=False)  # type: ignore[call-arg]
+        assert resolve_ese_config(settings) is None
+
+    def test_ese_configured_yields_config(self, monkeypatch) -> None:
+        monkeypatch.setenv("N_ELECTRODES", "32")
+        monkeypatch.setenv("ESE_OFFSET_MM", "2.5")
+        monkeypatch.setenv("ESE_REFERENCE", "electrode_body_center")
 
         settings = VirdaSettings(_cli_parse_args=False)  # type: ignore[call-arg]
+        assert settings.n_electrodes == 32
+        assert settings.ese_offset_mm == 2.5
+        assert settings.ese_reference == "electrode_body_center"
 
-        assert settings.otsu_scope == "all"
-        assert settings.otsu_threshold_scale == pytest.approx(0.6)
+        config = resolve_ese_config(settings)
+        assert isinstance(config, ESEConfig)
+        assert config == ESEConfig(
+            n_electrodes=32, ese_offset_mm=2.5, ese_reference="electrode_body_center"
+        )

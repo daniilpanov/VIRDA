@@ -1,7 +1,7 @@
 import logging
 from pathlib import Path
 
-from virda.config import VirdaSettings, get_virda_settings
+from virda.config import VirdaSettings, get_virda_settings, resolve_ese_config
 from virda.io.loader.nifti_loader import NiftiLoader
 from virda.mesh.contracts import MeshPostprocessor
 from virda.mesh.laplacian_smoother import LaplacianSmoother
@@ -117,6 +117,8 @@ def run(
             logger=logger,
             fiducials_path=resolved_fiducials_path,
             auto_detect_fiducials=settings.auto_detect_fiducials,
+            ese_config=resolve_ese_config(settings),
+            settings=settings,
         )
         .setup_mask_postprocessors(_build_mask_postprocessors(settings))
         .setup_mesh_postprocessors([cleaner, smoother])
