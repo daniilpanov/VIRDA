@@ -31,6 +31,7 @@ dev = [
     "ruff>=0.16.1",
     "pre-commit>=3.8",
     "scipy-stubs>=1.14",  # for strict mypy
+    "types-tqdm>=4.66",  # for strict mypy
 ]
 research = [
     "matplotlib>=3.11.1",
