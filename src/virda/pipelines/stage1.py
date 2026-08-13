@@ -1,7 +1,9 @@
+from logging import Logger
 from pathlib import Path
 from typing import Self
 
 from virda.io.loader import MRILoader
+from virda.io.providers.logging_provider import StoreLoggingProvider
 from virda.io.providers.mesh_versioning_provider import ScalpMeshVersioningProvider
 from virda.mesh import MeshExtractor, MeshPostprocessor
 from virda.models.mri_volume import MRIVolume
@@ -31,6 +33,7 @@ class Stage1PipelineBuilder:
         segmenter: HeadSegmenter,
         extractor: MeshExtractor,
         project_dir: Path | None = None,
+        logger: Logger | None = None,
     ) -> None:
         self._nifti_path: Path = Path(nifti_path)
         self._loader: MRILoader = mri_loader
@@ -38,6 +41,7 @@ class Stage1PipelineBuilder:
         self._mesh_extractor: MeshExtractor = extractor
         self._mesh_postprocessors: list[MeshPostprocessor] = []
         self._project_dir: Path | None = project_dir
+        self._logger: Logger | None = logger
 
     def setup_mesh_postprocessors(self, postprocessors: list[MeshPostprocessor]) -> Self:
         """Add mesh cleaners, smoothers, etc."""
@@ -64,6 +68,11 @@ class Stage1PipelineBuilder:
         controller.register_store(ScalpMesh)
 
         # -- Providers --
+        if self._logger:
+            log_provider = StoreLoggingProvider(self._logger)
+            for store_type in (MRIVolume, SegmentationMask, ScalpMesh, Stage1Result):
+                controller.register_provider(log_provider, on_store=store_type)
+
         if self._project_dir:
             controller.register_provider(
                 ScalpMeshVersioningProvider(self._project_dir / "mesh" / "versions"),
