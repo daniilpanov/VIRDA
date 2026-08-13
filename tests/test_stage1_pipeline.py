@@ -70,3 +70,20 @@ class TestStage1Pipeline:
 
         assert isinstance(result, Stage1Result)
         assert result.mesh.vertices.shape[0] > 0
+
+    def test_run_exports_mesh_arrays(self, synthetic_nifti_path: Path, tmp_path: Path) -> None:
+        builder = Stage1PipelineBuilder(
+            nifti_path=synthetic_nifti_path,
+            mri_loader=NiftiLoader(),
+            segmenter=OtsuHeadSegmenter(closing_radius=0),
+            extractor=MarchingCubesExtractor(),
+            project_dir=tmp_path,
+        )
+        pipeline = builder.build()
+
+        result = pipeline.run().get_store_notnull(Stage1Result)
+
+        vertices = np.load(tmp_path / "mesh" / "scalp_vertices.npy")
+
+        assert np.array_equal(vertices, result.mesh.vertices)
+        assert (tmp_path / "mesh" / "final_mesh.ply").exists()

@@ -23,6 +23,7 @@ class Stage1Exporter:
         mesh = result.mesh
         tm = trimesh.Trimesh(vertices=mesh.vertices, faces=mesh.faces)
         tm.export(str(self.project / "mesh" / "final_mesh.ply"))
+        np.save(str(self.project / "mesh" / "scalp_vertices.npy"), mesh.vertices)
 
         # 2. Segmentation mask as NIfTI (preserves MRI affine)
         seg = result.segmentation_mask
