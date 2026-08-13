@@ -26,6 +26,10 @@ class Stage1Exporter:
         tm.export(str(self.project / "mesh" / "final_mesh.ply"))
         np.save(str(self.project / "mesh" / "scalp_vertices.npy"), mesh.vertices)
         np.save(str(self.project / "mesh" / "scalp_faces.npy"), mesh.faces)
+        np.save(str(self.project / "mesh" / "scalp_face_adjacency.npy"), mesh.face_adjacency)
+        (self.project / "mesh" / "n_adjacency_edges.json").write_text(
+            f'{{"n_adjacency_edges": {mesh.face_adjacency.shape[0]}}}'
+        )
 
         # 2. Segmentation mask as NIfTI (preserves MRI affine)
         seg = result.segmentation_mask
