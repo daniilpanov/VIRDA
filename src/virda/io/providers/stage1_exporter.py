@@ -4,6 +4,7 @@ import nibabel as nib
 import numpy as np
 import trimesh
 
+from virda.io.fiducial_helpers import save_fiducials
 from virda.models.stage1_result import Stage1Result
 
 
@@ -31,3 +32,6 @@ class Stage1Exporter:
         mri = result.mri_volume
         seg_nii = nib.Nifti1Image(seg.mask.astype(np.uint8), mri.affine)
         nib.save(seg_nii, str(self.project / "segmentation" / "head_mask.nii.gz"))
+
+        # 3. Fiducials as JSON
+        save_fiducials(self.project / "fiducials" / "fiducials.json", result.fiducials)

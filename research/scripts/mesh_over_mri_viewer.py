@@ -4,25 +4,29 @@ Standalone research script for manual quality control of the Stage 1 output.
 It renders the scalp mesh on top of a semi-transparent MRI volume and places
 both objects in the same coordinate frame using the NIfTI affine, so the mesh
 overlays the actual scalp in all three views. On-screen checkboxes toggle the
-visibility of the mesh and the MRI, and a "Boost contrast" checkbox sharpens
-the MRI (opaque skin surface) and the mesh (bright solid surface that makes
-holes visible).
+visibility of the mesh, the MRI and the fiducial points (with labels), and a
+"Boost contrast" checkbox sharpens the MRI (opaque skin surface) and the mesh
+(bright solid surface that makes holes visible).
 
 Usage
 -----
     python research/scripts/mesh_over_mri_viewer.py --nifti <scan.nii.gz>
     python research/scripts/mesh_over_mri_viewer.py --mesh <final_mesh.ply>
     python research/scripts/mesh_over_mri_viewer.py --nifti <scan.nii.gz> --mesh <final_mesh.ply>
+    python research/scripts/mesh_over_mri_viewer.py --nifti <scan.nii.gz> --mesh <final_mesh.ply> \\
+        --fiducials <fiducials/fiducials.json>
 
 At least one of ``--nifti`` or ``--mesh`` is required.
 
 If the affine is axis-aligned with positive spacing the scene is shown in world
 millimeters; otherwise the mesh is transformed into voxel index space so that
 the overlay stays correct for rotated or flipped affines as well. A mesh shown
-on its own stays in its native (world) coordinates.
+on its own stays in its native (world) coordinates. Fiducial points are stored
+in world coordinates and are transformed into the scene frame accordingly.
 """
 
 import argparse
+import json
 
 import nibabel as nib
 import numpy as np
@@ -87,6 +91,18 @@ def _load_mesh_poly(mesh_path: str) -> pv.PolyData:
     face_array[:, 0] = 3
     face_array[:, 1:] = faces
     return pv.PolyData(vertices, face_array.ravel())
+
+
+def _load_fiducial_points(path: str) -> tuple[np.ndarray, list[str]]:
+    """Read fiducials JSON (``{"fiducials": [...]}``) into points and labels."""
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+    points = np.asarray(
+        [np.asarray(item["coordinates"], dtype=np.float64) for item in data["fiducials"]],
+        dtype=np.float64,
+    )
+    labels = [f"{item['fiducial_id']} ({item['name']})" for item in data["fiducials"]]
+    return points, labels
 
 
 def _scene_bounds_to_world(bounds: _BOUNDS, transform: np.ndarray) -> _BOUNDS:
@@ -205,6 +221,10 @@ def main() -> None:
     parser.add_argument(
         "--mesh-opacity", type=float, default=0.6, help="Scalp mesh opacity (0..1)."
     )
+    parser.add_argument(
+        "--fiducials",
+        help="Path to fiducials JSON (fiducials/fiducials.json).",
+    )
     args = parser.parse_args()
 
     if not args.nifti and not args.mesh:
@@ -231,6 +251,11 @@ def main() -> None:
     volume, scene_mesh, mm_scene = _build_scene(data, affine, mesh_poly)
     _print_qc(spacing, orientation, volume, scene_mesh, affine, mm_scene)
 
+    fiducial_points = None
+    fiducial_labels: list[str] = []
+    if args.fiducials:
+        fiducial_points, fiducial_labels = _load_fiducial_points(args.fiducials)
+
     plotter = pv.Plotter(title="VIRDA — scalp mesh and/or MRI volume")
     mri_actor = None
     mesh_actor = None
@@ -238,6 +263,26 @@ def main() -> None:
         mri_actor = plotter.add_volume(volume, cmap="bone", opacity="sigmoid", mapper="smart")
     if scene_mesh is not None:
         mesh_actor = plotter.add_mesh(scene_mesh, color="salmon", opacity=args.mesh_opacity)
+
+    fiducial_actor = None
+    fiducial_label_actor = None
+    if fiducial_points is not None and len(fiducial_points) > 0:
+        scene_points = fiducial_points
+        if not mm_scene:
+            inverse = np.linalg.inv(affine)
+            scene_points = fiducial_points @ inverse[:3, :3].T + inverse[:3, 3]
+        fiducial_actor = plotter.add_points(
+            scene_points, color="red", point_size=10, render_points_as_spheres=True
+        )
+        fiducial_label_actor = plotter.add_point_labels(
+            scene_points,
+            fiducial_labels,
+            font_size=12,
+            text_color="white",
+            background_color="black",
+            show_points=False,
+            shape=None,
+        )
 
     y = 10
     mri_visible = {"on": True}
@@ -293,6 +338,18 @@ def main() -> None:
     if mri_actor is not None:
         plotter.add_checkbox_button_widget(set_mri_visibility, value=True, position=(10, y))
         plotter.add_text("Show MRI", position=(75, y + 10), font_size=18, name="mri_label")
+        y += 50
+    if fiducial_actor is not None:
+
+        def set_fiducials_visibility(flag: bool) -> None:
+            fiducial_actor.SetVisibility(flag)
+            if fiducial_label_actor is not None:
+                fiducial_label_actor.SetVisibility(flag)
+
+        plotter.add_checkbox_button_widget(set_fiducials_visibility, value=True, position=(10, y))
+        plotter.add_text(
+            "Show fiducials", position=(75, y + 10), font_size=18, name="fiducials_label"
+        )
         y += 50
     plotter.add_checkbox_button_widget(set_contrast, value=False, position=(10, y))
     plotter.add_text("Boost contrast", position=(75, y + 10), font_size=18, name="contrast_label")

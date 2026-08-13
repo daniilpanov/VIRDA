@@ -39,6 +39,7 @@ def _setup_logging(log_dir: Path) -> logging.Logger:
 def run(
     nifti_path: str | Path | None = None,
     project_dir: str | Path | None = None,
+    fiducials_path: str | Path | None = None,
 ) -> Stage1Result:
     """Run the full VIRDA pipeline: Stage 1 → 2 → 3.
 
@@ -48,6 +49,8 @@ def run(
         Path to T1-weighted NIfTI. Falls back to ``settings.nifti_path``.
     project_dir
         Path to output directory
+    fiducials_path
+        Path to manual fiducials file. Falls back to ``settings.fiducials_path``.
 
     Returns
     -------
@@ -73,7 +76,9 @@ def run(
     (project / "logs").mkdir(parents=True, exist_ok=True)
     logger = _setup_logging(project / "logs")
 
-    # Stage 1: MRI → Segmentation → Mesh
+    resolved_fiducials_path = fiducials_path or settings.fiducials_path
+
+    # Stage 1: MRI → Segmentation → Mesh → Fiducials
     loader = NiftiLoader()
     segmenter = OtsuHeadSegmenter(closing_radius=settings.closing_radius)
     extractor = MarchingCubesExtractor()
@@ -104,6 +109,8 @@ def run(
             extractor=extractor,
             project_dir=project,
             logger=logger,
+            fiducials_path=resolved_fiducials_path,
+            auto_detect_fiducials=settings.auto_detect_fiducials,
         )
         .setup_mesh_postprocessors([cleaner, smoother])
         .build()
