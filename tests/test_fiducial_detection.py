@@ -12,6 +12,7 @@ from virda.fiducials.detect import (
     to_fiducials,
 )
 from virda.fiducials.detector import AutoFiducialsDetector
+from virda.mesh.adjacency import build_scalp_mesh
 from virda.models.fiducial import AutoDetectedFiducials
 from virda.models.scalp_mesh import ScalpMesh
 
@@ -45,7 +46,7 @@ def _head_mesh() -> ScalpMesh:
     field = r0 - nose - inion
 
     verts, faces, _, _ = marching_cubes(field, level=1.0)
-    return ScalpMesh(
+    return build_scalp_mesh(
         vertices=verts.astype(np.float64) * spacing + origin,
         faces=faces.astype(np.int64),
     )

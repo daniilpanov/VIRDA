@@ -101,10 +101,17 @@ class TestStage1Pipeline:
 
         vertices = np.load(tmp_path / "mesh" / "scalp_vertices.npy")
         faces = np.load(tmp_path / "mesh" / "scalp_faces.npy")
+        face_adjacency = np.load(tmp_path / "mesh" / "scalp_face_adjacency.npy")
 
         assert np.array_equal(vertices, result.mesh.vertices)
         assert np.array_equal(faces, result.mesh.faces)
+        assert np.array_equal(face_adjacency, result.mesh.face_adjacency)
         assert (tmp_path / "mesh" / "final_mesh.ply").exists()
+
+        n_adjacency_edges = (tmp_path / "mesh" / "n_adjacency_edges.json").read_text()
+        assert (
+            n_adjacency_edges == f'{{"n_adjacency_edges": {result.mesh.face_adjacency.shape[0]}}}'
+        )
 
     def test_run_populates_fiducials(
         self, synthetic_nifti_path: Path, fiducials_file: Path

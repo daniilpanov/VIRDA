@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 from tests.helpers.pipelines import build_context
+from virda.mesh.adjacency import build_scalp_mesh
 from virda.mesh.mesh_cleaner import TrimeshCleaner
 from virda.models.mri_volume import MRIVolume
 from virda.models.scalp_mesh import ScalpMesh
@@ -66,7 +67,7 @@ class TestTrimeshCleaner:
             [clean_sphere_mesh.faces, small_island_faces + clean_sphere_mesh.vertices.shape[0]]
         )
 
-        corrupted_mesh = ScalpMesh(vertices=combined_vertices, faces=combined_faces)
+        corrupted_mesh = build_scalp_mesh(vertices=combined_vertices, faces=combined_faces)
 
         cleaner = TrimeshCleaner(min_component_vertices=50)
         cleaned = cleaner.run(build_context(ScalpMesh=corrupted_mesh))
@@ -86,7 +87,7 @@ class TestTrimeshCleaner:
             ]
         )
         faces = np.array([[0, 1, 2], [3, 4, 5]])
-        mesh = ScalpMesh(vertices=vertices, faces=faces)
+        mesh = build_scalp_mesh(vertices=vertices, faces=faces)
 
         cleaner = TrimeshCleaner()
         cleaned = cleaner.run(build_context(ScalpMesh=mesh))
