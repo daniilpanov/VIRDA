@@ -82,7 +82,11 @@ def run(
 
     # Stage 1: MRI → Segmentation → Mesh → Fiducials
     loader = NiftiLoader()
-    segmenter = OtsuHeadSegmenter(closing_radius=settings.closing_radius)
+    segmenter = OtsuHeadSegmenter(
+        closing_radius=settings.closing_radius,
+        otsu_scope=settings.otsu_scope,
+        threshold_scale=settings.otsu_threshold_scale,
+    )
     extractor = MarchingCubesExtractor()
 
     cleaner = TrimeshCleaner(
