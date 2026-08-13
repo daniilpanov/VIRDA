@@ -1,3 +1,3 @@
-from virda.io.loader.contracts import MRILoader
+from virda.io.loader.contracts import FiducialsLoader, MRILoader
 
-__all__ = ["MRILoader"]
+__all__ = ["FiducialsLoader", "MRILoader"]

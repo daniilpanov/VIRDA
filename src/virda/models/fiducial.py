@@ -48,3 +48,9 @@ class Fiducials:
             if fiducial.fiducial_id == fiducial_id:
                 return fiducial
         return None
+
+
+@dataclass(frozen=True)
+class ManualFiducials:
+    fiducials: Fiducials
+

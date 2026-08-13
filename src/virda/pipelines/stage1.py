@@ -3,12 +3,14 @@ from pathlib import Path
 from typing import Self
 
 from virda.io.loader import MRILoader
+from virda.io.loader.manual_fiducials_loader import ManualFiducialsLoader
 from virda.io.providers.logging_provider import StoreLoggingProvider
 from virda.io.providers.mesh_versioning_provider import ScalpMeshVersioningProvider
 from virda.io.providers.stage1_exporter import Stage1Exporter
 from virda.mesh import MeshExtractor, MeshPostprocessor
+from virda.models.fiducial import Fiducials, ManualFiducials
 from virda.models.mri_volume import MRIVolume
-from virda.models.path import NiftiPath
+from virda.models.path import FiducialsPath, NiftiPath
 from virda.models.scalp_mesh import ScalpMesh
 from virda.models.segmentation_mask import SegmentationMask
 from virda.models.stage1_result import Stage1Result
@@ -17,12 +19,22 @@ from virda.pipeline_context import PipelineContext
 from virda.segmentation import HeadSegmenter
 
 
+class FiducialsRegistrationStep:
+    def run(self, context: PipelineContext) -> Fiducials:
+        manual = context.get_store(ManualFiducials)
+        if manual is not None:
+            return manual.fiducials
+
+        raise ValueError("No fiducials available: provide a manual fiducials file")
+
+
 class OutputGenerator:
     def run(self, context: PipelineContext) -> Stage1Result:
         return Stage1Result(
             mri_volume=context.get_store_notnull(MRIVolume),
             segmentation_mask=context.get_store_notnull(SegmentationMask),
             mesh=context.get_store_notnull(ScalpMesh),
+            fiducials=context.get_store_notnull(Fiducials),
         )
 
 
@@ -35,6 +47,7 @@ class Stage1PipelineBuilder:
         extractor: MeshExtractor,
         project_dir: Path | None = None,
         logger: Logger | None = None,
+        fiducials_path: Path | str | None = None,
     ) -> None:
         self._nifti_path: Path = Path(nifti_path)
         self._loader: MRILoader = mri_loader
@@ -43,6 +56,7 @@ class Stage1PipelineBuilder:
         self._mesh_postprocessors: list[MeshPostprocessor] = []
         self._project_dir: Path | None = project_dir
         self._logger: Logger | None = logger
+        self._fiducials_path: Path | None = Path(fiducials_path) if fiducials_path else None
 
     def setup_mesh_postprocessors(self, postprocessors: list[MeshPostprocessor]) -> Self:
         """Add mesh cleaners, smoothers, etc."""
@@ -60,6 +74,11 @@ class Stage1PipelineBuilder:
         for postprocessor in self._mesh_postprocessors:
             controller.register_step(postprocessor)
 
+        if self._fiducials_path:
+            controller.register_store(FiducialsPath, FiducialsPath(self._fiducials_path))
+            controller.register_step(ManualFiducialsLoader())
+
+        controller.register_step(FiducialsRegistrationStep())
         controller.register_step(OutputGenerator())
 
         # -- Stores --
@@ -67,6 +86,7 @@ class Stage1PipelineBuilder:
         controller.register_store(MRIVolume)
         controller.register_store(SegmentationMask)
         controller.register_store(ScalpMesh)
+        controller.register_store(Fiducials)
 
         # -- Providers --
         if self._logger:

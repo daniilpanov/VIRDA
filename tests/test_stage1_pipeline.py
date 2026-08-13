@@ -4,6 +4,8 @@ import nibabel as nib
 import numpy as np
 import pytest
 
+from tests.helpers.pipelines import save_test_fiducials
+from virda.io.fiducial_helpers import load_fiducials
 from virda.io.loader.nifti_loader import NiftiLoader
 from virda.mesh.contracts import MeshPostprocessor
 from virda.mesh.mesh_cleaner import TrimeshCleaner
@@ -33,12 +35,24 @@ def synthetic_nifti_path(tmp_path: Path) -> Path:
     return nifti_file_path
 
 
-def build_pipeline(nifti_path: Path, postprocessors: list[MeshPostprocessor] | None = None):
+@pytest.fixture
+def fiducials_file(tmp_path: Path) -> Path:
+    return save_test_fiducials(tmp_path / "fiducials.json")
+
+
+def build_pipeline(
+    nifti_path: Path,
+    postprocessors: list[MeshPostprocessor] | None = None,
+    fiducials_path: Path | None = None,
+    project_dir: Path | None = None,
+):
     builder = Stage1PipelineBuilder(
         nifti_path=nifti_path,
         mri_loader=NiftiLoader(),
         segmenter=OtsuHeadSegmenter(closing_radius=0),
         extractor=MarchingCubesExtractor(),
+        project_dir=project_dir,
+        fiducials_path=fiducials_path,
     )
     if postprocessors:
         builder.setup_mesh_postprocessors(postprocessors)
@@ -46,8 +60,10 @@ def build_pipeline(nifti_path: Path, postprocessors: list[MeshPostprocessor] | N
 
 
 class TestStage1Pipeline:
-    def test_run_returns_stage1_result(self, synthetic_nifti_path: Path) -> None:
-        pipeline = build_pipeline(synthetic_nifti_path)
+    def test_run_returns_stage1_result(
+        self, synthetic_nifti_path: Path, fiducials_file: Path
+    ) -> None:
+        pipeline = build_pipeline(synthetic_nifti_path, fiducials_path=fiducials_file)
         result = pipeline.run().get_store_notnull(Stage1Result)
 
         assert isinstance(result, Stage1Result)
@@ -59,27 +75,27 @@ class TestStage1Pipeline:
         assert result.mesh.faces.min() >= 0
         assert result.mesh.faces.max() < result.mesh.vertices.shape[0]
 
-    def test_run_with_smoother(self, synthetic_nifti_path: Path) -> None:
+    def test_run_with_smoother(self, synthetic_nifti_path: Path, fiducials_file: Path) -> None:
         from virda.mesh.laplacian_smoother import LaplacianSmoother
 
         pipeline = build_pipeline(
             synthetic_nifti_path,
             postprocessors=[TrimeshCleaner(), LaplacianSmoother(iterations=2, lamb=0.5)],
+            fiducials_path=fiducials_file,
         )
         result = pipeline.run().get_store_notnull(Stage1Result)
 
         assert isinstance(result, Stage1Result)
         assert result.mesh.vertices.shape[0] > 0
 
-    def test_run_exports_mesh_arrays(self, synthetic_nifti_path: Path, tmp_path: Path) -> None:
-        builder = Stage1PipelineBuilder(
-            nifti_path=synthetic_nifti_path,
-            mri_loader=NiftiLoader(),
-            segmenter=OtsuHeadSegmenter(closing_radius=0),
-            extractor=MarchingCubesExtractor(),
+    def test_run_exports_mesh_arrays(
+        self, synthetic_nifti_path: Path, tmp_path: Path, fiducials_file: Path
+    ) -> None:
+        pipeline = build_pipeline(
+            synthetic_nifti_path,
             project_dir=tmp_path,
+            fiducials_path=fiducials_file,
         )
-        pipeline = builder.build()
 
         result = pipeline.run().get_store_notnull(Stage1Result)
 
@@ -89,3 +105,31 @@ class TestStage1Pipeline:
         assert np.array_equal(vertices, result.mesh.vertices)
         assert np.array_equal(faces, result.mesh.faces)
         assert (tmp_path / "mesh" / "final_mesh.ply").exists()
+
+    def test_run_populates_fiducials(
+        self, synthetic_nifti_path: Path, fiducials_file: Path
+    ) -> None:
+        pipeline = build_pipeline(synthetic_nifti_path, fiducials_path=fiducials_file)
+        result = pipeline.run().get_store_notnull(Stage1Result)
+
+        assert result.fiducials.ids == ["NAS", "LPA"]
+        nas = result.fiducials.get("NAS")
+        assert nas is not None
+        assert nas.coordinate_system == "world"
+        assert nas.definition_method == "manual"
+
+    def test_run_exports_fiducials_json(
+        self, synthetic_nifti_path: Path, tmp_path: Path, fiducials_file: Path
+    ) -> None:
+        pipeline = build_pipeline(
+            synthetic_nifti_path,
+            project_dir=tmp_path,
+            fiducials_path=fiducials_file,
+        )
+
+        result = pipeline.run().get_store_notnull(Stage1Result)
+
+        exported_path = tmp_path / "fiducials" / "fiducials.json"
+        assert exported_path.exists()
+        restored = load_fiducials(exported_path)
+        assert restored.ids == result.fiducials.ids
