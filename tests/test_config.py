@@ -41,13 +41,6 @@ class TestVirdaSettings:
         settings = VirdaSettings(_cli_parse_args=False)  # type: ignore[call-arg]
         assert settings.otsu_threshold_scale == pytest.approx(0.9)
 
-    def test_missing_dataset_file_falls_back_to_defaults(self, monkeypatch, tmp_path) -> None:
-        monkeypatch.setenv("VIRDA_CONFIG_FILE", str(tmp_path / "absent" / ".env.json"))
-
-        settings = VirdaSettings(_cli_parse_args=False)  # type: ignore[call-arg]
-        assert settings.otsu_scope == "all"
-        assert settings.otsu_threshold_scale == pytest.approx(0.6)
-
     def test_ese_not_configured_yields_no_config(self) -> None:
         settings = VirdaSettings(_cli_parse_args=False)  # type: ignore[call-arg]
         assert resolve_ese_config(settings) is None

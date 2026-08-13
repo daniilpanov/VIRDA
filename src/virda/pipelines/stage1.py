@@ -9,6 +9,7 @@ from virda.io.providers.logging_provider import StoreLoggingProvider
 from virda.io.providers.mesh_versioning_provider import ScalpMeshVersioningProvider
 from virda.io.providers.stage1_exporter import Stage1Exporter
 from virda.mesh import MeshExtractor, MeshPostprocessor
+from virda.models.ese_config import ESEConfig
 from virda.models.fiducial import AutoDetectedFiducials, Fiducials, ManualFiducials
 from virda.models.mri_volume import MRIVolume
 from virda.models.path import FiducialsPath, NiftiPath
@@ -57,6 +58,7 @@ class Stage1PipelineBuilder:
         logger: Logger | None = None,
         fiducials_path: Path | str | None = None,
         auto_detect_fiducials: bool = False,
+        ese_config: ESEConfig | None = None,
     ) -> None:
         self._nifti_path: Path = Path(nifti_path)
         self._loader: MRILoader = mri_loader
@@ -68,6 +70,7 @@ class Stage1PipelineBuilder:
         self._logger: Logger | None = logger
         self._fiducials_path: Path | None = Path(fiducials_path) if fiducials_path else None
         self._auto_detect_fiducials: bool = auto_detect_fiducials
+        self._ese_config: ESEConfig | None = ese_config
 
     def setup_mask_postprocessors(
         self, postprocessors: list[SegmentationMaskPostprocessor]
@@ -120,7 +123,13 @@ class Stage1PipelineBuilder:
                 controller.register_provider(log_provider, on_store=store_type)
 
         if self._project_dir:
-            controller.register_provider(Stage1Exporter(self._project_dir), Stage1Result)
+            controller.register_provider(
+                Stage1Exporter(
+                    project_dir=self._project_dir,
+                    ese_config=self._ese_config,
+                ),
+                Stage1Result,
+            )
 
             controller.register_provider(
                 ScalpMeshVersioningProvider(self._project_dir / "mesh" / "versions"),
