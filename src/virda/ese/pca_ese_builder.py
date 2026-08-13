@@ -3,6 +3,7 @@ from typing import cast
 
 import numpy as np
 from scipy.spatial import cKDTree
+from tqdm import tqdm
 
 from virda.ese.contracts import ESEBuilder
 from virda.models.ese_mesh import ESEMesh
@@ -10,6 +11,8 @@ from virda.models.scalp_mesh import ScalpMesh
 from virda.models.stage2_config import Stage2Config
 
 logger = logging.getLogger(__name__)
+
+_FALLBACK_K_NEIGHBORS = 20
 
 
 def _local_pca(neighbors: np.ndarray, k: int) -> tuple[np.ndarray, np.ndarray]:
@@ -36,26 +39,30 @@ class PCAESEBuilder(ESEBuilder):
         self._ese_offset_mm = ese_offset_mm
 
     def _process(self, scalp_mesh: ScalpMesh) -> ESEMesh:
-        k = self._config.k_neighbors
-        if k is None:
-            raise NotImplementedError("radius mode is not implemented yet")
         if self._config.use_weighted_pca:
             raise NotImplementedError("weighted PCA is not implemented yet")
 
         vertices = scalp_mesh.vertices
-        if k >= vertices.shape[0]:
-            raise ValueError(
-                "k_neighbors must be less than the number of vertices: "
-                f"k={k}, n_vertices={vertices.shape[0]}"
-            )
-        normals, quality = self._estimate_normals_knn(vertices, k)
+        k = self._config.k_neighbors
+        if k is not None:
+            if k >= vertices.shape[0]:
+                raise ValueError(
+                    "k_neighbors must be less than the number of vertices: "
+                    f"k={k}, n_vertices={vertices.shape[0]}"
+                )
+            normals, quality = self._estimate_normals_knn(vertices, k)
+            mode = f"k-NN k={k}"
+        else:
+            normals, quality = self._estimate_normals_radius(vertices)
+            mode = f"radius r={self._config.neighborhood_radius_mm} mm"
+
         normals = _orient_outward(normals, vertices)
         ese_vertices = vertices + self._ese_offset_mm * normals
 
         logger.info(
-            "ESE estimated: %d vertices, k-NN k=%d, median quality=%.4f",
+            "ESE estimated: %d vertices, %s, median quality=%.4f",
             vertices.shape[0],
-            k,
+            mode,
             float(np.median(quality)),
         )
 
@@ -74,3 +81,29 @@ class PCAESEBuilder(ESEBuilder):
         _, neighbor_indices = tree.query(vertices, k=k + 1)
         neighbors = vertices[neighbor_indices[:, 1:]]
         return _local_pca(neighbors, k)
+
+    def _estimate_normals_radius(
+        self, vertices: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
+        radius = self._config.neighborhood_radius_mm
+        min_neighbors = self._config.min_neighbors
+        normals = np.zeros_like(vertices)
+        quality = np.zeros(vertices.shape[0], dtype=np.float64)
+        tree = cKDTree(vertices)
+
+        for i in tqdm(range(vertices.shape[0]), desc="Radius neighborhood"):
+            neighbor_indices = tree.query_ball_point(vertices[i], radius)
+            if len(neighbor_indices) < min_neighbors:
+                fallback_k = min(_FALLBACK_K_NEIGHBORS, vertices.shape[0] - 1)
+                distances, knn_indices = tree.query(vertices[i], k=fallback_k + 1)
+                distances = np.asarray(distances)
+                knn_indices = np.asarray(knn_indices)
+                neighbors = vertices[knn_indices[1:]]
+                normals[i], quality[i] = _local_pca(neighbors[None, :, :], fallback_k)
+            else:
+                neighbors = vertices[neighbor_indices]
+                normals[i], quality[i] = _local_pca(
+                    neighbors[None, :, :], len(neighbor_indices)
+                )
+
+        return normals, quality

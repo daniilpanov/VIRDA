@@ -59,3 +59,39 @@ class TestPCAESEBuilder:
         config = Stage2Config(k_neighbors=500)
         with pytest.raises(ValueError, match="k_neighbors must be less than"):
             run_builder(config, make_sphere())
+
+    def test_flat_plane_normals_along_z_radius(self) -> None:
+        config = Stage2Config(neighborhood_radius_mm=5.0, k_neighbors=None, min_neighbors=5)
+        result = run_builder(config, make_plane())
+
+        assert np.mean(np.abs(result.normals[:, 2])) > 0.9
+
+    def test_sphere_normals_radial_outward_radius(self) -> None:
+        config = Stage2Config(neighborhood_radius_mm=20.0, k_neighbors=None, min_neighbors=5)
+        mesh = make_sphere()
+        result = run_builder(config, mesh)
+
+        radial = mesh.vertices / np.linalg.norm(mesh.vertices, axis=1, keepdims=True)
+        dots = np.sum(result.normals * radial, axis=1)
+        assert np.mean(dots) > 0.8
+        assert np.median(result.quality) < 0.1
+
+    def test_radius_and_knn_consistency(self) -> None:
+        radius_result = run_builder(
+            Stage2Config(neighborhood_radius_mm=20.0, k_neighbors=None), make_sphere()
+        )
+        knn_result = run_builder(Stage2Config(k_neighbors=30), make_sphere())
+
+        dots = np.sum(radius_result.normals * knn_result.normals, axis=1)
+        assert np.mean(dots) > 0.99
+
+    def test_radius_falls_back_to_knn(self) -> None:
+        config = Stage2Config(neighborhood_radius_mm=1.0, k_neighbors=None, min_neighbors=5)
+        mesh = make_sphere()
+        result = run_builder(config, mesh)
+
+        radial = mesh.vertices / np.linalg.norm(mesh.vertices, axis=1, keepdims=True)
+        dots = np.sum(result.normals * radial, axis=1)
+        assert np.allclose(np.linalg.norm(result.normals, axis=1), 1.0)
+        assert np.all(np.isfinite(result.quality))
+        assert np.mean(dots) > 0.8
