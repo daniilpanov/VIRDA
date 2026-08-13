@@ -12,3 +12,12 @@ class HeadSegmenter(ABC):
     @abstractmethod
     def _process(self, volume: MRIVolume) -> SegmentationMask:
         raise NotImplementedError
+
+
+class SegmentationMaskPostprocessor(ABC):
+    def run(self, context: PipelineContext) -> SegmentationMask:
+        return self._process(context.get_store_notnull(SegmentationMask))
+
+    @abstractmethod
+    def _process(self, mask: SegmentationMask) -> SegmentationMask:
+        raise NotImplementedError

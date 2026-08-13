@@ -17,7 +17,7 @@ from virda.models.segmentation_mask import SegmentationMask
 from virda.models.stage1_result import Stage1Result
 from virda.pipeline import PipelineController
 from virda.pipeline_context import PipelineContext
-from virda.segmentation import HeadSegmenter
+from virda.segmentation import HeadSegmenter, SegmentationMaskPostprocessor
 
 
 class FiducialsRegistrationStep:
@@ -62,11 +62,19 @@ class Stage1PipelineBuilder:
         self._loader: MRILoader = mri_loader
         self._segmenter: HeadSegmenter = segmenter
         self._mesh_extractor: MeshExtractor = extractor
+        self._mask_postprocessors: list[SegmentationMaskPostprocessor] = []
         self._mesh_postprocessors: list[MeshPostprocessor] = []
         self._project_dir: Path | None = project_dir
         self._logger: Logger | None = logger
         self._fiducials_path: Path | None = Path(fiducials_path) if fiducials_path else None
         self._auto_detect_fiducials: bool = auto_detect_fiducials
+
+    def setup_mask_postprocessors(
+        self, postprocessors: list[SegmentationMaskPostprocessor]
+    ) -> Self:
+        """Add mask postprocessors (e.g. sealing) between segmentation and extraction."""
+        self._mask_postprocessors.extend(postprocessors)
+        return self
 
     def setup_mesh_postprocessors(self, postprocessors: list[MeshPostprocessor]) -> Self:
         """Add mesh cleaners, smoothers, etc."""
@@ -79,10 +87,14 @@ class Stage1PipelineBuilder:
         # -- Steps --
         controller.register_step(self._loader)
         controller.register_step(self._segmenter)
+
+        for mask_postprocessor in self._mask_postprocessors:
+            controller.register_step(mask_postprocessor)
+
         controller.register_step(self._mesh_extractor)
 
-        for postprocessor in self._mesh_postprocessors:
-            controller.register_step(postprocessor)
+        for mesh_postprocessor in self._mesh_postprocessors:
+            controller.register_step(mesh_postprocessor)
 
         if self._fiducials_path:
             controller.register_store(FiducialsPath, FiducialsPath(self._fiducials_path))

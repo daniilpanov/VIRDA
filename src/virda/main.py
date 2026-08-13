@@ -1,7 +1,7 @@
 import logging
 from pathlib import Path
 
-from virda.config import get_virda_settings
+from virda.config import VirdaSettings, get_virda_settings
 from virda.io.loader.nifti_loader import NiftiLoader
 from virda.mesh.contracts import MeshPostprocessor
 from virda.mesh.laplacian_smoother import LaplacianSmoother
@@ -11,7 +11,9 @@ from virda.mesh.taubin_smoother import TaubinSmoother
 from virda.models.stage1_result import Stage1Result
 from virda.pipeline import PipelineController
 from virda.pipelines.stage1 import Stage1PipelineBuilder
+from virda.segmentation import SegmentationMaskPostprocessor
 from virda.segmentation.head_segmenter import OtsuHeadSegmenter
+from virda.segmentation.seal import MaskSealer
 
 
 def _setup_logging(log_dir: Path) -> logging.Logger:
@@ -80,7 +82,11 @@ def run(
 
     # Stage 1: MRI → Segmentation → Mesh → Fiducials
     loader = NiftiLoader()
-    segmenter = OtsuHeadSegmenter(closing_radius=settings.closing_radius)
+    segmenter = OtsuHeadSegmenter(
+        closing_radius=settings.closing_radius,
+        otsu_scope=settings.otsu_scope,
+        threshold_scale=settings.otsu_threshold_scale,
+    )
     extractor = MarchingCubesExtractor()
 
     cleaner = TrimeshCleaner(
@@ -112,6 +118,7 @@ def run(
             fiducials_path=resolved_fiducials_path,
             auto_detect_fiducials=settings.auto_detect_fiducials,
         )
+        .setup_mask_postprocessors(_build_mask_postprocessors(settings))
         .setup_mesh_postprocessors([cleaner, smoother])
         .build()
     )
@@ -119,6 +126,14 @@ def run(
     stage1_result = stage1_pipeline.run().get_store_notnull(Stage1Result)
 
     return stage1_result
+
+
+def _build_mask_postprocessors(
+    settings: VirdaSettings,
+) -> list[SegmentationMaskPostprocessor]:
+    if not settings.seal_enabled:
+        return []
+    return [MaskSealer(radius=settings.seal_radius)]
 
 
 if __name__ == "__main__":
