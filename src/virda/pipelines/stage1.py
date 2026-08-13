@@ -5,6 +5,7 @@ from typing import Self
 from virda.io.loader import MRILoader
 from virda.io.providers.logging_provider import StoreLoggingProvider
 from virda.io.providers.mesh_versioning_provider import ScalpMeshVersioningProvider
+from virda.io.providers.stage1_exporter import Stage1Exporter
 from virda.mesh import MeshExtractor, MeshPostprocessor
 from virda.models.mri_volume import MRIVolume
 from virda.models.path import NiftiPath
@@ -74,6 +75,8 @@ class Stage1PipelineBuilder:
                 controller.register_provider(log_provider, on_store=store_type)
 
         if self._project_dir:
+            controller.register_provider(Stage1Exporter(self._project_dir), Stage1Result)
+
             controller.register_provider(
                 ScalpMeshVersioningProvider(self._project_dir / "mesh" / "versions"),
                 on_store=ScalpMesh,
