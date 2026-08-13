@@ -54,3 +54,7 @@ class Fiducials:
 class ManualFiducials:
     fiducials: Fiducials
 
+
+@dataclass(frozen=True)
+class AutoDetectedFiducials:
+    fiducials: Fiducials

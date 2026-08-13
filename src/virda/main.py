@@ -110,6 +110,7 @@ def run(
             project_dir=project,
             logger=logger,
             fiducials_path=resolved_fiducials_path,
+            auto_detect_fiducials=settings.auto_detect_fiducials,
         )
         .setup_mesh_postprocessors([cleaner, smoother])
         .build()

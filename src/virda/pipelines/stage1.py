@@ -2,13 +2,14 @@ from logging import Logger
 from pathlib import Path
 from typing import Self
 
+from virda.fiducials import AutoFiducialsDetector
 from virda.io.loader import MRILoader
 from virda.io.loader.manual_fiducials_loader import ManualFiducialsLoader
 from virda.io.providers.logging_provider import StoreLoggingProvider
 from virda.io.providers.mesh_versioning_provider import ScalpMeshVersioningProvider
 from virda.io.providers.stage1_exporter import Stage1Exporter
 from virda.mesh import MeshExtractor, MeshPostprocessor
-from virda.models.fiducial import Fiducials, ManualFiducials
+from virda.models.fiducial import AutoDetectedFiducials, Fiducials, ManualFiducials
 from virda.models.mri_volume import MRIVolume
 from virda.models.path import FiducialsPath, NiftiPath
 from virda.models.scalp_mesh import ScalpMesh
@@ -25,7 +26,14 @@ class FiducialsRegistrationStep:
         if manual is not None:
             return manual.fiducials
 
-        raise ValueError("No fiducials available: provide a manual fiducials file")
+        auto = context.get_store(AutoDetectedFiducials)
+        if auto is not None:
+            return auto.fiducials
+
+        raise ValueError(
+            "No fiducials available: provide a manual fiducials file"
+            " or enable auto_detect_fiducials"
+        )
 
 
 class OutputGenerator:
@@ -48,6 +56,7 @@ class Stage1PipelineBuilder:
         project_dir: Path | None = None,
         logger: Logger | None = None,
         fiducials_path: Path | str | None = None,
+        auto_detect_fiducials: bool = False,
     ) -> None:
         self._nifti_path: Path = Path(nifti_path)
         self._loader: MRILoader = mri_loader
@@ -57,6 +66,7 @@ class Stage1PipelineBuilder:
         self._project_dir: Path | None = project_dir
         self._logger: Logger | None = logger
         self._fiducials_path: Path | None = Path(fiducials_path) if fiducials_path else None
+        self._auto_detect_fiducials: bool = auto_detect_fiducials
 
     def setup_mesh_postprocessors(self, postprocessors: list[MeshPostprocessor]) -> Self:
         """Add mesh cleaners, smoothers, etc."""
@@ -77,6 +87,9 @@ class Stage1PipelineBuilder:
         if self._fiducials_path:
             controller.register_store(FiducialsPath, FiducialsPath(self._fiducials_path))
             controller.register_step(ManualFiducialsLoader())
+
+        if self._auto_detect_fiducials:
+            controller.register_step(AutoFiducialsDetector())
 
         controller.register_step(FiducialsRegistrationStep())
         controller.register_step(OutputGenerator())

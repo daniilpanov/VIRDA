@@ -133,3 +133,35 @@ class TestStage1Pipeline:
         assert exported_path.exists()
         restored = load_fiducials(exported_path)
         assert restored.ids == result.fiducials.ids
+
+    def test_run_auto_detects_fiducials_when_enabled(
+        self, synthetic_nifti_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from virda.fiducials import detector
+
+        points = {
+            "NAS": np.array([0.0, 88.0, -10.0]),
+            "LPA": np.array([-75.0, -1.0, -14.0]),
+            "RPA": np.array([75.0, -1.0, -14.0]),
+            "INI": np.array([0.0, -70.0, 10.0]),
+        }
+        monkeypatch.setattr(detector, "find_fiducials", lambda vertices: points)
+
+        builder = Stage1PipelineBuilder(
+            nifti_path=synthetic_nifti_path,
+            mri_loader=NiftiLoader(),
+            segmenter=OtsuHeadSegmenter(closing_radius=0),
+            extractor=MarchingCubesExtractor(),
+            auto_detect_fiducials=True,
+        )
+
+        result = builder.build().run().get_store_notnull(Stage1Result)
+
+        assert set(result.fiducials.ids) == {"NAS", "LPA", "RPA", "INI"}
+        assert all(fiducial.definition_method == "auto" for fiducial in result.fiducials.items)
+
+    def test_run_raises_without_fiducial_source(self, synthetic_nifti_path: Path) -> None:
+        pipeline = build_pipeline(synthetic_nifti_path)
+
+        with pytest.raises(ValueError, match="No fiducials available"):
+            pipeline.run()
