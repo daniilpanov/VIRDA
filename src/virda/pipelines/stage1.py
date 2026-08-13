@@ -2,14 +2,19 @@ from logging import Logger
 from pathlib import Path
 from typing import Self
 
-from virda.config import VirdaSettings
+from virda.config import VirdaSettings, resolve_ese_config
 from virda.fiducials import AutoFiducialsDetector
 from virda.io.loader import MRILoader
 from virda.io.loader.manual_fiducials_loader import ManualFiducialsLoader
+from virda.io.loader.nifti_loader import NiftiLoader
 from virda.io.providers.logging_provider import StoreLoggingProvider
 from virda.io.providers.mesh_versioning_provider import ScalpMeshVersioningProvider
 from virda.io.providers.stage1_exporter import Stage1Exporter
 from virda.mesh import MeshExtractor, MeshPostprocessor
+from virda.mesh.laplacian_smoother import LaplacianSmoother
+from virda.mesh.mesh_cleaner import TrimeshCleaner
+from virda.mesh.mesh_extractor import MarchingCubesExtractor
+from virda.mesh.taubin_smoother import TaubinSmoother
 from virda.models.ese_config import ESEConfig
 from virda.models.fiducial import AutoDetectedFiducials, Fiducials, ManualFiducials
 from virda.models.mri_volume import MRIVolume
@@ -20,6 +25,16 @@ from virda.models.stage1_result import Stage1Result
 from virda.pipeline import PipelineController
 from virda.pipeline_context import PipelineContext
 from virda.segmentation import HeadSegmenter, SegmentationMaskPostprocessor
+from virda.segmentation.head_segmenter import OtsuHeadSegmenter
+from virda.segmentation.seal import MaskSealer
+
+
+def _build_mask_postprocessors(
+    settings: VirdaSettings,
+) -> list[SegmentationMaskPostprocessor]:
+    if not settings.seal_enabled:
+        return []
+    return [MaskSealer(radius=settings.seal_radius)]
 
 
 class FiducialsRegistrationStep:
@@ -74,6 +89,62 @@ class Stage1PipelineBuilder:
         self._auto_detect_fiducials: bool = auto_detect_fiducials
         self._ese_config: ESEConfig | None = ese_config
         self._settings: VirdaSettings | None = settings
+
+    @classmethod
+    def from_settings(
+        cls,
+        settings: VirdaSettings,
+        nifti_path: str | Path,
+        project_dir: Path | None = None,
+        fiducials_path: str | Path | None = None,
+        logger: Logger | None = None,
+    ) -> Self:
+        """Build a Stage 1 pipeline configured from ``settings``.
+
+        Wires the loader, segmenter, mask postprocessors (seal), mesh
+        postprocessors (cleaner + smoother), fiducials handling and ESE config.
+        """
+        smoother: MeshPostprocessor
+        if settings.smoother_type == "taubin":
+            smoother = TaubinSmoother(
+                iterations=settings.smoother_iterations,
+                lamb=settings.smoother_lamb,
+                nu=settings.smoother_nu,
+            )
+        else:
+            smoother = LaplacianSmoother(
+                iterations=settings.smoother_iterations,
+                lamb=settings.smoother_lamb,
+            )
+
+        return (
+            cls(
+                nifti_path=nifti_path,
+                mri_loader=NiftiLoader(),
+                segmenter=OtsuHeadSegmenter(
+                    closing_radius=settings.closing_radius,
+                    otsu_scope=settings.otsu_scope,
+                    threshold_scale=settings.otsu_threshold_scale,
+                ),
+                extractor=MarchingCubesExtractor(),
+                project_dir=project_dir,
+                logger=logger,
+                fiducials_path=fiducials_path,
+                auto_detect_fiducials=settings.auto_detect_fiducials,
+                ese_config=resolve_ese_config(settings),
+                settings=settings,
+            )
+            .setup_mask_postprocessors(_build_mask_postprocessors(settings))
+            .setup_mesh_postprocessors(
+                [
+                    TrimeshCleaner(
+                        min_component_vertices=settings.cleaner_min_vertices,
+                        merge_digits=settings.cleaner_merge_digits,
+                    ),
+                    smoother,
+                ]
+            )
+        )
 
     def setup_mask_postprocessors(
         self, postprocessors: list[SegmentationMaskPostprocessor]
