@@ -3,6 +3,8 @@ name: Publish Python Packages
 on:
   push:
     branches: [master]
+  pull_request:
+    branches: [master]
   release:
     types: [published]
   workflow_call:
@@ -29,6 +31,12 @@ jobs:
 
       - name: Set up Python
         run: uv python install 3.14
+
+      - name: Smoke-test entry points
+        run: |
+          uv sync --all-extras --all-packages --frozen
+          uv run virda --help
+          uv run virda-gui --help
 
       - name: Build packages
         run: |
