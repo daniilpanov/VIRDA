@@ -1,3 +1,5 @@
+import argparse
+import sys
 from pathlib import Path
 
 from virda.config import get_virda_settings
@@ -35,4 +37,28 @@ def run(
         .build()
         .run()
         .get_store_notnull(Stage1Result)
+    )
+
+
+def _parse_cli_args() -> tuple[argparse.Namespace, list[str]]:
+    """Parse kebab-case path flags; leave everything else to pydantic-settings."""
+    parser = argparse.ArgumentParser(
+        prog="virda",
+        description="Run the VIRDA electrode localization pipeline (Stage 1).",
+    )
+    parser.add_argument("--nifti-path", dest="nifti_path", help="Path to the T1 NIfTI scan.")
+    parser.add_argument("--project-dir", dest="project_dir", help="Path to the output directory.")
+    parser.add_argument(
+        "--fiducials-path", dest="fiducials_path", help="Path to the manual fiducials file."
+    )
+    return parser.parse_known_args()
+
+
+def main() -> Stage1Result:
+    args, remaining = _parse_cli_args()
+    sys.argv = [sys.argv[0], *remaining]
+    return run(
+        nifti_path=args.nifti_path,
+        project_dir=args.project_dir,
+        fiducials_path=args.fiducials_path,
     )
