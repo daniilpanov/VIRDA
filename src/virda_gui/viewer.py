@@ -1,12 +1,14 @@
-"""Interactive 3D viewer: scalp mesh over the MRI volume.
+"""Interactive 3D viewer: scalp and ESE meshes over the MRI volume.
 
 ``virda-gui`` is the interactive visualisation tool of the ``virda_gui``
-package. It renders the scalp mesh on top of a semi-transparent MRI volume and
-places both objects in the same coordinate frame using the NIfTI affine, so the
-mesh overlays the actual scalp in all three views. On-screen checkboxes toggle
-the visibility of the mesh, the MRI and the fiducial points (with labels), and
-a "Boost contrast" checkbox sharpens the MRI (opaque skin surface) and the mesh
-(bright solid surface that makes holes visible).
+package. It renders the scalp mesh (and optionally the ESE mesh) on top of a
+semi-transparent MRI volume and places all objects in the same coordinate frame
+using the NIfTI affine, so the meshes overlay the actual scalp in all three
+views. Stage 2 surface normals can be drawn as arrows anchored at the ESE
+vertices. On-screen checkboxes toggle the visibility of the meshes, the MRI,
+the fiducial points (with labels) and the normals, and a "Boost contrast"
+checkbox sharpens the MRI (opaque skin surface) and the mesh (bright solid
+surface that makes holes visible).
 
 Usage
 -----
@@ -15,8 +17,13 @@ Usage
     virda-gui --nifti <scan.nii.gz> --mesh <final_mesh.ply>
     virda-gui --nifti <scan.nii.gz> --mesh <final_mesh.ply> \\
         --fiducials <fiducials/fiducials.json>
+    virda-gui --nifti <scan.nii.gz> --mesh <final_mesh.ply> \\
+        --ese-mesh <stage2/ese_mesh.ply> --normals <stage2/>
 
-At least one of ``--nifti`` or ``--mesh`` is required.
+At least one of ``--nifti`` or ``--mesh`` is required. ``--normals`` points to
+the ``stage2/`` output directory (``ese_vertices.npy`` + ``normals.npy``);
+``--normals-scale`` sets the arrow length in scene units (default 5) and
+``--normals-step`` draws only every N-th normal.
 
 If the affine is axis-aligned with positive spacing the scene is shown in world
 millimeters; otherwise the mesh is transformed into voxel index space so that
@@ -27,6 +34,7 @@ in world coordinates and are transformed into the scene frame accordingly.
 
 import argparse
 import json
+from pathlib import Path
 
 import nibabel as nib
 import numpy as np
@@ -83,6 +91,30 @@ def _build_scene(
     return volume, scene_mesh, mm_scene
 
 
+def _points_to_scene(points: np.ndarray, affine: np.ndarray | None, mm_scene: bool) -> np.ndarray:
+    """Transform world points into the coordinate frame used by the meshes."""
+    if affine is None or mm_scene:
+        return points
+    inverse = np.linalg.inv(affine)
+    return points @ inverse[:3, :3].T + inverse[:3, 3]
+
+
+def _directions_to_scene(
+    directions: np.ndarray, affine: np.ndarray | None, mm_scene: bool
+) -> np.ndarray:
+    """Transform world directions into the coordinate frame used by the meshes.
+
+    Under the point map ``@ inv(affine)[:3, :3].T`` (see ``_points_to_scene``)
+    normals transform by the inverse transpose, i.e. ``@ affine[:3, :3]``, and
+    are renormalized to unit length.
+    """
+    if affine is None or mm_scene:
+        return directions
+    linear = directions @ affine[:3, :3]
+    norms = np.linalg.norm(linear, axis=1, keepdims=True)
+    return linear / norms
+
+
 def _load_mesh_poly(mesh_path: str) -> pv.PolyData:
     loaded = trimesh.load(mesh_path, force="mesh")
     vertices = np.asarray(loaded.vertices, dtype=np.float64)
@@ -103,6 +135,34 @@ def _load_fiducial_points(path: str) -> tuple[np.ndarray, list[str]]:
     )
     labels = [f"{item['fiducial_id']} ({item['name']})" for item in data["fiducials"]]
     return points, labels
+
+
+def _load_normals(path: str) -> tuple[np.ndarray, np.ndarray]:
+    """Read ``ese_vertices.npy`` and ``normals.npy`` from the Stage 2 output.
+
+    ``path`` is the ``stage2/`` directory written by ``Stage2Exporter``; a
+    direct path to ``normals.npy`` is also accepted, with the vertices looked
+    up next to it.
+    """
+    normals_path = Path(path)
+    if not normals_path.exists():
+        raise FileNotFoundError(f"normals path not found: {normals_path}")
+    if normals_path.is_dir():
+        vertices_path = normals_path / "ese_vertices.npy"
+        normals_path = normals_path / "normals.npy"
+    else:
+        vertices_path = normals_path.with_name("ese_vertices.npy")
+    if not vertices_path.is_file():
+        raise FileNotFoundError(f"ESE vertices not found: {vertices_path}")
+    if not normals_path.is_file():
+        raise FileNotFoundError(f"normals not found: {normals_path}")
+    vertices = np.load(vertices_path)
+    normals = np.load(normals_path)
+    if vertices.ndim != 2 or vertices.shape[1] != 3:
+        raise ValueError(f"expected Nx3 vertices, got shape {vertices.shape}")
+    if normals.shape != vertices.shape:
+        raise ValueError(f"normals shape {normals.shape} does not match vertices {vertices.shape}")
+    return vertices, normals
 
 
 def _scene_bounds_to_world(bounds: _BOUNDS, transform: np.ndarray) -> _BOUNDS:
@@ -208,7 +268,7 @@ def _print_qc(
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="virda-gui",
-        description="Interactive 3D viewer: scalp mesh and/or MRI volume.",
+        description="Interactive 3D viewer: scalp/ESE meshes and/or MRI volume.",
     )
     parser.add_argument("--nifti", help="Path to the T1-weighted NIfTI scan.")
     parser.add_argument("--mesh", help="Path to the scalp mesh (PLY).")
@@ -225,10 +285,31 @@ def main() -> None:
         "--fiducials",
         help="Path to fiducials JSON (fiducials/fiducials.json).",
     )
+    parser.add_argument("--ese-mesh", help="Path to the ESE mesh (stage2/ese_mesh.ply).")
+    parser.add_argument(
+        "--normals",
+        help="Stage 2 directory (ese_vertices.npy + normals.npy) or normals.npy path.",
+    )
+    parser.add_argument(
+        "--normals-scale",
+        type=float,
+        default=5.0,
+        help="Arrow length in scene units (mm in a world-millimeter scene).",
+    )
+    parser.add_argument(
+        "--normals-step",
+        type=int,
+        default=1,
+        help="Decimation: draw only every N-th normal.",
+    )
     args = parser.parse_args()
 
     if not args.nifti and not args.mesh:
         parser.error("at least one of --nifti or --mesh is required")
+    if args.normals_scale <= 0:
+        parser.error("--normals-scale must be positive")
+    if args.normals_step < 1:
+        parser.error("--normals-step must be >= 1")
 
     data = None
     affine = None
@@ -251,12 +332,25 @@ def main() -> None:
     volume, scene_mesh, mm_scene = _build_scene(data, affine, mesh_poly)
     _print_qc(spacing, orientation, volume, scene_mesh, affine, mm_scene)
 
+    ese_poly = _load_mesh_poly(args.ese_mesh) if args.ese_mesh else None
+    # scene flag recomputed here is identical to mm_scene (both derive from affine)
+    _, scene_ese, _ = _build_scene(None, affine, ese_poly)
+
+    normals_vertices = None
+    normals = None
+    if args.normals:
+        normals_vertices, normals = _load_normals(args.normals)
+        normals_vertices = _points_to_scene(normals_vertices, affine, mm_scene)
+        normals = _directions_to_scene(normals, affine, mm_scene)
+
     fiducial_points = None
     fiducial_labels: list[str] = []
     if args.fiducials:
         fiducial_points, fiducial_labels = _load_fiducial_points(args.fiducials)
+    if fiducial_points is not None and len(fiducial_points) > 0:
+        fiducial_points = _points_to_scene(fiducial_points, affine, mm_scene)
 
-    plotter = pv.Plotter(title="VIRDA — scalp mesh and/or MRI volume")
+    plotter = pv.Plotter(title="VIRDA — scalp/ESE meshes and/or MRI volume")
     mri_actor = None
     mesh_actor = None
     if volume is not None:
@@ -264,18 +358,27 @@ def main() -> None:
     if scene_mesh is not None:
         mesh_actor = plotter.add_mesh(scene_mesh, color="salmon", opacity=args.mesh_opacity)
 
+    ese_actor = None
+    if scene_ese is not None:
+        ese_actor = plotter.add_mesh(scene_ese, color="lightgreen", opacity=0.9)
+    normals_actor = None
+    if normals is not None:
+        step = args.normals_step
+        normals_actor = plotter.add_arrows(
+            normals_vertices[::step],
+            normals[::step],
+            mag=args.normals_scale,
+            color="green",
+        )
+
     fiducial_actor = None
     fiducial_label_actor = None
     if fiducial_points is not None and len(fiducial_points) > 0:
-        scene_points = fiducial_points
-        if not mm_scene:
-            inverse = np.linalg.inv(affine)
-            scene_points = fiducial_points @ inverse[:3, :3].T + inverse[:3, 3]
         fiducial_actor = plotter.add_points(
-            scene_points, color="red", point_size=10, render_points_as_spheres=True
+            fiducial_points, color="red", point_size=10, render_points_as_spheres=True
         )
         fiducial_label_actor = plotter.add_point_labels(
-            scene_points,
+            fiducial_points,
             fiducial_labels,
             font_size=12,
             text_color="white",
@@ -350,6 +453,22 @@ def main() -> None:
         plotter.add_text(
             "Show fiducials", position=(75, y + 10), font_size=18, name="fiducials_label"
         )
+        y += 50
+    if ese_actor is not None:
+
+        def set_ese_visibility(flag: bool) -> None:
+            ese_actor.SetVisibility(flag)
+
+        plotter.add_checkbox_button_widget(set_ese_visibility, value=True, position=(10, y))
+        plotter.add_text("Show ESE", position=(75, y + 10), font_size=18, name="ese_label")
+        y += 50
+    if normals_actor is not None:
+
+        def set_normals_visibility(flag: bool) -> None:
+            normals_actor.SetVisibility(flag)
+
+        plotter.add_checkbox_button_widget(set_normals_visibility, value=True, position=(10, y))
+        plotter.add_text("Show normals", position=(75, y + 10), font_size=18, name="normals_label")
         y += 50
     plotter.add_checkbox_button_widget(set_contrast, value=False, position=(10, y))
     plotter.add_text("Boost contrast", position=(75, y + 10), font_size=18, name="contrast_label")
