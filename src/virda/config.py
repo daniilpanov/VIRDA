@@ -11,6 +11,7 @@ from pydantic_settings import (
 )
 
 from virda.models.ese_config import ESEConfig
+from virda.models.stage2_config import Stage2Config
 from virda.segmentation.head_segmenter import OtsuScope
 
 
@@ -51,6 +52,12 @@ class VirdaSettings(BaseSettings):
     n_electrodes: int | None = None
     ese_offset_mm: float | None = None
     ese_reference: str | None = None
+
+    neighborhood_radius_mm: float = 10.0
+    k_neighbors: int | None = None
+    use_weighted_pca: bool = False
+    pca_sigma_mm: float = 5.0
+    min_neighbors: int = 5
 
     model_config = SettingsConfigDict(
         cli_parse_args=True,
@@ -97,6 +104,19 @@ def resolve_ese_config(settings: VirdaSettings) -> ESEConfig | None:
         n_electrodes=settings.n_electrodes,
         ese_offset_mm=settings.ese_offset_mm,
         ese_reference=settings.ese_reference,
+    )
+
+
+def resolve_stage2_config(settings: VirdaSettings) -> Stage2Config | None:
+    """Build the Stage 2 (ESE) config when ESE is enabled, otherwise None."""
+    if settings.ese_offset_mm is None:
+        return None
+    return Stage2Config(
+        neighborhood_radius_mm=settings.neighborhood_radius_mm,
+        k_neighbors=settings.k_neighbors,
+        use_weighted_pca=settings.use_weighted_pca,
+        pca_sigma_mm=settings.pca_sigma_mm,
+        min_neighbors=settings.min_neighbors,
     )
 
 
