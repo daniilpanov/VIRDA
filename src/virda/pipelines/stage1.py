@@ -33,10 +33,11 @@ from .helpers import setup_pipeline_logging
 
 def _build_mask_postprocessors(
     settings: VirdaSettings,
+    logger: Logger | None = None,
 ) -> list[SegmentationMaskPostprocessor]:
     if not settings.seal_enabled:
         return []
-    return [MaskSealer(radius=settings.seal_radius)]
+    return [MaskSealer(radius=settings.seal_radius, logger=logger)]
 
 
 class FiducialsRegistrationStep:
@@ -138,6 +139,8 @@ class Stage1PipelineBuilder:
                 lamb=settings.smoother_lamb,
             )
 
+        logger = setup_pipeline_logging(project_dir_path_inst, "stage_1")
+
         return (
             cls(
                 nifti_path=nifti_path_inst,
@@ -149,13 +152,13 @@ class Stage1PipelineBuilder:
                 ),
                 extractor=MarchingCubesExtractor(),
                 project_dir=project_dir_path_inst,
-                logger=setup_pipeline_logging(project_dir_path_inst, "stage_1"),
+                logger=logger,
                 fiducials_path=fiducials_path_inst,
                 auto_detect_fiducials=settings.auto_detect_fiducials,
                 ese_config=resolve_ese_config(settings),
                 settings=settings,
             )
-            .setup_mask_postprocessors(_build_mask_postprocessors(settings))
+            .setup_mask_postprocessors(_build_mask_postprocessors(settings, logger))
             .setup_mesh_postprocessors(
                 [
                     TrimeshCleaner(
