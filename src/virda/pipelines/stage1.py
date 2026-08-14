@@ -96,8 +96,8 @@ class Stage1PipelineBuilder:
     def from_settings(
         cls,
         settings: VirdaSettings,
-        nifti_path: str | Path,
-        project_dir: Path | None = None,
+        nifti_path: str | Path | None = None,
+        project_dir: str | Path | None = None,
         fiducials_path: str | Path | None = None,
     ) -> Self:
         """Build a Stage 1 pipeline configured from ``settings``.
@@ -105,6 +105,26 @@ class Stage1PipelineBuilder:
         Wires the loader, segmenter, mask postprocessors (seal), mesh
         postprocessors (cleaner + smoother), fiducials handling and ESE config.
         """
+
+        resolved_nifti_path = nifti_path or settings.nifti_path
+        if resolved_nifti_path is None:
+            raise ValueError(
+                "NIfTI path not provided. "
+                "Pass it as an argument or set the NIFTI_PATH environment variable."
+            )
+        nifti_path_inst = Path(resolved_nifti_path)
+
+        resolved_project_dir = project_dir or settings.project_dir
+        if resolved_project_dir is None:
+            raise ValueError(
+                "Project directory path not provided. "
+                "Pass it as an argument or set the PROJECT_DIR environment variable."
+            )
+        project_dir_path_inst = Path(resolved_project_dir)
+
+        resolved_fiducials_path = fiducials_path or settings.fiducials_path
+        fiducials_path_inst = Path(resolved_fiducials_path) if resolved_fiducials_path else None
+
         smoother: MeshPostprocessor
         if settings.smoother_type == "taubin":
             smoother = TaubinSmoother(
@@ -120,7 +140,7 @@ class Stage1PipelineBuilder:
 
         return (
             cls(
-                nifti_path=nifti_path,
+                nifti_path=nifti_path_inst,
                 mri_loader=NiftiLoader(),
                 segmenter=OtsuHeadSegmenter(
                     closing_radius=settings.closing_radius,
@@ -128,9 +148,9 @@ class Stage1PipelineBuilder:
                     threshold_scale=settings.otsu_threshold_scale,
                 ),
                 extractor=MarchingCubesExtractor(),
-                project_dir=project_dir,
-                logger=setup_pipeline_logging(project_dir, "stage_1"),
-                fiducials_path=fiducials_path,
+                project_dir=project_dir_path_inst,
+                logger=setup_pipeline_logging(project_dir_path_inst, "stage_1"),
+                fiducials_path=fiducials_path_inst,
                 auto_detect_fiducials=settings.auto_detect_fiducials,
                 ese_config=resolve_ese_config(settings),
                 settings=settings,
