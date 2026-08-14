@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "virda-gui"
+version = "0.1.0"
+description = "Interactive 3D viewers for VIRDA (mesh over MRI)"
+requires-python = ">=3.14"
+dependencies = [
+    "nibabel>=5.0",
+    "numpy>=2.5.2",
+    "pyvista>=0.44",
+    "trimesh>=5.0.0",
+    "virda",
+]
+
+[project.scripts]
+virda-gui = "virda_gui.viewer:main"
+
+[tool.uv.sources]
+virda = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/virda_gui"]
