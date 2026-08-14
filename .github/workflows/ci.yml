@@ -54,6 +54,7 @@ jobs:
         run: uv run pre-commit run --all-files
 
       - name: Ruff format diff
+        if: always()
         run: uv run ruff format --check --diff
 
   # ========================================
