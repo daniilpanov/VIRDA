@@ -1,3 +1,7 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "virda"
 version = "0.1.0"
@@ -32,6 +36,12 @@ research = [
     "matplotlib>=3.11.1",
     "pyvista>=0.44",
 ]
+
+[project.scripts]
+virda = "virda.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/virda"]
 
 [tool.black]
 line-length = 100

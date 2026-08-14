@@ -54,11 +54,12 @@ def _parse_cli_args() -> tuple[argparse.Namespace, list[str]]:
     return parser.parse_known_args()
 
 
-def main() -> Stage1Result:
+def main() -> None:
     args, remaining = _parse_cli_args()
     sys.argv = [sys.argv[0], *remaining]
-    return run(
+    result = run(
         nifti_path=args.nifti_path,
         project_dir=args.project_dir,
         fiducials_path=args.fiducials_path,
     )
+    print(f"Stage 1: mesh with {len(result.mesh.vertices)} vertices")
