@@ -53,6 +53,9 @@ jobs:
       - name: Check code formatting (black)
         run: uv run pre-commit run --all-files
 
+      - name: Ruff format diff
+        run: uv run ruff format --check --diff
+
   # ========================================
   # JOB 2: Tests with coverage
   # ========================================
