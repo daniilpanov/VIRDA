@@ -1,5 +1,4 @@
 import logging
-from typing import cast
 
 import numpy as np
 from scipy.spatial import cKDTree
@@ -15,15 +14,32 @@ logger = logging.getLogger(__name__)
 _FALLBACK_K_NEIGHBORS = 20
 
 
+def _normals_from_covariance(covariance: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    eigenvalues, eigenvectors = np.linalg.eigh(covariance)
+    total = eigenvalues.sum(axis=1)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        quality = np.where(total > 1e-15, eigenvalues[:, 0] / total, 1.0)
+    return eigenvectors[:, :, 0], quality
+
+
 def _local_pca(neighbors: np.ndarray, k: int) -> tuple[np.ndarray, np.ndarray]:
     """Estimate normals and quality via batched PCA over k-NN neighborhoods."""
     centroids = neighbors.mean(axis=1, keepdims=True)
     centered = neighbors - centroids
     covariance = np.einsum("nki,nkj->nij", centered, centered) / (k - 1)
-    eigenvalues, eigenvectors = np.linalg.eigh(covariance)
-    total = eigenvalues.sum(axis=1)
-    quality = np.where(total > 1e-15, eigenvalues[:, 0] / total, 1.0)
-    return cast(np.ndarray, eigenvectors[:, :, 0]), quality
+    return _normals_from_covariance(covariance)
+
+
+def _local_pca_weighted(
+    neighbors: np.ndarray, distances: np.ndarray, sigma: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """Estimate normals via batched weighted PCA, down-weighting distant points."""
+    weights = np.exp(-(distances**2) / (2 * sigma**2))
+    weight_sum = weights.sum(axis=1, keepdims=True)
+    centroids = (weights[:, :, None] * neighbors).sum(axis=1) / weight_sum
+    centered = neighbors - centroids[:, None, :]
+    covariance = np.einsum("nk,nki,nkj->nij", weights, centered, centered) / weight_sum[:, :, None]
+    return _normals_from_covariance(covariance)
 
 
 def _orient_outward(normals: np.ndarray, vertices: np.ndarray) -> np.ndarray:
@@ -39,9 +55,6 @@ class PCAESEBuilder(ESEBuilder):
         self._ese_offset_mm = ese_offset_mm
 
     def _process(self, scalp_mesh: ScalpMesh) -> ESEMesh:
-        if self._config.use_weighted_pca:
-            raise NotImplementedError("weighted PCA is not implemented yet")
-
         vertices = scalp_mesh.vertices
         k = self._config.k_neighbors
         if k is not None:
@@ -74,19 +87,21 @@ class PCAESEBuilder(ESEBuilder):
             quality=quality,
         )
 
-    def _estimate_normals_knn(
-        self, vertices: np.ndarray, k: int
-    ) -> tuple[np.ndarray, np.ndarray]:
+    def _estimate_normals_knn(self, vertices: np.ndarray, k: int) -> tuple[np.ndarray, np.ndarray]:
         tree = cKDTree(vertices)
-        _, neighbor_indices = tree.query(vertices, k=k + 1)
+        distances, neighbor_indices = tree.query(vertices, k=k + 1)
+        distances = np.asarray(distances)
+        neighbor_indices = np.asarray(neighbor_indices)
         neighbors = vertices[neighbor_indices[:, 1:]]
+        if self._config.use_weighted_pca:
+            return _local_pca_weighted(neighbors, distances[:, 1:], self._config.pca_sigma_mm)
         return _local_pca(neighbors, k)
 
-    def _estimate_normals_radius(
-        self, vertices: np.ndarray
-    ) -> tuple[np.ndarray, np.ndarray]:
+    def _estimate_normals_radius(self, vertices: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         radius = self._config.neighborhood_radius_mm
         min_neighbors = self._config.min_neighbors
+        weighted = self._config.use_weighted_pca
+        sigma = self._config.pca_sigma_mm
         normals = np.zeros_like(vertices)
         quality = np.zeros(vertices.shape[0], dtype=np.float64)
         tree = cKDTree(vertices)
@@ -99,11 +114,22 @@ class PCAESEBuilder(ESEBuilder):
                 distances = np.asarray(distances)
                 knn_indices = np.asarray(knn_indices)
                 neighbors = vertices[knn_indices[1:]]
-                normals[i], quality[i] = _local_pca(neighbors[None, :, :], fallback_k)
+                if weighted:
+                    normals_i, quality_i = _local_pca_weighted(
+                        neighbors[None, :, :], distances[1:][None, :], sigma
+                    )
+                else:
+                    normals_i, quality_i = _local_pca(neighbors[None, :, :], fallback_k)
             else:
                 neighbors = vertices[neighbor_indices]
-                normals[i], quality[i] = _local_pca(
-                    neighbors[None, :, :], len(neighbor_indices)
-                )
+                if weighted:
+                    distances = np.linalg.norm(neighbors - vertices[i], axis=1)
+                    normals_i, quality_i = _local_pca_weighted(
+                        neighbors[None, :, :], distances[None, :], sigma
+                    )
+                else:
+                    normals_i, quality_i = _local_pca(neighbors[None, :, :], len(neighbor_indices))
+            normals[i] = normals_i[0]
+            quality[i] = quality_i[0]
 
         return normals, quality
