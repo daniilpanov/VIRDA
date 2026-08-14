@@ -43,6 +43,9 @@ virda = "virda.main:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/virda"]
 
+[tool.uv.workspace]
+members = ["src/virda_gui"]
+
 [tool.black]
 line-length = 100
 target-version = ["py314"]
