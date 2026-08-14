@@ -28,6 +28,8 @@ from virda.segmentation import HeadSegmenter, SegmentationMaskPostprocessor
 from virda.segmentation.head_segmenter import OtsuHeadSegmenter
 from virda.segmentation.seal import MaskSealer
 
+from .helpers import setup_pipeline_logging
+
 
 def _build_mask_postprocessors(
     settings: VirdaSettings,
@@ -97,7 +99,6 @@ class Stage1PipelineBuilder:
         nifti_path: str | Path,
         project_dir: Path | None = None,
         fiducials_path: str | Path | None = None,
-        logger: Logger | None = None,
     ) -> Self:
         """Build a Stage 1 pipeline configured from ``settings``.
 
@@ -128,7 +129,7 @@ class Stage1PipelineBuilder:
                 ),
                 extractor=MarchingCubesExtractor(),
                 project_dir=project_dir,
-                logger=logger,
+                logger=setup_pipeline_logging(project_dir, "stage_1"),
                 fiducials_path=fiducials_path,
                 auto_detect_fiducials=settings.auto_detect_fiducials,
                 ese_config=resolve_ese_config(settings),
