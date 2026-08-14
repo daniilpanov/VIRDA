@@ -14,6 +14,7 @@ from virda.mesh.mesh_cleaner import TrimeshCleaner
 from virda.mesh.mesh_extractor import MarchingCubesExtractor
 from virda.mesh.taubin_smoother import TaubinSmoother
 from virda.models.ese_config import ESEConfig
+from virda.models.quality_control_report import QualityControlReport
 from virda.models.stage1_result import Stage1Result
 from virda.pipelines.stage1 import Stage1PipelineBuilder
 from virda.segmentation.head_segmenter import OtsuHeadSegmenter
@@ -289,6 +290,29 @@ class TestStage1Pipeline:
 
         assert set(result.fiducials.ids) == {"NAS", "LPA", "RPA", "INI"}
         assert all(fiducial.definition_method == "auto" for fiducial in result.fiducials.items)
+
+    def test_run_writes_quality_control_report(
+        self, synthetic_nifti_path: Path, tmp_path: Path, fiducials_file: Path
+    ) -> None:
+        pipeline = build_pipeline(
+            synthetic_nifti_path,
+            project_dir=tmp_path,
+            fiducials_path=fiducials_file,
+        )
+
+        context = pipeline.run()
+        context.get_store_notnull(Stage1Result)
+
+        report_store = context.get_store_notnull(QualityControlReport)
+        assert report_store.report["status"] in {"ok", "warn", "fail"}
+        assert any(
+            check["name"] == "nifti_mask" and check["status"] == "ok"
+            for check in report_store.report["checks"]
+        )
+
+        report_file = tmp_path / "quality_control" / "report.json"
+        assert report_file.exists()
+        assert json.loads(report_file.read_text())["status"] == report_store.report["status"]
 
     def test_run_raises_without_fiducial_source(self, synthetic_nifti_path: Path) -> None:
         pipeline = build_pipeline(synthetic_nifti_path)
