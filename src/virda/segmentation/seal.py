@@ -25,33 +25,11 @@ from skimage.morphology import ball, closing
 from virda.models.segmentation_mask import SegmentationMask
 from virda.segmentation.contracts import SegmentationMaskPostprocessor
 
-logger = logging.getLogger(__name__)
 
-
-def seal_mask(mask: np.ndarray, radius: int = 4, keep_largest: bool = True) -> np.ndarray:
-    """Return a solid version of ``mask`` with surface openings bridged.
-
-    ``radius`` (in voxels) is the closing ball radius; it must be large enough
-    to bridge the narrowest channels that lead from interior cavities to the
-    exterior (nostrils, ear canals), yet small enough not to erode thin scalp
-    features. For ~1 mm isotropic data ``radius=4`` works.
-
-    When ``keep_largest`` is set, only the most voluminous connected component
-    of the sealed mask is returned; every other fragment is dropped from the
-    output.
-    """
-    if radius < 0:
-        raise ValueError(f"radius must be non-negative, got {radius}")
-
-    sealed = mask.astype(bool, copy=True) if radius < 1 else closing(mask, ball(radius))
-    sealed = ndi.binary_fill_holes(sealed)
-
-    if keep_largest:
-        sealed = _keep_largest_component(sealed)
-    return cast(np.ndarray, sealed)
-
-
-def _keep_largest_component(mask: np.ndarray) -> np.ndarray:
+def _keep_largest_component(
+    mask: np.ndarray,
+    logger: logging.Logger | None = None,
+) -> np.ndarray:
     labels, component_count = ndi.label(mask)
     if component_count < 1:
         return mask
@@ -61,6 +39,8 @@ def _keep_largest_component(mask: np.ndarray) -> np.ndarray:
     if component_count > 1:
         second_largest = int(np.delete(sizes, largest_label).max())
         if second_largest >= max(100, sizes[largest_label] * 0.01):
+            if not logger:
+                logger = logging.getLogger(__name__)
             logger.warning(
                 "Sealing found %d connected components; keeping the largest (%d voxels) "
                 "and dropping %d other(s) (%d voxels in total)",
@@ -73,8 +53,40 @@ def _keep_largest_component(mask: np.ndarray) -> np.ndarray:
 
 
 class MaskSealer(SegmentationMaskPostprocessor):
-    def __init__(self, radius: int = 4) -> None:
+    def __init__(
+        self,
+        radius: int = 4,
+        keep_largest: bool = True,
+        logger: logging.Logger | None = None,
+    ) -> None:
+        if radius < 0:
+            raise ValueError(f"radius must be non-negative, got {radius}")
+
         self._radius = radius
+        self._keep_largest = keep_largest
+        self._logger = logger
 
     def _process(self, mask: SegmentationMask) -> SegmentationMask:
-        return SegmentationMask(mask=seal_mask(mask.mask, self._radius))
+        return SegmentationMask(mask=self._seal_mask(mask.mask))
+
+    def _seal_mask(self, mask: np.ndarray) -> np.ndarray:
+        """Return a solid version of ``mask`` with surface openings bridged.
+
+        ``radius`` (in voxels) is the closing ball radius; it must be large enough
+        to bridge the narrowest channels that lead from interior cavities to the
+        exterior (nostrils, ear canals), yet small enough not to erode thin scalp
+        features. For ~1 mm isotropic data ``radius=4`` works.
+
+        When ``keep_largest`` is set, only the most voluminous connected component
+        of the sealed mask is returned; every other fragment is dropped from the
+        output.
+        """
+        sealed = (
+            mask.astype(bool, copy=True) if self._radius < 1 else closing(mask, ball(self._radius))
+        )
+        sealed = ndi.binary_fill_holes(sealed)
+
+        if self._keep_largest:
+            sealed = _keep_largest_component(sealed, self._logger)
+
+        return cast(np.ndarray, sealed)

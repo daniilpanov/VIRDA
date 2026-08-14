@@ -12,6 +12,7 @@ from virda.io.loader.nifti_loader import NiftiLoader
 from virda.mesh.contracts import MeshPostprocessor
 from virda.mesh.mesh_cleaner import TrimeshCleaner
 from virda.mesh.mesh_extractor import MarchingCubesExtractor
+from virda.mesh.taubin_smoother import TaubinSmoother
 from virda.models.ese_config import ESEConfig
 from virda.models.stage1_result import Stage1Result
 from virda.pipelines.stage1 import Stage1PipelineBuilder
@@ -294,6 +295,70 @@ class TestStage1Pipeline:
 
         with pytest.raises(ValueError, match="No fiducials available"):
             pipeline.run()
+
+    def test_from_settings_matches_manual_assembly(
+        self, synthetic_nifti_path: Path, fiducials_file: Path, tmp_path: Path
+    ) -> None:
+        settings = VirdaSettings(  # type: ignore[call-arg]
+            closing_radius=0,
+            seal_enabled=False,
+            smoother_type="taubin",
+            _cli_parse_args=False,
+        )
+
+        from_settings_result = (
+            Stage1PipelineBuilder.from_settings(
+                settings=settings,
+                nifti_path=synthetic_nifti_path,
+                project_dir=tmp_path / "from_settings",
+                fiducials_path=fiducials_file,
+            )
+            .build()
+            .run()
+            .get_store_notnull(Stage1Result)
+        )
+
+        expected_result = (
+            Stage1PipelineBuilder(
+                nifti_path=synthetic_nifti_path,
+                mri_loader=NiftiLoader(),
+                segmenter=OtsuHeadSegmenter(
+                    closing_radius=settings.closing_radius,
+                    otsu_scope=settings.otsu_scope,
+                    threshold_scale=settings.otsu_threshold_scale,
+                ),
+                extractor=MarchingCubesExtractor(),
+                project_dir=tmp_path / "expected",
+                fiducials_path=fiducials_file,
+                auto_detect_fiducials=settings.auto_detect_fiducials,
+                ese_config=None,
+                settings=settings,
+            )
+            .setup_mesh_postprocessors(
+                [
+                    TrimeshCleaner(
+                        min_component_vertices=settings.cleaner_min_vertices,
+                        merge_digits=settings.cleaner_merge_digits,
+                    ),
+                    TaubinSmoother(
+                        iterations=settings.smoother_iterations,
+                        lamb=settings.smoother_lamb,
+                        nu=settings.smoother_nu,
+                    ),
+                ]
+            )
+            .build()
+            .run()
+            .get_store_notnull(Stage1Result)
+        )
+
+        assert np.array_equal(from_settings_result.mesh.vertices, expected_result.mesh.vertices)
+        assert np.array_equal(from_settings_result.mesh.faces, expected_result.mesh.faces)
+        assert np.array_equal(
+            from_settings_result.segmentation_mask.mask,
+            expected_result.segmentation_mask.mask,
+        )
+        assert from_settings_result.fiducials.ids == expected_result.fiducials.ids
 
     def test_run_with_mask_sealer(self, synthetic_nifti_path: Path, fiducials_file: Path) -> None:
         builder = Stage1PipelineBuilder(

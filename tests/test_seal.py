@@ -3,7 +3,7 @@ from scipy import ndimage as ndi
 
 from tests.helpers.pipelines import build_context
 from virda.models.segmentation_mask import SegmentationMask
-from virda.segmentation.seal import MaskSealer, seal_mask
+from virda.segmentation.seal import MaskSealer
 
 
 def _enclosed_air_voxels(mask: np.ndarray) -> int:
@@ -31,7 +31,8 @@ class TestSealMask:
         mask = solid & ~cavity
 
         assert _enclosed_air_voxels(mask) > 0
-        sealed = seal_mask(mask, radius=2)
+        sealer = MaskSealer(radius=2)
+        sealed = sealer._seal_mask(mask)
 
         assert _enclosed_air_voxels(sealed) == 0
 
@@ -41,10 +42,13 @@ class TestSealMask:
         channel = np.zeros((30, 30, 30), dtype=bool)
         channel[15, 15, 5:13] = True
         mask = (solid & ~cavity) & ~channel
+        zero_radius_sealed = MaskSealer(radius=0)._seal_mask(mask)
 
         assert not mask[15, 15, 16]
-        assert not seal_mask(mask, radius=0)[15, 15, 16]
-        sealed = seal_mask(mask, radius=2)
+        assert not zero_radius_sealed[15, 15, 16]
+        assert _enclosed_air_voxels(zero_radius_sealed) == 0
+
+        sealed = MaskSealer(radius=2)._seal_mask(mask)
 
         # The channel mouth voxel (15, 15, 5) is not asserted: closing rounds
         # off the mouth of any channel that exits on a curved surface, because
@@ -55,18 +59,9 @@ class TestSealMask:
         assert sealed[15, 15, 7]
         assert sealed[15, 15, 16]
 
-    def test_radius_zero_only_fills_enclosed(self) -> None:
-        solid = _sphere_mask((30, 30, 30), (15.0, 15.0, 15.0), 10.0)
-        cavity = _sphere_mask((30, 30, 30), (15.0, 15.0, 15.0), 3.0)
-        mask = solid & ~cavity
-
-        sealed = seal_mask(mask, radius=0)
-
-        assert _enclosed_air_voxels(sealed) == 0
-
     def test_already_solid_mask_unchanged_volume(self) -> None:
         solid = _sphere_mask((30, 30, 30), (15.0, 15.0, 15.0), 10.0)
-        sealed = seal_mask(solid, radius=4)
+        sealed = MaskSealer(radius=4)._seal_mask(solid)
 
         assert _enclosed_air_voxels(sealed) == 0
         assert sealed.sum() >= solid.sum()
@@ -79,7 +74,7 @@ class TestSealMask:
         mask = (solid_big & ~cavity) | small_blob
 
         assert _enclosed_air_voxels(mask) > 0
-        sealed = seal_mask(mask, radius=2)
+        sealed = MaskSealer(radius=2)._seal_mask(mask)
 
         assert _enclosed_air_voxels(sealed) == 0
         assert sealed[solid_big].all()
