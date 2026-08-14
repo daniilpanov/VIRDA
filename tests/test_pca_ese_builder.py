@@ -95,3 +95,29 @@ class TestPCAESEBuilder:
         assert np.allclose(np.linalg.norm(result.normals, axis=1), 1.0)
         assert np.all(np.isfinite(result.quality))
         assert np.mean(dots) > 0.8
+
+    def test_weighted_pca_knn_consistent(self) -> None:
+        unweighted = run_builder(Stage2Config(k_neighbors=30), make_sphere())
+        weighted = run_builder(
+            Stage2Config(k_neighbors=30, use_weighted_pca=True, pca_sigma_mm=10.0),
+            make_sphere(),
+        )
+
+        dots = np.sum(unweighted.normals * weighted.normals, axis=1)
+        assert np.mean(dots) > 0.99
+        assert np.all(np.isfinite(weighted.quality))
+
+    def test_weighted_pca_radius_mode(self) -> None:
+        config = Stage2Config(
+            neighborhood_radius_mm=20.0,
+            k_neighbors=None,
+            use_weighted_pca=True,
+            pca_sigma_mm=10.0,
+        )
+        mesh = make_sphere()
+        result = run_builder(config, mesh)
+
+        radial = mesh.vertices / np.linalg.norm(mesh.vertices, axis=1, keepdims=True)
+        dots = np.sum(result.normals * radial, axis=1)
+        assert np.mean(dots) > 0.8
+        assert np.all(np.isfinite(result.quality))
