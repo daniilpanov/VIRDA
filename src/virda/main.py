@@ -36,8 +36,3 @@ def run(
         .run()
         .get_store_notnull(Stage1Result)
     )
-
-
-if __name__ == "__main__":
-    result = run()
-    print(f"Stage 1: mesh with {len(result.mesh.vertices)} vertices")
