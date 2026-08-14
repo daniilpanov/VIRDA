@@ -41,7 +41,7 @@ jobs:
       - name: Build packages
         run: |
           uv build
-          uv build -p virda-gui --out-dir dist
+          uv build --package virda-gui --out-dir dist
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v7
