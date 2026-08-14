@@ -3,8 +3,14 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from virda.config import VirdaSettings, resolve_config_file, resolve_ese_config
+from virda.config import (
+    VirdaSettings,
+    resolve_config_file,
+    resolve_ese_config,
+    resolve_stage2_config,
+)
 from virda.models.ese_config import ESEConfig
+from virda.models.stage2_config import Stage2Config
 
 
 class TestResolveConfigFile:
@@ -59,4 +65,35 @@ class TestVirdaSettings:
         assert isinstance(config, ESEConfig)
         assert config == ESEConfig(
             n_electrodes=32, ese_offset_mm=2.5, ese_reference="electrode_body_center"
+        )
+
+    def test_stage2_not_configured_without_ese_offset(self) -> None:
+        settings = VirdaSettings(_cli_parse_args=False)  # type: ignore[call-arg]
+        assert resolve_stage2_config(settings) is None
+
+    def test_stage2_configured_with_defaults(self, monkeypatch) -> None:
+        monkeypatch.setenv("ESE_OFFSET_MM", "2.5")
+        settings = VirdaSettings(_cli_parse_args=False)  # type: ignore[call-arg]
+
+        config = resolve_stage2_config(settings)
+        assert isinstance(config, Stage2Config)
+        assert config == Stage2Config()
+
+    def test_stage2_configured_with_custom_fields(self, monkeypatch) -> None:
+        monkeypatch.setenv("ESE_OFFSET_MM", "2.5")
+        monkeypatch.setenv("K_NEIGHBORS", "20")
+        monkeypatch.setenv("NEIGHBORHOOD_RADIUS_MM", "12.0")
+        monkeypatch.setenv("PCA_SIGMA_MM", "3.0")
+        monkeypatch.setenv("MIN_NEIGHBORS", "7")
+        monkeypatch.setenv("USE_WEIGHTED_PCA", "true")
+
+        settings = VirdaSettings(_cli_parse_args=False)  # type: ignore[call-arg]
+        config = resolve_stage2_config(settings)
+        assert isinstance(config, Stage2Config)
+        assert config == Stage2Config(
+            neighborhood_radius_mm=12.0,
+            k_neighbors=20,
+            use_weighted_pca=True,
+            pca_sigma_mm=3.0,
+            min_neighbors=7,
         )
