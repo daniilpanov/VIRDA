@@ -51,7 +51,7 @@ jobs:
         run: uv sync --all-extras --frozen
 
       - name: Check code formatting (black)
-        run: uv run pre-commit run --all-files
+        run: uv run pre-commit run --all-files --show-diff-on-failure
 
       - name: Ruff format diff
         if: always()
