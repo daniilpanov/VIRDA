@@ -24,6 +24,7 @@ from virda.models.segmentation_mask import SegmentationMask
 from virda.models.stage1_result import Stage1Result
 from virda.pipeline import PipelineController
 from virda.pipeline_context import PipelineContext
+from virda.qc.checks import Stage1QualityControlStep
 from virda.segmentation import HeadSegmenter, SegmentationMaskPostprocessor
 from virda.segmentation.head_segmenter import OtsuHeadSegmenter
 from virda.segmentation.seal import MaskSealer
@@ -235,6 +236,15 @@ class Stage1PipelineBuilder:
             controller.register_provider(
                 ScalpMeshVersioningProvider(self._project_dir / "mesh" / "versions"),
                 on_store=ScalpMesh,
+            )
+
+            # Quality control runs after the artifacts are exported.
+            controller.register_step(
+                Stage1QualityControlStep(
+                    project_dir=self._project_dir,
+                    ese_config=self._ese_config,
+                    logger=self._logger,
+                )
             )
 
         return controller
