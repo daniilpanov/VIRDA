@@ -52,7 +52,7 @@ ENV PYTHONUNBUFFERED=1
 
 # Install dependencies from the lockfile (project itself comes from the wheel)
 COPY --chown=${USERNAME}:${USERNAME} pyproject.toml uv.lock* ./
-RUN uv sync --frozen --no-dev --no-install-project
+RUN uv sync --frozen --no-dev --no-install-project --package virda
 
 # Install the built VIRDA wheel
 COPY --from=builder --chown=${USERNAME}:${USERNAME} /build/dist/virda-*.whl ./
