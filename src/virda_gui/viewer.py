@@ -19,11 +19,17 @@ Usage
         --fiducials <fiducials/fiducials.json>
     virda-gui --nifti <scan.nii.gz> --mesh <final_mesh.ply> \\
         --ese-mesh <stage2/ese_mesh.ply> --normals <stage2/>
+    virda-gui --nifti <scan.nii.gz> --mesh <final_mesh.ply> \\
+        --ese-mesh <stage2/ese_mesh.ply> --fiducials <fiducials.json> \\
+        --electrodes <stage3/electrodes.json>
 
 At least one of ``--nifti`` or ``--mesh`` is required. ``--normals`` points to
 the ``stage2/`` output directory (``ese_vertices.npy`` + ``normals.npy``);
 ``--normals-scale`` sets the arrow length in scene units (default 5) and
-``--normals-step`` draws only every N-th normal.
+``--normals-step`` draws only every N-th normal. ``--electrodes`` points to the
+``stage3/electrodes.json`` written by the Stage 3 exporter: localized electrodes
+are drawn as spheres colored by residual error (red when flagged over the
+threshold) and linked to the fiducials they were measured from.
 
 If the affine is axis-aligned with positive spacing the scene is shown in world
 millimeters; otherwise the mesh is transformed into voxel index space so that
@@ -135,6 +141,55 @@ def _load_fiducial_points(path: str) -> tuple[np.ndarray, list[str]]:
     )
     labels = [f"{item['fiducial_id']} ({item['name']})" for item in data["fiducials"]]
     return points, labels
+
+
+def _load_electrodes(
+    path: str,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[dict[str, float]]]:
+    """Read ``electrodes.json`` from the Stage 3 output.
+
+    Returns scalp points, residuals and flags of the localized electrodes, plus
+    the measured distances per electrode (used to draw fiducial links). Non-
+    localized electrodes are skipped.
+    """
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+    points: list[np.ndarray] = []
+    residuals: list[float] = []
+    flags: list[bool] = []
+    measured: list[dict[str, float]] = []
+    for item in data:
+        coords = item.get("scalp_coords")
+        if coords is None:
+            continue
+        points.append(np.asarray(coords, dtype=np.float64))
+        residuals.append(float(item.get("residual_error") or 0.0))
+        flags.append(bool(item.get("flagged", False)))
+        measured.append(
+            {
+                str(fiducial_id): float(distance)
+                for fiducial_id, distance in item.get("measured_distances", {}).items()
+            }
+        )
+    if not points:
+        return np.empty((0, 3)), np.empty(0), np.empty(0), []
+    return np.asarray(points), np.asarray(residuals), np.asarray(flags, dtype=bool), measured
+
+
+def _build_electrode_links(
+    points: np.ndarray,
+    measured: list[dict[str, float]],
+    fiducial_id_to_point: dict[str, np.ndarray],
+) -> np.ndarray:
+    """Return (N, 2, 3) line segments from each electrode to its measured fiducials."""
+    pairs: list[np.ndarray] = []
+    for point, distances in zip(points, measured, strict=True):
+        for fiducial_id in distances:
+            if fiducial_id in fiducial_id_to_point:
+                pairs.append(np.vstack([point, fiducial_id_to_point[fiducial_id]]))
+    if not pairs:
+        return np.empty((0, 2, 3))
+    return np.asarray(pairs)
 
 
 def _load_normals(path: str) -> tuple[np.ndarray, np.ndarray]:
@@ -302,6 +357,10 @@ def main() -> None:
         default=1,
         help="Decimation: draw only every N-th normal.",
     )
+    parser.add_argument(
+        "--electrodes",
+        help="Path to Stage 3 electrodes JSON (stage3/electrodes.json).",
+    )
     args = parser.parse_args()
 
     if not args.nifti and not args.mesh:
@@ -350,6 +409,25 @@ def main() -> None:
     if fiducial_points is not None and len(fiducial_points) > 0:
         fiducial_points = _points_to_scene(fiducial_points, affine, mm_scene)
 
+    fiducial_id_to_point: dict[str, np.ndarray] = {}
+    if fiducial_points is not None:
+        for label, point in zip(fiducial_labels, fiducial_points, strict=True):
+            fiducial_id_to_point[label.split(" (")[0]] = point
+
+    electrode_points = None
+    electrode_residuals = None
+    electrode_flags = None
+    electrode_measured: list[dict[str, float]] = []
+    if args.electrodes:
+        (
+            electrode_points,
+            electrode_residuals,
+            electrode_flags,
+            electrode_measured,
+        ) = _load_electrodes(args.electrodes)
+    if electrode_points is not None and len(electrode_points) > 0:
+        electrode_points = _points_to_scene(electrode_points, affine, mm_scene)
+
     plotter = pv.Plotter(title="VIRDA — scalp/ESE meshes and/or MRI volume")
     mri_actor = None
     mesh_actor = None
@@ -386,6 +464,32 @@ def main() -> None:
             show_points=False,
             shape=None,
         )
+
+    electrode_actor = None
+    link_actor = None
+    flagged_actor = None
+    if electrode_points is not None and len(electrode_points) > 0:
+        healthy = ~electrode_flags
+        if healthy.any():
+            electrode_actor = plotter.add_points(
+                electrode_points[healthy],
+                scalars=electrode_residuals[healthy],
+                cmap="jet",
+                point_size=12,
+                render_points_as_spheres=True,
+            )
+        if (~healthy).any():
+            flagged_actor = plotter.add_points(
+                electrode_points[~healthy],
+                color="red",
+                point_size=16,
+                render_points_as_spheres=True,
+            )
+        if electrode_actor is None:
+            electrode_actor = flagged_actor
+        links = _build_electrode_links(electrode_points, electrode_measured, fiducial_id_to_point)
+        if len(links) > 0:
+            link_actor = plotter.add_lines(links, color="cyan", width=1)
 
     y = 10
     mri_visible = {"on": True}
@@ -469,6 +573,26 @@ def main() -> None:
 
         plotter.add_checkbox_button_widget(set_normals_visibility, value=True, position=(10, y))
         plotter.add_text("Show normals", position=(75, y + 10), font_size=18, name="normals_label")
+        y += 50
+    if electrode_actor is not None:
+
+        def set_electrodes_visibility(flag: bool) -> None:
+            electrode_actor.SetVisibility(flag)
+            if flagged_actor is not None:
+                flagged_actor.SetVisibility(flag)
+
+        plotter.add_checkbox_button_widget(set_electrodes_visibility, value=True, position=(10, y))
+        plotter.add_text(
+            "Show electrodes", position=(75, y + 10), font_size=18, name="electrodes_label"
+        )
+        y += 50
+    if link_actor is not None:
+
+        def set_links_visibility(flag: bool) -> None:
+            link_actor.SetVisibility(flag)
+
+        plotter.add_checkbox_button_widget(set_links_visibility, value=True, position=(10, y))
+        plotter.add_text("Show links", position=(75, y + 10), font_size=18, name="links_label")
         y += 50
     plotter.add_checkbox_button_widget(set_contrast, value=False, position=(10, y))
     plotter.add_text("Boost contrast", position=(75, y + 10), font_size=18, name="contrast_label")
