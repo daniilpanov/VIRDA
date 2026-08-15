@@ -14,6 +14,7 @@ class Fiducial:
     coordinates: np.ndarray
     coordinate_system: CoordinateSystem
     definition_method: DefinitionMethod = "manual"
+    weight: float = 1.0
 
     def __post_init__(self) -> None:
         if self.coordinates.shape != (3,):
@@ -28,6 +29,8 @@ class Fiducial:
                 f"Invalid definition_method: {self.definition_method!r}, "
                 "expected 'auto', 'manual' or 'imported'"
             )
+        if self.weight <= 0:
+            raise ValueError(f"weight must be positive, got {self.weight}")
 
 
 @dataclass(frozen=True)
