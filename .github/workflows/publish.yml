@@ -30,8 +30,10 @@ jobs:
       - name: Set up Python
         run: uv python install 3.14
 
-      - name: Build package
-        run: uv build
+      - name: Build packages
+        run: |
+          uv build
+          uv build --package virda-gui --out-dir dist
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v7
@@ -63,6 +65,6 @@ jobs:
           path: dist/
 
       - name: Upload assets to GitHub Release
-        run: gh release upload --clobber "${{ github.event.release.tag_name }}" dist/virda-*.tar.gz dist/virda-*.whl
+        run: gh release upload --clobber "${{ github.event.release.tag_name }}" dist/*.tar.gz dist/*.whl
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
