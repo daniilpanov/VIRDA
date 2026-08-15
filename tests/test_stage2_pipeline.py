@@ -5,8 +5,9 @@ import nibabel as nib
 import numpy as np
 import pytest
 
+from tests.helpers.measurements import make_measurements_file
 from tests.helpers.meshes import make_sphere
-from tests.helpers.pipelines import save_test_fiducials
+from tests.helpers.pipelines import make_fiducials, save_test_fiducials
 from virda.config import VirdaSettings
 from virda.ese.pca_ese_builder import PCAESEBuilder
 from virda.main import run
@@ -106,13 +107,14 @@ class TestMainRunIntegration:
         )
         monkeypatch.setattr("virda.main.get_virda_settings", lambda: settings)
 
-        stage1_result, ese_mesh = run(
+        stage1_result, ese_mesh, electrodes = run(
             nifti_path=synthetic_nifti_path,
             project_dir=tmp_path,
             fiducials_path=fiducials_file,
         )
 
         assert ese_mesh is not None
+        assert electrodes is None
         assert ese_mesh.vertices.shape[0] == stage1_result.mesh.vertices.shape[0]
         assert (tmp_path / "stage2" / "ese_mesh.ply").exists()
         assert (tmp_path / "stage2" / "stage2_config.json").exists()
@@ -131,7 +133,7 @@ class TestMainRunIntegration:
         )
         monkeypatch.setattr("virda.main.get_virda_settings", lambda: settings)
 
-        stage1_result, ese_mesh = run(
+        stage1_result, ese_mesh, electrodes = run(
             nifti_path=synthetic_nifti_path,
             project_dir=tmp_path,
             fiducials_path=fiducials_file,
@@ -139,4 +141,45 @@ class TestMainRunIntegration:
 
         assert isinstance(stage1_result, Stage1Result)
         assert ese_mesh is None
+        assert electrodes is None
         assert not (tmp_path / "stage2").exists()
+        assert not (tmp_path / "stage3").exists()
+
+    def test_run_with_ese_and_measurements_returns_electrodes(
+        self,
+        synthetic_nifti_path: Path,
+        fiducials_file: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        measurements_file = make_measurements_file(
+            tmp_path / "measurements.json",
+            points=np.array([[10.0, 10.0, 18.0]]),
+            fiducials=make_fiducials(),
+        )
+        settings = VirdaSettings(
+            n_electrodes=32,
+            ese_offset_mm=2.5,
+            ese_reference="electrode_body_center",
+            k_neighbors=10,
+            closing_radius=0,
+            seal_enabled=False,
+            _cli_parse_args=False,  # type: ignore[call-arg]
+        )
+        monkeypatch.setattr("virda.main.get_virda_settings", lambda: settings)
+
+        stage1_result, ese_mesh, electrodes = run(
+            nifti_path=synthetic_nifti_path,
+            project_dir=tmp_path,
+            fiducials_path=fiducials_file,
+            measurements_path=measurements_file,
+        )
+
+        assert ese_mesh is not None
+        assert electrodes is not None
+        assert len(electrodes.items) == 1
+        assert electrodes.items[0].is_localized
+        assert stage1_result.fiducials.get("NAS") is not None
+        assert (tmp_path / "stage3" / "electrodes.json").exists()
+        assert (tmp_path / "stage3" / "electrode_coords.csv").exists()
+        assert (tmp_path / "stage3" / "localization_summary.json").exists()
