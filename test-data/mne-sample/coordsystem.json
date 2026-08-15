@@ -1,0 +1,47 @@
+{
+  "CoordinateSystem": "RAS",
+  "CoordinateUnits": "mm",
+  "CoordinateSystemDescription": "Head coords from digitization (MNI-Neuromag: nasion +y, LPA/RPA on x), transformed to MRI native FreeSurfer surface-RAS space via sample_audvis_raw-trans.fif (head->mri). Positions in electrodes.tsv are MRI-RAS, mm.",
+  "EEGCoordinateSystem": "RAS",
+  "EEGCoordinateUnits": "mm",
+  "FiducialsCoordinates": {
+    "NASION": {
+      "Head": [
+        4e-06,
+        102.605611,
+        4e-06
+      ],
+      "MRI": [
+        3.379094,
+        94.659427,
+        32.259164
+      ]
+    },
+    "LPA": {
+      "Head": [
+        -71.376607,
+        0.0,
+        5e-06
+      ],
+      "MRI": [
+        -69.257414,
+        10.58946,
+        -25.000859
+      ]
+    },
+    "RPA": {
+      "Head": [
+        75.26768,
+        0.0,
+        6e-06
+      ],
+      "MRI": [
+        77.285621,
+        12.053672,
+        -30.248822
+      ]
+    }
+  },
+  "ElectrodeCount": 60,
+  "Source": "MNE sample dataset (MNE-sample-data), subject sample: sample_audvis_raw.fif digitization"
+}
