@@ -8,9 +8,11 @@ from virda.config import (
     resolve_config_file,
     resolve_ese_config,
     resolve_stage2_config,
+    resolve_stage3_config,
 )
 from virda.models.ese_config import ESEConfig
 from virda.models.stage2_config import Stage2Config
+from virda.models.stage3_config import Stage3Config
 
 
 class TestResolveConfigFile:
@@ -97,3 +99,31 @@ class TestVirdaSettings:
             pca_sigma_mm=3.0,
             min_neighbors=7,
         )
+
+    def test_stage3_configured_with_defaults(self, monkeypatch) -> None:
+        settings = VirdaSettings(_cli_parse_args=False)  # type: ignore[call-arg]
+
+        config = resolve_stage3_config(settings)
+
+        assert isinstance(config, Stage3Config)
+        assert config == Stage3Config()
+
+    def test_stage3_configured_with_custom_threshold(self, monkeypatch) -> None:
+        monkeypatch.setenv("RESIDUAL_THRESHOLD_MM", "15.0")
+        settings = VirdaSettings(_cli_parse_args=False)  # type: ignore[call-arg]
+
+        config = resolve_stage3_config(settings)
+
+        assert config == Stage3Config(residual_threshold_mm=15.0)
+
+    def test_stage3_rejects_nonpositive_threshold(self, monkeypatch) -> None:
+        monkeypatch.setenv("RESIDUAL_THRESHOLD_MM", "0")
+
+        with pytest.raises(ValidationError, match="residual_threshold_mm"):
+            VirdaSettings(_cli_parse_args=False)  # type: ignore[call-arg]
+
+    def test_reads_measurements_path(self, monkeypatch) -> None:
+        monkeypatch.setenv("MEASUREMENTS_PATH", "/data/CTRL_1277/measurements.json")
+        settings = VirdaSettings(_cli_parse_args=False)  # type: ignore[call-arg]
+
+        assert settings.measurements_path == "/data/CTRL_1277/measurements.json"
