@@ -1269,6 +1269,15 @@ wheels = [
 ]
 
 [[package]]
+name = "types-tqdm"
+version = "4.70.0.20260805"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ce/41/284465d9bb5e657a1a4b17a4addf8800bbfad3d2e903f5a1a4d5bd10dd53/types_tqdm-4.70.0.20260805.tar.gz", hash = "sha256:569efd0fd8b2a460e6e6548634ec253c1362ed8907f8b0daacf0a07eab204a26", size = 19115, upload-time = "2026-08-05T04:52:04.435Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/97/92/acbd53e79df923bca3881192558a3bc73a47b8b7bd6c94b3649ae45e8094/types_tqdm-4.70.0.20260805-py3-none-any.whl", hash = "sha256:c83113470a46caee2d045428554714f3c314be94eb4ed4030aaa8a8ab21b830c", size = 25135, upload-time = "2026-08-05T04:52:03.166Z" },
+]
+
+[[package]]
 name = "typing-extensions"
 version = "4.16.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1326,6 +1335,7 @@ dev = [
     { name = "pytest-mock" },
     { name = "ruff" },
     { name = "scipy-stubs" },
+    { name = "types-tqdm" },
 ]
 research = [
     { name = "matplotlib" },
@@ -1355,6 +1365,7 @@ requires-dist = [
     { name = "scipy-stubs", marker = "extra == 'dev'", specifier = ">=1.14" },
     { name = "tqdm", specifier = ">=4.66" },
     { name = "trimesh", specifier = ">=5.0.0" },
+    { name = "types-tqdm", marker = "extra == 'dev'", specifier = ">=4.70.0.20260805" },
 ]
 provides-extras = ["dev", "research"]
 
