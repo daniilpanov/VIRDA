@@ -66,6 +66,12 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
   #hint { position: fixed; bottom: 8px; left: 50%; transform: translateX(-50%); z-index: 10;
     color: #9a9aae; font-size: 12px; background: rgba(16, 16, 24, 0.7); padding: 4px 10px;
     border-radius: 12px; white-space: nowrap; }
+  #loader { position: fixed; inset: 0; z-index: 100; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 14px; background: rgba(16, 16, 24, 0.92);
+    color: #e8e8f0; font-size: 14px; }
+  #loader .spinner { width: 44px; height: 44px; border: 4px solid rgba(250, 128, 114, 0.25);
+    border-top-color: #fa8072; border-radius: 50%; animation: spin 0.9s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
@@ -78,6 +84,7 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
   <label><input type="checkbox" id="cb-boost"> Boost contrast</label>
 </div>
 <div id="hint">drag to rotate · wheel / pinch to zoom · shift-drag to pan</div>
+<div id="loader"><div class="spinner"></div><div>Loading data…</div></div>
 <script type="application/json" id="virda-data">__VIRDA_DATA__</script>
 <script type="importmap">
 {
@@ -410,6 +417,7 @@ window.addEventListener('resize', () => {
 });
 
 renderer.render(scene, camera);
+document.getElementById('loader').style.display = 'none';
 
 function animate() {
   requestAnimationFrame(animate);
