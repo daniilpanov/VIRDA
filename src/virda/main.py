@@ -1,65 +1,129 @@
 import argparse
-import sys
-from pathlib import Path
+from typing import Any
 
-from virda.config import get_virda_settings
+from virda.config import VirdaSettings, build_config, resolve_config_files
+from virda.models.config import Config
 from virda.models.stage1_result import Stage1Result
 from virda.pipelines.stage1 import Stage1PipelineBuilder
 
 
-def run(
-    nifti_path: str | Path | None = None,
-    project_dir: str | Path | None = None,
-    fiducials_path: str | Path | None = None,
-) -> Stage1Result:
-    """Run the full VIRDA pipeline: Stage 1 → 2 → 3.
+def _parse_bool(value: str) -> bool:
+    lowered = value.strip().lower()
+    if lowered in {"true", "1", "yes", "on"}:
+        return True
+    if lowered in {"false", "0", "no", "off"}:
+        return False
+    raise argparse.ArgumentTypeError(f"invalid boolean value: {value!r}")
 
-    Parameters
-    ----------
-    nifti_path
-        Path to T1-weighted NIfTI
-    project_dir
-        Path to output directory
-    fiducials_path
-        Path to manual fiducials file
 
-    Returns
-    -------
-    Stage1Result
-    """
-    return (
-        Stage1PipelineBuilder.from_settings(
-            settings=get_virda_settings(),
-            nifti_path=nifti_path,
-            project_dir=project_dir,
-            fiducials_path=fiducials_path,
+def _add_option(parser: argparse.ArgumentParser, name: str, value_type: type) -> None:
+    parser.add_argument(
+        f"--{name.replace('_', '-')}",
+        f"--{name}",
+        dest=name,
+        type=value_type,
+    )
+
+
+def _add_bool_option(parser: argparse.ArgumentParser, name: str) -> None:
+    parser.add_argument(
+        f"--{name.replace('_', '-')}",
+        f"--{name}",
+        dest=name,
+        nargs="?",
+        const=True,
+        default=None,
+        type=_parse_bool,
+        metavar="BOOL",
+    )
+
+
+def _parse_cli_args() -> argparse.Namespace:
+    """Parse CLI arguments for every pipeline setting (highest priority)."""
+    parser = argparse.ArgumentParser(
+        prog="virda",
+        description="Run the VIRDA electrode localization pipeline.",
+    )
+    parser.add_argument(
+        "--config-file",
+        "--config_file",
+        dest="config_file",
+        action="append",
+        type=str,
+        help="Input config file (e.g. coordsystem.json); may be repeated.",
+    )
+    for name in (
+        "nifti_path",
+        "project_dir",
+        "fiducials_path",
+        "closing_radius",
+        "otsu_scope",
+        "otsu_threshold_scale",
+        "seal_radius",
+        "cleaner_min_vertices",
+        "cleaner_merge_digits",
+        "smoother_type",
+        "smoother_iterations",
+        "smoother_lamb",
+        "smoother_nu",
+        "n_electrodes",
+        "ese_offset_mm",
+        "ese_reference",
+        "neighborhood_radius_mm",
+        "k_neighbors",
+        "pca_sigma_mm",
+        "min_neighbors",
+    ):
+        value_type: type = (
+            int
+            if name
+            in {
+                "closing_radius",
+                "seal_radius",
+                "cleaner_min_vertices",
+                "cleaner_merge_digits",
+                "smoother_iterations",
+                "n_electrodes",
+                "k_neighbors",
+                "min_neighbors",
+            }
+            else (
+                float
+                if name in {"otsu_threshold_scale", "smoother_lamb", "smoother_nu", "ese_offset_mm"}
+                else str
+            )
         )
+        _add_option(parser, name, value_type)
+    for name in ("auto_detect_fiducials", "seal_enabled", "use_weighted_pca"):
+        _add_bool_option(parser, name)
+    return parser.parse_args()
+
+
+def _cli_overrides(args: argparse.Namespace) -> dict[str, Any]:
+    """CLI values as overrides, skipping flags that were not provided."""
+    return {
+        name: value
+        for name, value in vars(args).items()
+        if value is not None and name != "config_file"
+    }
+
+
+def run(config: Config) -> Stage1Result:
+    """Run the VIRDA pipeline for the merged ``config``."""
+    return (
+        Stage1PipelineBuilder.from_config(config=config)
         .build()
         .run()
         .get_store_notnull(Stage1Result)
     )
 
 
-def _parse_cli_args() -> tuple[argparse.Namespace, list[str]]:
-    """Parse kebab-case path flags; leave everything else to pydantic-settings."""
-    parser = argparse.ArgumentParser(
-        prog="virda",
-        description="Run the VIRDA electrode localization pipeline (Stage 1).",
-    )
-    parser.add_argument("--nifti-path", dest="nifti_path", help="Path to the T1 NIfTI scan.")
-    parser.add_argument("--project-dir", dest="project_dir", help="Path to the output directory.")
-    parser.add_argument(
-        "--fiducials-path", dest="fiducials_path", help="Path to the manual fiducials file."
-    )
-    return parser.parse_known_args()
-
-
 def main() -> None:
-    args, remaining = _parse_cli_args()
-    sys.argv = [sys.argv[0], *remaining]
-    result = run(
-        nifti_path=args.nifti_path,
-        project_dir=args.project_dir,
-        fiducials_path=args.fiducials_path,
+    args = _parse_cli_args()
+    config = build_config(
+        settings=VirdaSettings(),
+        config_files=resolve_config_files(args.config_file),
+        overrides=_cli_overrides(args),
     )
+    result = run(config)
     print(f"Stage 1: mesh with {len(result.mesh.vertices)} vertices")

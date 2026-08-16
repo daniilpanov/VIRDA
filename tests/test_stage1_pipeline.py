@@ -6,13 +6,14 @@ import numpy as np
 import pytest
 
 from tests.helpers.pipelines import save_test_fiducials
-from virda.config import VirdaSettings
 from virda.io.fiducial_helpers import load_fiducials
 from virda.io.loader.nifti_loader import NiftiLoader
 from virda.mesh.contracts import MeshPostprocessor
 from virda.mesh.mesh_cleaner import TrimeshCleaner
 from virda.mesh.mesh_extractor import MarchingCubesExtractor
 from virda.mesh.taubin_smoother import TaubinSmoother
+from virda.models.config import Config
+from virda.models.coordsystem import Coordsystem
 from virda.models.ese_config import ESEConfig
 from virda.models.quality_control_report import QualityControlReport
 from virda.models.stage1_result import Stage1Result
@@ -52,7 +53,7 @@ def build_pipeline(
     fiducials_path: Path | None = None,
     project_dir: Path | None = None,
     ese_config: ESEConfig | None = None,
-    settings: VirdaSettings | None = None,
+    config: Config | None = None,
 ):
     builder = Stage1PipelineBuilder(
         nifti_path=nifti_path,
@@ -62,7 +63,7 @@ def build_pipeline(
         project_dir=project_dir,
         fiducials_path=fiducials_path,
         ese_config=ese_config,
-        settings=settings,
+        config=config,
     )
     if postprocessors:
         builder.setup_mesh_postprocessors(postprocessors)
@@ -135,6 +136,51 @@ class TestStage1Pipeline:
         assert nas.coordinate_system == "world"
         assert nas.definition_method == "manual"
 
+    def test_run_uses_coordsystem_fiducials(self, synthetic_nifti_path: Path) -> None:
+        config = Config(
+            coordsystem=Coordsystem.model_validate(
+                {
+                    "FiducialsCoordinates": {
+                        "NASION": {"Head": [0.0, 102.6, 0.0], "MRI": [0.0, 88.0, -10.0]},
+                        "LPA": {"Head": [-71.4, 0.0, 0.0], "MRI": [-75.0, -1.0, -14.0]},
+                        "RPA": {"Head": [75.3, 0.0, 0.0], "MRI": [75.0, -1.0, -14.0]},
+                    },
+                    "ElectrodeCount": 60,
+                }
+            )
+        )
+        pipeline = build_pipeline(synthetic_nifti_path, config=config)
+
+        result = pipeline.run().get_store_notnull(Stage1Result)
+
+        assert result.fiducials.ids == ["NAS", "LPA", "RPA"]
+        assert all(fiducial.definition_method == "imported" for fiducial in result.fiducials.items)
+        assert all(fiducial.coordinate_system == "world" for fiducial in result.fiducials.items)
+
+    def test_run_manual_fiducials_beat_coordsystem(
+        self, synthetic_nifti_path: Path, fiducials_file: Path
+    ) -> None:
+        config = Config(
+            coordsystem=Coordsystem.model_validate(
+                {
+                    "FiducialsCoordinates": {
+                        "NASION": {"Head": [0.0, 102.6, 0.0], "MRI": [0.0, 88.0, -10.0]},
+                    },
+                    "ElectrodeCount": 60,
+                }
+            )
+        )
+        pipeline = build_pipeline(
+            synthetic_nifti_path,
+            fiducials_path=fiducials_file,
+            config=config,
+        )
+
+        result = pipeline.run().get_store_notnull(Stage1Result)
+
+        assert result.fiducials.ids == ["NAS", "LPA"]
+        assert all(fiducial.definition_method == "manual" for fiducial in result.fiducials.items)
+
     def test_run_exports_fiducials_json(
         self, synthetic_nifti_path: Path, tmp_path: Path, fiducials_file: Path
     ) -> None:
@@ -188,31 +234,30 @@ class TestStage1Pipeline:
 
         assert not (tmp_path / "config" / "ese.json").exists()
 
-    def test_run_exports_settings(
+    def test_run_exports_config(
         self, synthetic_nifti_path: Path, tmp_path: Path, fiducials_file: Path
     ) -> None:
-        settings = VirdaSettings(
+        config = Config(
             n_electrodes=32,
             ese_offset_mm=2.5,
             ese_reference="electrode_body_center",
-            _cli_parse_args=False,  # type: ignore[call-arg]
         )
         pipeline = build_pipeline(
             synthetic_nifti_path,
             project_dir=tmp_path,
             fiducials_path=fiducials_file,
-            settings=settings,
+            config=config,
         )
 
         pipeline.run().get_store_notnull(Stage1Result)
 
-        config = json.loads((tmp_path / "input" / "pipeline_config.json").read_text())
-        assert config["n_electrodes"] == 32
-        assert config["ese_offset_mm"] == 2.5
-        assert config["ese_reference"] == "electrode_body_center"
-        assert config["auto_detect_fiducials"] is False
+        written = json.loads((tmp_path / "input" / "pipeline_config.json").read_text())
+        assert written["n_electrodes"] == 32
+        assert written["ese_offset_mm"] == 2.5
+        assert written["ese_reference"] == "electrode_body_center"
+        assert written["auto_detect_fiducials"] is False
 
-    def test_run_without_settings_skips_pipeline_config(
+    def test_run_exports_default_config(
         self, synthetic_nifti_path: Path, tmp_path: Path, fiducials_file: Path
     ) -> None:
         pipeline = build_pipeline(
@@ -223,7 +268,9 @@ class TestStage1Pipeline:
 
         pipeline.run().get_store_notnull(Stage1Result)
 
-        assert not (tmp_path / "input" / "pipeline_config.json").exists()
+        written = json.loads((tmp_path / "input" / "pipeline_config.json").read_text())
+        assert written["closing_radius"] == 5
+        assert written["coordsystem"] is None
 
     def test_run_copies_source_nifti(
         self, synthetic_nifti_path: Path, tmp_path: Path, fiducials_file: Path
@@ -320,23 +367,20 @@ class TestStage1Pipeline:
         with pytest.raises(ValueError, match="No fiducials available"):
             pipeline.run()
 
-    def test_from_settings_matches_manual_assembly(
+    def test_from_config_matches_manual_assembly(
         self, synthetic_nifti_path: Path, fiducials_file: Path, tmp_path: Path
     ) -> None:
-        settings = VirdaSettings(  # type: ignore[call-arg]
+        config = Config(
             closing_radius=0,
             seal_enabled=False,
             smoother_type="taubin",
-            _cli_parse_args=False,
+            nifti_path=str(synthetic_nifti_path),
+            fiducials_path=str(fiducials_file),
+            project_dir=str(tmp_path / "from_config"),
         )
 
-        from_settings_result = (
-            Stage1PipelineBuilder.from_settings(
-                settings=settings,
-                nifti_path=synthetic_nifti_path,
-                project_dir=tmp_path / "from_settings",
-                fiducials_path=fiducials_file,
-            )
+        from_config_result = (
+            Stage1PipelineBuilder.from_config(config=config)
             .build()
             .run()
             .get_store_notnull(Stage1Result)
@@ -347,27 +391,27 @@ class TestStage1Pipeline:
                 nifti_path=synthetic_nifti_path,
                 mri_loader=NiftiLoader(),
                 segmenter=OtsuHeadSegmenter(
-                    closing_radius=settings.closing_radius,
-                    otsu_scope=settings.otsu_scope,
-                    threshold_scale=settings.otsu_threshold_scale,
+                    closing_radius=config.closing_radius,
+                    otsu_scope=config.otsu_scope,
+                    threshold_scale=config.otsu_threshold_scale,
                 ),
                 extractor=MarchingCubesExtractor(),
                 project_dir=tmp_path / "expected",
                 fiducials_path=fiducials_file,
-                auto_detect_fiducials=settings.auto_detect_fiducials,
+                auto_detect_fiducials=config.auto_detect_fiducials,
                 ese_config=None,
-                settings=settings,
+                config=config,
             )
             .setup_mesh_postprocessors(
                 [
                     TrimeshCleaner(
-                        min_component_vertices=settings.cleaner_min_vertices,
-                        merge_digits=settings.cleaner_merge_digits,
+                        min_component_vertices=config.cleaner_min_vertices,
+                        merge_digits=config.cleaner_merge_digits,
                     ),
                     TaubinSmoother(
-                        iterations=settings.smoother_iterations,
-                        lamb=settings.smoother_lamb,
-                        nu=settings.smoother_nu,
+                        iterations=config.smoother_iterations,
+                        lamb=config.smoother_lamb,
+                        nu=config.smoother_nu,
                     ),
                 ]
             )
@@ -376,13 +420,13 @@ class TestStage1Pipeline:
             .get_store_notnull(Stage1Result)
         )
 
-        assert np.array_equal(from_settings_result.mesh.vertices, expected_result.mesh.vertices)
-        assert np.array_equal(from_settings_result.mesh.faces, expected_result.mesh.faces)
+        assert np.array_equal(from_config_result.mesh.vertices, expected_result.mesh.vertices)
+        assert np.array_equal(from_config_result.mesh.faces, expected_result.mesh.faces)
         assert np.array_equal(
-            from_settings_result.segmentation_mask.mask,
+            from_config_result.segmentation_mask.mask,
             expected_result.segmentation_mask.mask,
         )
-        assert from_settings_result.fiducials.ids == expected_result.fiducials.ids
+        assert from_config_result.fiducials.ids == expected_result.fiducials.ids
 
     def test_run_with_mask_sealer(self, synthetic_nifti_path: Path, fiducials_file: Path) -> None:
         builder = Stage1PipelineBuilder(
