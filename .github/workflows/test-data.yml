@@ -1,0 +1,71 @@
+name: Run VIRDA on test data
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  discover-datasets:
+    name: Discover test datasets
+    runs-on: ubuntu-latest
+    outputs:
+      datasets: ${{ steps.discover.outputs.datasets }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: List datasets under test-data/
+        id: discover
+        run: |
+          datasets="$(for nifti in test-data/*/head.nii.gz; do basename "$(dirname "$nifti")"; done | jq -R -s -c 'split("\n")[:-1]')"
+          echo "datasets=${datasets}" >> "$GITHUB_OUTPUT"
+
+  run-on-test-data:
+    name: Run VIRDA on ${{ matrix.dataset }}
+    runs-on: ubuntu-latest
+    needs: discover-datasets
+
+    strategy:
+      fail-fast: false
+      matrix:
+        dataset: ${{ fromJSON(needs.discover-datasets.outputs.datasets) }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install 3.14
+
+      - name: Install dependencies
+        run: uv sync --all-extras --frozen
+
+      - name: Run VIRDA on ${{ matrix.dataset }}
+        run: |
+          uv run --no-sync virda \
+            --nifti-path "test-data/${{ matrix.dataset }}/head.nii.gz" \
+            --project-dir "patient_project/${{ matrix.dataset }}"
+          echo
+          echo ">>> Patient project layout:"
+          find "patient_project/${{ matrix.dataset }}" -maxdepth 2 -type f | sort
+        env:
+          AUTO_DETECT_FIDUCIALS: "true"
+
+      - name: Upload patient project artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.dataset }}
+          path: patient_project/${{ matrix.dataset }}/
+          retention-days: 7
