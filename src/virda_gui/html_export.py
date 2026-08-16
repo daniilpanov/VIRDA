@@ -1,0 +1,561 @@
+"""Export a self-contained HTML viewer for a Stage 1 patient project.
+
+``virda-gui-html`` reads a patient project (source MRI, scalp mesh, fiducials)
+and writes a single ``.html`` file that renders the scalp mesh over a
+semi-transparent MRI volume in the browser using three.js (loaded from a CDN).
+The volume data, mesh and fiducials are embedded in the file, so the viewer
+needs no server and runs on desktop and mobile alike.
+
+The scene placement matches ``virda_gui.viewer`` exactly: an axis-aligned
+affine keeps world millimeters (the volume box is placed at the affine origin
+with its spacing), any other affine moves the mesh and fiducials into voxel
+index space. Both cases reuse the helpers from ``virda_gui.scene``.
+
+Usage
+-----
+    virda-gui-html patient_project/CTRL_0001 --output viewer.html
+    virda-gui-html patient_project/CTRL_0001 --output viewer.html --max-dim 96
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import json
+import math
+from pathlib import Path
+from typing import Any
+
+import nibabel as nib
+import numpy as np
+
+from virda_gui.scene import (
+    downsample,
+    load_fiducial_points,
+    percentile_clim,
+    scene_placement,
+    transform_points,
+)
+
+_DEFAULT_MAX_DIM = 128
+_STEP_SIZE_VOXELS = 0.8
+
+_HTML_TEMPLATE = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1,
+  maximum-scale=1, user-scalable=no">
+<title>VIRDA — __DATASET__ — scalp mesh over MRI</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #101018; color: #e8e8f0;
+    font-family: system-ui, -apple-system, sans-serif; }
+  #view { position: fixed; inset: 0; }
+  #view canvas { display: block; }
+  #ui { position: fixed; top: 10px; left: 10px; z-index: 10; background: rgba(16, 16, 24, 0.82);
+    border: 1px solid #3a3a4a; border-radius: 8px; padding: 10px 12px; font-size: 13px;
+    line-height: 1.9; user-select: none; }
+  #ui label { display: block; cursor: pointer; }
+  #ui input { margin-right: 8px; accent-color: #fa8072; }
+  #labels { position: fixed; inset: 0; pointer-events: none; z-index: 5; }
+  .fid-label { position: absolute; transform: translate(-50%, -160%); padding: 1px 6px;
+    border-radius: 4px; background: rgba(0, 0, 0, 0.65); color: #ffd7d7; font-size: 12px;
+    white-space: nowrap; }
+  .axis-label { position: absolute; transform: translate(-50%, -50%); font-size: 15px;
+    font-weight: 600; text-shadow: 0 0 6px #000; }
+  #hint { position: fixed; bottom: 8px; left: 50%; transform: translateX(-50%); z-index: 10;
+    color: #9a9aae; font-size: 12px; background: rgba(16, 16, 24, 0.7); padding: 4px 10px;
+    border-radius: 12px; white-space: nowrap; }
+</style>
+</head>
+<body>
+<div id="view"></div>
+<div id="labels"></div>
+<div id="ui">
+  <label><input type="checkbox" id="cb-mesh" checked> Show mesh</label>
+  <label><input type="checkbox" id="cb-mri" checked> Show MRI</label>
+  <label><input type="checkbox" id="cb-fid" checked> Show fiducials</label>
+  <label><input type="checkbox" id="cb-boost"> Boost contrast</label>
+</div>
+<div id="hint">drag to rotate · wheel / pinch to zoom · shift-drag to pan</div>
+<script type="application/json" id="virda-data">__VIRDA_DATA__</script>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const payload = JSON.parse(document.getElementById('virda-data').textContent);
+const vol = payload.volume;
+const meshData = payload.mesh;
+const fids = payload.fiducials;
+
+function decodeBytes(b64) {
+  const bin = atob(b64);
+  const buf = new ArrayBuffer(bin.length);
+  const u8 = new Uint8Array(buf);
+  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  return u8;
+}
+
+function decodeUint16(b64) {
+  const u8 = decodeBytes(b64);
+  const out = new Uint16Array(u8.length / 2);
+  const view = new DataView(u8.buffer);
+  for (let i = 0; i < out.length; i++) out[i] = view.getUint16(i * 2, true);
+  return out;
+}
+
+function decodeFloat32(b64) {
+  const u8 = decodeBytes(b64);
+  return new Float32Array(u8.buffer);
+}
+
+function decodeUint32(b64) {
+  const u8 = decodeBytes(b64);
+  return new Uint32Array(u8.buffer);
+}
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, premultipliedAlpha: false });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setClearColor(0x101018);
+document.getElementById('view').appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 20000);
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+const sun = new THREE.DirectionalLight(0xffffff, 0.9);
+sun.position.set(1, 1.5, 1);
+scene.add(sun);
+const fill = new THREE.DirectionalLight(0xffffff, 0.3);
+fill.position.set(-1, -0.5, -1);
+scene.add(fill);
+
+const dims = new THREE.Vector3(vol.dims[0], vol.dims[1], vol.dims[2]);
+
+let boxMin = new THREE.Vector3(vol.origin[0], vol.origin[1], vol.origin[2]);
+let boxMax = new THREE.Vector3(
+  vol.origin[0] + vol.dims[0] * vol.spacing[0],
+  vol.origin[1] + vol.dims[1] * vol.spacing[1],
+  vol.origin[2] + vol.dims[2] * vol.spacing[2],
+);
+
+const volumeTexture = new THREE.Data3DTexture(
+  decodeUint16(vol.data), vol.dims[0], vol.dims[1], vol.dims[2]
+);
+volumeTexture.format = THREE.RedFormat;
+volumeTexture.type = THREE.HalfFloatType;
+volumeTexture.minFilter = THREE.LinearFilter;
+volumeTexture.magFilter = THREE.LinearFilter;
+volumeTexture.wrapS = volumeTexture.wrapT = volumeTexture.wrapR = THREE.ClampToEdgeWrapping;
+volumeTexture.flipY = false;
+volumeTexture.generateMipmaps = false;
+volumeTexture.unpackAlignment = 1;
+volumeTexture.needsUpdate = true;
+
+let minSpacing = Math.min(vol.spacing[0], vol.spacing[1], vol.spacing[2]);
+let stepWorld = __STEP_VOX__ * minSpacing;
+let diagWorld = boxMax.clone().sub(boxMin).length();
+let maxSteps = Math.max(32, Math.min(512, Math.ceil(diagWorld / stepWorld)));
+
+const VERT = `
+  varying vec4 v_nearpos;
+  varying vec4 v_farpos;
+  varying vec3 v_position;
+  void main() {
+    vec4 position4 = vec4(position, 1.0);
+    vec4 pos_in_cam = modelViewMatrix * position4;
+    pos_in_cam.z = -pos_in_cam.w;
+    v_nearpos = inverse(modelViewMatrix) * pos_in_cam;
+    pos_in_cam.z = pos_in_cam.w;
+    v_farpos = inverse(modelViewMatrix) * pos_in_cam;
+    v_position = position;
+    gl_Position = projectionMatrix * viewMatrix * modelMatrix * position4;
+  }
+`;
+
+const FRAG = `
+  precision highp float;
+  precision mediump sampler3D;
+
+  uniform sampler3D u_volume;
+  uniform vec3 u_size;
+  uniform vec2 u_clim;
+  uniform float u_k;
+  uniform float u_alpha;
+
+  varying vec3 v_position;
+  varying vec4 v_nearpos;
+  varying vec4 v_farpos;
+
+  vec3 boneLut(float t) {
+    vec3 c0 = vec3(0.0, 0.0, 0.0);
+    vec3 c1 = vec3(0.16, 0.16, 0.24);
+    vec3 c2 = vec3(0.53, 0.53, 0.62);
+    vec3 c3 = vec3(0.80, 0.80, 0.85);
+    vec3 c4 = vec3(1.0, 1.0, 1.0);
+    t = clamp(t, 0.0, 1.0);
+    if (t < 0.25) return mix(c0, c1, t * 4.0);
+    if (t < 0.5) return mix(c1, c2, (t - 0.25) * 4.0);
+    if (t < 0.75) return mix(c2, c3, (t - 0.5) * 4.0);
+    return mix(c3, c4, (t - 0.75) * 4.0);
+  }
+
+  void main() {
+    vec3 farpos = v_farpos.xyz / v_farpos.w;
+    vec3 nearpos = v_nearpos.xyz / v_nearpos.w;
+    vec3 view_ray = normalize(nearpos - farpos);
+
+    float distance = dot(nearpos - v_position, view_ray);
+    distance = max(distance, min(
+      (0.0 - v_position.x) / view_ray.x, (u_size.x - v_position.x) / view_ray.x));
+    distance = max(distance, min(
+      (0.0 - v_position.y) / view_ray.y, (u_size.y - v_position.y) / view_ray.y));
+    distance = max(distance, min(
+      (0.0 - v_position.z) / view_ray.z, (u_size.z - v_position.z) / view_ray.z));
+
+    vec3 front = v_position + view_ray * distance;
+    int nsteps = int(-distance / STEP_VOX + 0.5);
+    nsteps = min(nsteps, MAX_STEPS);
+    if (nsteps < 1) discard;
+
+    vec3 step = ((v_position - front) / u_size) / float(nsteps);
+    vec3 loc = front / u_size;
+
+    vec3 acc = vec3(0.0);
+    float a = 0.0;
+    for (int i = 0; i < MAX_STEPS; i++) {
+      if (i >= nsteps) break;
+      float v = texture(u_volume, loc).r;
+      float x = (v - u_clim.x) / max(u_clim.y - u_clim.x, 1e-6);
+      float s = clamp(x, 0.0, 1.0);
+      float sig = 1.0 / (1.0 + exp(-u_k * (2.0 * s - 1.0)));
+      float alpha = 1.0 - pow(1.0 - sig, u_alpha);
+      if (alpha > 0.002) {
+        acc += (1.0 - a) * alpha * boneLut(s);
+        a += (1.0 - a) * alpha;
+        if (a > 0.98) break;
+      }
+      loc += step;
+    }
+    gl_FragColor = vec4(acc, a);
+  }
+`;
+
+const volumeMat = new THREE.ShaderMaterial({
+  uniforms: {
+    u_volume: { value: volumeTexture },
+    u_size: { value: dims },
+    u_clim: { value: new THREE.Vector2(vol.clim_base[0], vol.clim_base[1]) },
+    u_k: { value: 10.0 },
+    u_alpha: { value: stepWorld },
+  },
+  vertexShader: '#define STEP_VOX ' + __STEP_VOX__.toFixed(4) + '\n' + VERT,
+  fragmentShader: '#define STEP_VOX ' + __STEP_VOX__.toFixed(4) +
+    '\n#define MAX_STEPS ' + maxSteps + '\n' + FRAG,
+  transparent: true,
+  depthWrite: false,
+  side: THREE.BackSide,
+});
+
+const volume = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), volumeMat);
+volume.geometry.translate(0.5, 0.5, 0.5);
+volume.geometry.scale(vol.dims[0], vol.dims[1], vol.dims[2]);
+volume.scale.set(vol.spacing[0], vol.spacing[1], vol.spacing[2]);
+volume.position.set(vol.origin[0], vol.origin[1], vol.origin[2]);
+volume.frustumCulled = false;
+volume.renderOrder = 0;
+scene.add(volume);
+
+let mesh = null;
+let meshMat = null;
+if (meshData && meshData.vertices && meshData.faces) {
+  const verts = decodeFloat32(meshData.vertices);
+  const faces = decodeUint32(meshData.faces);
+  const meshGeo = new THREE.BufferGeometry();
+  meshGeo.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+  meshGeo.setIndex(new THREE.BufferAttribute(faces, 1));
+  meshGeo.computeVertexNormals();
+  meshMat = new THREE.MeshPhongMaterial({
+    color: 0xfa8072,
+    transparent: true,
+    opacity: 0.6,
+    side: THREE.DoubleSide,
+    depthWrite: true,
+    specular: 0x222222,
+    shininess: 20,
+  });
+  mesh = new THREE.Mesh(meshGeo, meshMat);
+  mesh.renderOrder = 1;
+  scene.add(mesh);
+}
+
+const fidGroup = new THREE.Group();
+const fidLabels = fids && fids.points ? fids.points : [];
+let fidMat = null;
+if (fidLabels.length > 0) {
+  const sphereR = Math.max(diagWorld * 0.008, 0.02 * minSpacing);
+  const geo = new THREE.SphereGeometry(sphereR, 12, 12);
+  fidMat = new THREE.MeshBasicMaterial({ color: 0xff4040 });
+  for (const p of fidLabels) {
+    const s = new THREE.Mesh(geo, fidMat);
+    s.position.set(p[0], p[1], p[2]);
+    fidGroup.add(s);
+  }
+  scene.add(fidGroup);
+}
+
+const center = boxMin.clone().add(boxMax).multiplyScalar(0.5);
+const radius = diagWorld * 0.6;
+camera.position.set(center.x + radius, center.y + radius * 0.8, center.z + radius * 1.1);
+camera.lookAt(center);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.copy(center);
+controls.enableDamping = true;
+controls.update();
+
+const axes = new THREE.AxesHelper(radius * 0.35);
+axes.position.copy(center);
+scene.add(axes);
+
+const labelLayer = document.getElementById('labels');
+const axisCodes = payload.axes;
+
+function worldToScreen(world, camera) {
+  const v = world.clone().project(camera);
+  return {
+    x: (v.x + 1) * 0.5 * window.innerWidth,
+    y: (-v.y + 1) * 0.5 * window.innerHeight,
+    visible: v.z > -1 && v.z < 1,
+  };
+}
+
+function updateLabels() {
+  labelLayer.textContent = '';
+  if (fidGroup.visible && fids && fids.labels) {
+    for (let i = 0; i < fidLabels.length; i++) {
+      const p = new THREE.Vector3(fidLabels[i][0], fidLabels[i][1], fidLabels[i][2]);
+      const scr = worldToScreen(p, camera);
+      if (!scr.visible) continue;
+      const el = document.createElement('div');
+      el.className = 'fid-label';
+      el.textContent = fids.labels[i];
+      el.style.left = scr.x + 'px';
+      el.style.top = scr.y + 'px';
+      labelLayer.appendChild(el);
+    }
+  }
+  if (axisCodes) {
+    const dirs = [
+      [1, 0, 0, '#ff5555', axisCodes[0]],
+      [0, 1, 0, '#55ff55', axisCodes[1]],
+      [0, 0, 1, '#5599ff', axisCodes[2]],
+    ];
+    const arm = radius * 0.35;
+    for (const [dx, dy, dz, color, code] of dirs) {
+      if (!code) continue;
+      const p = new THREE.Vector3(
+        center.x + dx * arm, center.y + dy * arm, center.z + dz * arm
+      );
+      const scr = worldToScreen(p, camera);
+      if (!scr.visible) continue;
+      const el = document.createElement('div');
+      el.className = 'axis-label';
+      el.style.color = color;
+      el.style.left = scr.x + 'px';
+      el.style.top = scr.y + 'px';
+      el.textContent = code;
+      labelLayer.appendChild(el);
+    }
+  }
+}
+
+const cbMesh = document.getElementById('cb-mesh');
+const cbMri = document.getElementById('cb-mri');
+const cbFid = document.getElementById('cb-fid');
+const cbBoost = document.getElementById('cb-boost');
+
+function setBoost(on) {
+  const clim = on ? vol.clim_boost : vol.clim_base;
+  volumeMat.uniforms.u_clim.value.set(clim[0], clim[1]);
+  volumeMat.uniforms.u_k.value = 10.0;
+  volumeMat.uniforms.u_alpha.value = stepWorld / (on ? 0.5 : 1.0);
+  if (meshMat) {
+    meshMat.opacity = on ? 0.95 : 0.6;
+    meshMat.specular.set(on ? 0xffffff : 0x222222);
+    meshMat.shininess = on ? 40 : 20;
+  }
+}
+
+cbMesh.addEventListener('change', () => { if (mesh) mesh.visible = cbMesh.checked; });
+cbMri.addEventListener('change', () => { volume.visible = cbMri.checked; });
+cbFid.addEventListener('change', () => {
+  fidGroup.visible = cbFid.checked;
+  if (fidMat) fidMat.visible = cbFid.checked;
+});
+cbBoost.addEventListener('change', () => setBoost(cbBoost.checked));
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+renderer.render(scene, camera);
+
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  updateLabels();
+  renderer.render(scene, camera);
+}
+animate();
+</script>
+</body>
+</html>
+"""
+
+
+def _default_stride(dims: tuple[int, ...] | np.ndarray, max_dim: int) -> int:
+    """Smallest voxel stride keeping the longest axis within ``max_dim``."""
+    longest = int(np.max(np.asarray(dims, dtype=np.int64)))
+    if longest <= max_dim:
+        return 1
+    return int(math.ceil(longest / max_dim))
+
+
+def _encode_float16(data: np.ndarray) -> str:
+    """Encode an array as little-endian half floats in base64."""
+    packed = np.asarray(data, dtype="<f2").tobytes()
+    return base64.b64encode(packed).decode("ascii")
+
+
+def _encode_float32(points: np.ndarray) -> str:
+    """Encode an (N, 3) array as little-endian single-precision floats."""
+    packed = np.asarray(points, dtype="<f4").tobytes()
+    return base64.b64encode(packed).decode("ascii")
+
+
+def _encode_uint32(faces: np.ndarray) -> str:
+    """Encode an (M, 3) array of face indices as little-endian uints."""
+    packed = np.asarray(faces, dtype="<u4").tobytes()
+    return base64.b64encode(packed).decode("ascii")
+
+
+def _find_nifti(project_dir: Path) -> Path:
+    matches = sorted(project_dir.glob("input/*.nii.gz"))
+    if not matches:
+        raise FileNotFoundError(f"no input/*.nii.gz found under {project_dir}")
+    return matches[0]
+
+
+def build_payload(project_dir: str | Path, max_dim: int = _DEFAULT_MAX_DIM) -> dict[str, Any]:
+    """Read a patient project and return the embedded-viewer payload dict."""
+    project = Path(project_dir)
+    nifti_path = _find_nifti(project)
+
+    img = nib.load(nifti_path)
+    data = img.get_fdata(dtype=np.float32)
+    if data.ndim == 4:
+        data = data[..., 0]
+    affine = img.affine
+    stride = _default_stride(data.shape, max_dim)
+    if stride > 1:
+        data, affine = downsample(data, affine, stride)
+    spacing, origin, transform, _ = scene_placement(affine)
+
+    lo, hi = percentile_clim(data)
+    vrange = max(hi - lo, 1e-12)
+    normalized = (np.clip(data, lo, hi) - lo) / vrange
+
+    payload: dict[str, Any] = {
+        "dataset": project.name,
+        "axes": [str(code) for code in nib.aff2axcodes(affine)],
+        "volume": {
+            "dims": [int(d) for d in data.shape],
+            "spacing": [float(s) for s in spacing],
+            "origin": [float(o) for o in origin],
+            "data": _encode_float16(normalized),
+            "clim_base": [0.0, 1.0],
+            "clim_boost": [0.0, 1.0],
+        },
+    }
+
+    vertices_path = project / "mesh" / "scalp_vertices.npy"
+    faces_path = project / "mesh" / "scalp_faces.npy"
+    if vertices_path.is_file() and faces_path.is_file():
+        vertices = np.load(vertices_path)
+        faces = np.load(faces_path)
+        payload["mesh"] = {
+            "vertices": _encode_float32(transform_points(vertices, transform)),
+            "faces": _encode_uint32(faces),
+        }
+
+    fiducials_path = project / "fiducials" / "fiducials.json"
+    if fiducials_path.is_file():
+        points, labels = load_fiducial_points(fiducials_path)
+        if points.size:
+            payload["fiducials"] = {
+                "points": transform_points(points, transform).tolist(),
+                "labels": labels,
+            }
+
+    return payload
+
+
+def render_html(payload: dict[str, Any]) -> str:
+    """Render the self-contained HTML page for a payload dict."""
+    dataset = str(payload.get("dataset", "patient"))
+    data_json = json.dumps(payload).replace("</", "<\\/")
+    html = (
+        _HTML_TEMPLATE.replace("__DATASET__", dataset)
+        .replace("__VIRDA_DATA__", data_json)
+        .replace("__STEP_VOX__", f"{_STEP_SIZE_VOXELS:.4f}")
+    )
+    return html
+
+
+def export_project(
+    project_dir: str | Path,
+    output: str | Path,
+    max_dim: int = _DEFAULT_MAX_DIM,
+) -> Path:
+    """Write the self-contained HTML viewer for a patient project."""
+    payload = build_payload(project_dir, max_dim=max_dim)
+    output_path = Path(output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(render_html(payload), encoding="utf-8")
+    return output_path
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        prog="virda-gui-html",
+        description="Export a self-contained HTML viewer for a patient project.",
+    )
+    parser.add_argument("project_dir", help="Path to the patient project directory.")
+    parser.add_argument(
+        "-o", "--output", default="viewer.html", help="Output HTML file (default: viewer.html)."
+    )
+    parser.add_argument(
+        "--max-dim",
+        type=int,
+        default=_DEFAULT_MAX_DIM,
+        help="Longest volume axis kept after downsampling (default: 128).",
+    )
+    args = parser.parse_args()
+
+    export_project(args.project_dir, args.output, max_dim=args.max_dim)
+    print(f"HTML viewer written to {args.output}")
+
+
+if __name__ == "__main__":
+    main()

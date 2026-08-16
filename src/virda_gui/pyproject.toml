@@ -17,6 +17,7 @@ dependencies = [
 
 [project.scripts]
 virda-gui = "virda_gui.viewer:main"
+virda-gui-html = "virda_gui.html_export:main"
 
 [tool.uv.sources]
 virda = { workspace = true }
