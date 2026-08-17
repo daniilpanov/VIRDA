@@ -272,6 +272,28 @@ class TestRenderHtml:
         assert out.is_file()
         assert out.read_text(encoding="utf-8").startswith("<!DOCTYPE html>")
 
+    def test_debug_mode_adds_diagnostics(self, tmp_path: Path) -> None:
+        project = _make_axis_aligned_project(tmp_path)
+        payload = build_payload(project)
+        html = render_html(payload, debug=True)
+
+        assert "cb-nsteps" in html
+        assert "cb-nearest" in html
+        assert "r-step" in html
+        assert "virda-debug" in html
+        assert "u_rel_step" in html
+        assert "__DEBUG_UI__" not in html
+        assert "__DEBUG_JS__" not in html
+        assert "Debug nsteps" in html
+
+    def test_plain_html_has_no_debug_controls(self, tmp_path: Path) -> None:
+        project = _make_axis_aligned_project(tmp_path)
+        html = render_html(build_payload(project))
+
+        assert "cb-nsteps" not in html
+        assert "virda-debug" not in html
+        assert "r-step" not in html
+
     def test_transform_points_helper_matches_manual_inverse(self) -> None:
         theta = math.radians(20)
         affine = np.array(

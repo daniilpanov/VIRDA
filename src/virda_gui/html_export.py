@@ -40,6 +40,74 @@ from virda_gui.scene import (
 _DEFAULT_MAX_DIM = 128
 _STEP_SIZE_VOXELS = 0.8
 
+_DEBUG_UI = """
+  <label><input type="checkbox" id="cb-nsteps"> Debug nsteps</label>
+  <label><input type="checkbox" id="cb-nearest"> Nearest filter</label>
+  <label>Step size <input type="range" id="r-step" min="0.1" max="2.0" step="0.05"
+    value="0.8" style="width: 110px; vertical-align: middle;"></label>
+"""
+
+_DEBUG_JS = r"""
+(function () {
+  function dbgLog(obj) { console.log('[virda-debug]', obj); }
+  try {
+    const gl = renderer.getContext();
+    const dbgInfo = gl.getExtension('WEBGL_debug_renderer_info');
+    dbgLog({
+      three: 'r' + THREE.REVISION,
+      webgl2: renderer.capabilities.isWebGL2,
+      gpu: (dbgInfo && gl.getParameter(dbgInfo.UNMASKED_RENDERER_WEBGL))
+        || gl.getParameter(gl.RENDERER),
+      maxTextureSize: gl.getParameter(gl.MAX_TEXTURE_SIZE),
+      depthBits: gl.getParameter(gl.DEPTH_BITS),
+      floatLinear: !!gl.getExtension('OES_texture_float_linear'),
+      halfFloatLinear: !!gl.getExtension('OES_texture_half_float_linear'),
+      volumeType: volumeTexture.type === THREE.HalfFloatType ? 'HalfFloat'
+        : (volumeTexture.type === THREE.FloatType ? 'Float' : volumeTexture.type),
+      volumeFilter: volumeTexture.minFilter === THREE.LinearFilter ? 'Linear' : 'Nearest',
+      dims: [vol.dims[0], vol.dims[1], vol.dims[2]],
+      spacing: vol.spacing,
+      stepWorld: +stepWorld.toFixed(4),
+      stepVox: +(stepWorld / minSpacing).toFixed(4),
+      maxSteps: maxSteps,
+      cameraPos: [camera.position.x, camera.position.y, camera.position.z]
+        .map((v) => +v.toFixed(1)),
+      cameraNear: camera.near,
+      cameraFar: camera.far,
+      cameraFov: camera.fov,
+      climBase: vol.clim_base,
+      climBoost: vol.clim_boost,
+    });
+  } catch (err) {
+    dbgLog('diagnostic error: ' + err);
+  }
+
+  const cbNsteps = document.getElementById('cb-nsteps');
+  const cbNearest = document.getElementById('cb-nearest');
+  const rStep = document.getElementById('r-step');
+
+  cbNsteps.addEventListener('change', () => {
+    volumeMat.uniforms.u_debug.value = cbNsteps.checked ? 1.0 : 0.0;
+    dbgLog('nsteps view ' + (cbNsteps.checked ? 'ON' : 'OFF'));
+  });
+  cbNearest.addEventListener('change', () => {
+    volumeTexture.minFilter = cbNearest.checked ? THREE.NearestFilter : THREE.LinearFilter;
+    volumeTexture.magFilter = cbNearest.checked ? THREE.NearestFilter : THREE.LinearFilter;
+    volumeTexture.needsUpdate = true;
+    dbgLog('voxel filter ' + (cbNearest.checked ? 'Nearest' : 'Linear'));
+  });
+  rStep.addEventListener('input', () => {
+    const v = parseFloat(rStep.value);
+    volumeMat.uniforms.u_rel_step.value = v;
+    volumeMat.uniforms.u_alpha.value =
+      stepWorld * (v / 0.8) / (cbBoost.checked ? 0.5 : 1.0);
+    dbgLog('step size ' + v.toFixed(2) + ' vox, maxSteps ' + maxSteps
+      + ', u_alpha ' + volumeMat.uniforms.u_alpha.value.toFixed(3));
+  });
+  dbgLog('READY: try Debug nsteps checkbox, Nearest filter, Step size slider');
+})();
+"""
+
 _HTML_TEMPLATE = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -81,7 +149,7 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
   <label><input type="checkbox" id="cb-mesh" checked> Show mesh</label>
   <label><input type="checkbox" id="cb-mri" checked> Show MRI</label>
   <label><input type="checkbox" id="cb-fid" checked> Show fiducials</label>
-  <label><input type="checkbox" id="cb-boost"> Boost contrast</label>
+  <label><input type="checkbox" id="cb-boost"> Boost contrast</label>__DEBUG_UI__
 </div>
 <div id="hint">drag to rotate · wheel / pinch to zoom · shift-drag to pan</div>
 <div id="loader"><div class="spinner"></div><div>Loading data…</div></div>
@@ -198,6 +266,8 @@ const FRAG = `
   uniform vec2 u_clim;
   uniform float u_k;
   uniform float u_alpha;
+  uniform float u_rel_step;
+  uniform float u_debug;
 
   varying vec3 v_position;
   varying vec4 v_nearpos;
@@ -230,7 +300,7 @@ const FRAG = `
       (0.0 - v_position.z) / view_ray.z, (u_size.z - v_position.z) / view_ray.z));
 
     vec3 front = v_position + view_ray * distance;
-    int nsteps = int(-distance / STEP_VOX + 0.5);
+    int nsteps = int(-distance / u_rel_step + 0.5);
     nsteps = min(nsteps, MAX_STEPS);
     if (nsteps < 1) discard;
 
@@ -253,6 +323,10 @@ const FRAG = `
       }
       loc += step;
     }
+    if (u_debug > 0.5) {
+      gl_FragColor = vec4(0.0, float(nsteps) / float(MAX_STEPS), 1.0, 1.0);
+      return;
+    }
     gl_FragColor = vec4(acc, a);
   }
 `;
@@ -264,10 +338,11 @@ const volumeMat = new THREE.ShaderMaterial({
     u_clim: { value: new THREE.Vector2(vol.clim_base[0], vol.clim_base[1]) },
     u_k: { value: 10.0 },
     u_alpha: { value: stepWorld },
+    u_rel_step: { value: __STEP_VOX__ },
+    u_debug: { value: 0.0 },
   },
   vertexShader: '#define STEP_VOX ' + __STEP_VOX__.toFixed(4) + '\n' + VERT,
-  fragmentShader: '#define STEP_VOX ' + __STEP_VOX__.toFixed(4) +
-    '\n#define MAX_STEPS ' + maxSteps + '\n' + FRAG,
+  fragmentShader: '\n#define MAX_STEPS ' + maxSteps + '\n' + FRAG,
   transparent: true,
   depthWrite: false,
   side: THREE.BackSide,
@@ -423,7 +498,8 @@ function animate() {
   requestAnimationFrame(animate);
   controls.update();
   updateLabels();
-  renderer.render(scene, camera);
+__DEBUG_JS__
+renderer.render(scene, camera);
 }
 animate();
 </script>
@@ -519,13 +595,17 @@ def build_payload(project_dir: str | Path, max_dim: int = _DEFAULT_MAX_DIM) -> d
     return payload
 
 
-def render_html(payload: dict[str, Any]) -> str:
+def render_html(payload: dict[str, Any], debug: bool = False) -> str:
     """Render the self-contained HTML page for a payload dict."""
     dataset = str(payload.get("dataset", "patient"))
     data_json = json.dumps(payload).replace("</", "<\\/")
+    debug_ui = _DEBUG_UI if debug else ""
+    debug_js = _DEBUG_JS if debug else ""
     html = (
         _HTML_TEMPLATE.replace("__DATASET__", dataset)
         .replace("__VIRDA_DATA__", data_json)
+        .replace("__DEBUG_UI__", debug_ui)
+        .replace("__DEBUG_JS__", debug_js)
         .replace("__STEP_VOX__", f"{_STEP_SIZE_VOXELS:.4f}")
     )
     return html
@@ -535,12 +615,13 @@ def export_project(
     project_dir: str | Path,
     output: str | Path,
     max_dim: int = _DEFAULT_MAX_DIM,
+    debug: bool = False,
 ) -> Path:
     """Write the self-contained HTML viewer for a patient project."""
     payload = build_payload(project_dir, max_dim=max_dim)
     output_path = Path(output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(render_html(payload), encoding="utf-8")
+    output_path.write_text(render_html(payload, debug=debug), encoding="utf-8")
     return output_path
 
 
@@ -559,9 +640,14 @@ def main() -> None:
         default=_DEFAULT_MAX_DIM,
         help="Longest volume axis kept after downsampling (default: 128).",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Add nsteps/filter/step diagnostics controls to the viewer.",
+    )
     args = parser.parse_args()
 
-    export_project(args.project_dir, args.output, max_dim=args.max_dim)
+    export_project(args.project_dir, args.output, max_dim=args.max_dim, debug=args.debug)
     print(f"HTML viewer written to {args.output}")
 
 
