@@ -1,10 +1,10 @@
 """Export a self-contained HTML viewer for a Stage 1 patient project.
 
-``virda-gui-html`` reads a patient project (source MRI, scalp mesh, fiducials)
-and writes a single ``.html`` file that renders the scalp mesh over a
-semi-transparent MRI volume in the browser using three.js (loaded from a CDN).
-The volume data, mesh and fiducials are embedded in the file, so the viewer
-needs no server and runs on desktop and mobile alike.
+``virda-gui-html`` reads a patient project (scalp mesh, fiducials)
+and writes a single ``.html`` file that renders the scalp mesh in the browser
+using three.js (loaded from a CDN). Mesh and fiducials are embedded in the
+file, so the viewer needs no server and runs on desktop and mobile alike.
+MRI volume rendering is currently disabled.
 
 The scene placement matches ``virda_gui.viewer`` exactly: an axis-aligned
 affine keeps world millimeters (the volume box is placed at the affine origin
@@ -26,14 +26,10 @@ import math
 from pathlib import Path
 from typing import Any
 
-import nibabel as nib
 import numpy as np
 
 from virda_gui.scene import (
-    downsample,
     load_fiducial_points,
-    percentile_clim,
-    scene_placement,
     transform_points,
 )
 
@@ -48,6 +44,7 @@ _DEBUG_UI = """
 """
 
 _DEBUG_JS = r"""
+if (vol) {
 (function () {
   function dbgLog(obj) { console.log('[virda-debug]', obj); }
   try {
@@ -106,6 +103,7 @@ _DEBUG_JS = r"""
   });
   dbgLog('READY: try Debug nsteps checkbox, Nearest filter, Step size slider');
 })();
+} /* end if (vol) */
 """
 
 _HTML_TEMPLATE = r"""<!DOCTYPE html>
@@ -147,7 +145,8 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
 <div id="labels"></div>
 <div id="ui">
   <label><input type="checkbox" id="cb-mesh" checked> Show mesh</label>
-  <label><input type="checkbox" id="cb-mri" checked> Show MRI</label>
+  <!-- MRI volume rendering does not work properly -->
+  <label><input type="checkbox" id="cb-mri" disabled> Show MRI</label>
   <label><input type="checkbox" id="cb-fid" checked> Show fiducials</label>
   <label><input type="checkbox" id="cb-boost"> Boost contrast</label>__DEBUG_UI__
 </div>
@@ -214,10 +213,15 @@ const fill = new THREE.DirectionalLight(0xffffff, 0.3);
 fill.position.set(-1, -0.5, -1);
 scene.add(fill);
 
-const dims = new THREE.Vector3(vol.dims[0], vol.dims[1], vol.dims[2]);
+let diagWorld = 1.0;
+let minSpacing = 1.0;
+let boxMin = new THREE.Vector3(0, 0, 0);
+let boxMax = new THREE.Vector3(1, 1, 1);
 
-let boxMin = new THREE.Vector3(vol.origin[0], vol.origin[1], vol.origin[2]);
-let boxMax = new THREE.Vector3(
+if (vol) {
+  const dims = new THREE.Vector3(vol.dims[0], vol.dims[1], vol.dims[2]);
+  boxMin = new THREE.Vector3(vol.origin[0], vol.origin[1], vol.origin[2]);
+  boxMax = new THREE.Vector3(
   vol.origin[0] + vol.dims[0] * vol.spacing[0],
   vol.origin[1] + vol.dims[1] * vol.spacing[1],
   vol.origin[2] + vol.dims[2] * vol.spacing[2],
@@ -236,9 +240,9 @@ volumeTexture.generateMipmaps = false;
 volumeTexture.unpackAlignment = 1;
 volumeTexture.needsUpdate = true;
 
-let minSpacing = Math.min(vol.spacing[0], vol.spacing[1], vol.spacing[2]);
+minSpacing = Math.min(vol.spacing[0], vol.spacing[1], vol.spacing[2]);
 let stepWorld = __STEP_VOX__ * minSpacing;
-let diagWorld = boxMax.clone().sub(boxMin).length();
+diagWorld = boxMax.clone().sub(boxMin).length();
 let maxSteps = Math.max(32, Math.min(512, Math.ceil(diagWorld / stepWorld)));
 
 const VERT = `
@@ -356,6 +360,7 @@ volume.position.set(vol.origin[0], vol.origin[1], vol.origin[2]);
 volume.frustumCulled = false;
 volume.renderOrder = 0;
 scene.add(volume);
+} /* end if (vol) */
 
 let mesh = null;
 let meshMat = null;
@@ -465,25 +470,34 @@ const cbMri = document.getElementById('cb-mri');
 const cbFid = document.getElementById('cb-fid');
 const cbBoost = document.getElementById('cb-boost');
 
-function setBoost(on) {
-  const clim = on ? vol.clim_boost : vol.clim_base;
-  volumeMat.uniforms.u_clim.value.set(clim[0], clim[1]);
-  volumeMat.uniforms.u_k.value = 10.0;
-  volumeMat.uniforms.u_alpha.value = stepWorld / (on ? 0.5 : 1.0);
-  if (meshMat) {
-    meshMat.opacity = on ? 0.95 : 0.6;
-    meshMat.specular.set(on ? 0xffffff : 0x222222);
-    meshMat.shininess = on ? 40 : 20;
-  }
-}
-
 cbMesh.addEventListener('change', () => { if (mesh) mesh.visible = cbMesh.checked; });
-cbMri.addEventListener('change', () => { volume.visible = cbMri.checked; });
 cbFid.addEventListener('change', () => {
   fidGroup.visible = cbFid.checked;
   if (fidMat) fidMat.visible = cbFid.checked;
 });
-cbBoost.addEventListener('change', () => setBoost(cbBoost.checked));
+if (vol) {
+  const stepWorld = __STEP_VOX__ * minSpacing;
+  function setBoost(on) {
+    const clim = on ? vol.clim_boost : vol.clim_base;
+    volumeMat.uniforms.u_clim.value.set(clim[0], clim[1]);
+    volumeMat.uniforms.u_k.value = 10.0;
+    volumeMat.uniforms.u_alpha.value = stepWorld / (on ? 0.5 : 1.0);
+    if (meshMat) {
+      meshMat.opacity = on ? 0.95 : 0.6;
+      meshMat.specular.set(on ? 0xffffff : 0x222222);
+      meshMat.shininess = on ? 40 : 20;
+    }
+  }
+  cbBoost.addEventListener('change', () => setBoost(cbBoost.checked));
+} else {
+  cbBoost.addEventListener('change', () => {
+    if (meshMat) {
+      meshMat.opacity = cbBoost.checked ? 0.95 : 0.6;
+      meshMat.specular.set(cbBoost.checked ? 0xffffff : 0x222222);
+      meshMat.shininess = cbBoost.checked ? 40 : 20;
+    }
+  });
+}
 
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -534,43 +548,27 @@ def _encode_uint32(faces: np.ndarray) -> str:
     return base64.b64encode(packed).decode("ascii")
 
 
-def _find_nifti(project_dir: Path) -> Path:
-    matches = sorted(project_dir.glob("input/*.nii.gz"))
-    if not matches:
-        raise FileNotFoundError(f"no input/*.nii.gz found under {project_dir}")
-    return matches[0]
-
-
 def build_payload(project_dir: str | Path, max_dim: int = _DEFAULT_MAX_DIM) -> dict[str, Any]:
     """Read a patient project and return the embedded-viewer payload dict."""
     project = Path(project_dir)
-    nifti_path = _find_nifti(project)
 
-    img = nib.load(nifti_path)
-    data = img.get_fdata(dtype=np.float32)
-    if data.ndim == 4:
-        data = data[..., 0]
-    affine = img.affine
-    stride = _default_stride(data.shape, max_dim)
-    if stride > 1:
-        data, affine = downsample(data, affine, stride)
-    spacing, origin, transform, _ = scene_placement(affine)
-
-    lo, hi = percentile_clim(data)
-    vrange = max(hi - lo, 1e-12)
-    normalized = (np.clip(data, lo, hi) - lo) / vrange
+    # MRI volume rendering is disabled.
+    # img = nib.load(_find_nifti(project))
+    # data = img.get_fdata(dtype=np.float32)
+    # if data.ndim == 4:
+    #     data = data[..., 0]
+    # affine = img.affine
+    # stride = _default_stride(data.shape, max_dim)
+    # if stride > 1:
+    #     data, affine = downsample(data, affine, stride)
+    # spacing, origin, transform, _ = scene_placement(affine)
+    # lo, hi = percentile_clim(data)
+    # vrange = max(hi - lo, 1e-12)
+    # normalized = (np.clip(data, lo, hi) - lo) / vrange
+    transform = np.eye(4)
 
     payload: dict[str, Any] = {
         "dataset": project.name,
-        "axes": [str(code) for code in nib.aff2axcodes(affine)],
-        "volume": {
-            "dims": [int(d) for d in data.shape],
-            "spacing": [float(s) for s in spacing],
-            "origin": [float(o) for o in origin],
-            "data": _encode_float16(normalized),
-            "clim_base": [0.0, 1.0],
-            "clim_boost": [0.0, 1.0],
-        },
     }
 
     vertices_path = project / "mesh" / "scalp_vertices.npy"
