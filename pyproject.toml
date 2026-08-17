@@ -28,8 +28,8 @@ dev = [
     "black>=26.5.1",
     "isort>=8.0.1",
     "mypy>=2.3.0",
-    "ruff>=0.16.1",
-    "pre-commit>=3.8",
+    "ruff>=0.16.3",
+    "pre-commit>=4.6.2",
     "scipy-stubs>=1.14",  # for strict mypy
 ]
 research = [
