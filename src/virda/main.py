@@ -3,8 +3,10 @@ from typing import Any
 
 from virda.config import VirdaSettings, build_config, resolve_config_files
 from virda.models.config import Config
+from virda.models.ese_mesh import ESEMesh
 from virda.models.stage1_result import Stage1Result
 from virda.pipelines.stage1 import Stage1PipelineBuilder
+from virda.pipelines.stage2 import Stage2PipelineBuilder
 
 
 def _parse_bool(value: str) -> bool:
@@ -108,14 +110,29 @@ def _cli_overrides(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
-def run(config: Config) -> Stage1Result:
-    """Run the VIRDA pipeline for the merged ``config``."""
-    return (
+def run(config: Config) -> tuple[Stage1Result, ESEMesh | None]:
+    """Run the VIRDA pipeline: Stage 1 -> 2.
+
+    Returns the Stage 1 result and the ESE surface when ESE is configured,
+    otherwise ``None`` as the second element.
+    """
+    stage1_result = (
         Stage1PipelineBuilder.from_config(config=config)
         .build()
         .run()
         .get_store_notnull(Stage1Result)
     )
+
+    if config.to_ese_config() is None:
+        return stage1_result, None
+
+    ese_mesh = (
+        Stage2PipelineBuilder.from_config(config=config, scalp_mesh=stage1_result.mesh)
+        .build()
+        .run()
+        .get_store_notnull(ESEMesh)
+    )
+    return stage1_result, ese_mesh
 
 
 def main() -> None:
@@ -125,5 +142,7 @@ def main() -> None:
         config_files=resolve_config_files(args.config_file),
         overrides=_cli_overrides(args),
     )
-    result = run(config)
-    print(f"Stage 1: mesh with {len(result.mesh.vertices)} vertices")
+    stage1_result, ese_mesh = run(config)
+    print(f"Stage 1: mesh with {len(stage1_result.mesh.vertices)} vertices")
+    if ese_mesh is not None:
+        print(f"Stage 2: ESE mesh with {len(ese_mesh.vertices)} vertices")
