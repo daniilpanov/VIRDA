@@ -64,6 +64,7 @@ the CLI arguments and delegates to it.
 import argparse
 import colorsys
 import json
+from collections.abc import Callable
 from typing import Any
 
 import nibabel as nib
@@ -436,39 +437,40 @@ def _fmt_bounds(bounds: _BOUNDS) -> str:
     )
 
 
-def _print_qc(
+def _report_qc(
     spacing: tuple[float, float, float] | None,
     orientation: tuple[str, str, str] | None,
     volume: pv.ImageData | None,
     mesh: pv.PolyData | None,
     affine: np.ndarray | None,
     mm_scene: bool,
+    log: Callable[[str], None],
 ) -> None:
     scene_transform = affine if (affine is not None and not mm_scene) else np.eye(4)
     scene_space = "world (mm)" if mm_scene else "voxel indices (affine has rotation/flip)"
 
-    print("=" * 62)
+    log("=" * 62)
     if volume is not None:
         volume_world_bounds = _scene_bounds_to_world(tuple(volume.bounds), scene_transform)
-        print("MRI volume")
-        print(f"  spacing (mm)                  : {spacing}")
-        print(f"  orientation                   : {orientation}")
-        print(f"  world bounds (mm)             : {_fmt_bounds(volume_world_bounds)}")
+        log("MRI volume")
+        log(f"  spacing (mm)                  : {spacing}")
+        log(f"  orientation                   : {orientation}")
+        log(f"  world bounds (mm)             : {_fmt_bounds(volume_world_bounds)}")
     if mesh is not None:
         mesh_world_bounds = _points_bounds_to_world(np.asarray(mesh.points), scene_transform)
-        print("Scalp mesh")
-        print(f"  vertices                      : {mesh.n_points}")
-        print(f"  world bounds (mm)             : {_fmt_bounds(mesh_world_bounds)}")
+        log("Scalp mesh")
+        log(f"  vertices                      : {mesh.n_points}")
+        log(f"  world bounds (mm)             : {_fmt_bounds(mesh_world_bounds)}")
     if volume is not None and mesh is not None:
         overlap = _mesh_within_volume(volume_world_bounds, mesh_world_bounds)
-        print(f"  within volume bounds (+5 mm)  : {overlap}")
-    print(f"  scene coordinates             : {scene_space}")
+        log(f"  within volume bounds (+5 mm)  : {overlap}")
+    log(f"  scene coordinates             : {scene_space}")
     if affine is not None:
-        print(
+        log(
             "  voxel->world round-trip error :"
             f" {_round_trip_error(affine, _voxel_samples(volume)):.3e} mm"
         )
-    print("=" * 62)
+    log("=" * 62)
 
 
 def show_viewer(
@@ -482,6 +484,7 @@ def show_viewer(
     normals_density: int = 500,
     electrode_specs: list[tuple[str, str | None]] | None = None,
     electrodes_cras: bool = False,
+    log: Callable[[str], None] = print,
 ) -> None:
     """Launch the interactive 3D viewer window.
 
@@ -489,7 +492,10 @@ def show_viewer(
     *nifti_path* or *mesh_path* must be provided.  *electrode_specs* is a list
     of ``(path, color)`` pairs as produced by :func:`_parse_electrode_specs`;
     pass ``electrodes_cras=True`` to force the FreeSurfer cRAS -> scanner RAS
-    conversion of tabular electrode files.
+    conversion of tabular electrode files.  *log* receives progress and QC
+    messages (defaults to :func:`print`; embedders such as the GUI pass a
+    callback that routes lines into their own log pane).  The call blocks until
+    the viewer window is closed.
     """
     if not nifti_path and not mesh_path:
         raise ValueError("at least one of nifti_path or mesh_path is required")
@@ -517,7 +523,7 @@ def show_viewer(
 
     mesh_poly = _load_mesh_poly(mesh_path) if mesh_path else None
     volume, scene_mesh, mm_scene = _build_scene(data, affine, mesh_poly)
-    _print_qc(spacing, orientation, volume, scene_mesh, affine, mm_scene)
+    _report_qc(spacing, orientation, volume, scene_mesh, affine, mm_scene, log)
 
     fiducial_points = None
     fiducial_labels: list[str] = []
@@ -588,14 +594,14 @@ def show_viewer(
         if not epath.endswith(".json") and cras_offset is not None and len(points) > 0:
             if electrodes_cras:
                 points = points + cras_offset
-                print(f"{label}: cRAS conversion forced by --electrodes-cras")
+                log(f"{label}: cRAS conversion forced by --electrodes-cras")
             elif scene_mesh is not None:
                 converted, d_raw, d_shift = _detect_cras_conversion(
                     points, scene_mesh.points, affine, mm_scene, cras_offset
                 )
                 if converted:
                     points = points + cras_offset
-                print(_cras_decision_message(label, converted, d_raw, d_shift))
+                log(_cras_decision_message(label, converted, d_raw, d_shift))
         if len(points) > 0 and not mm_scene:
             points = transform_points(points, np.linalg.inv(affine))
         electrode_groups.append(

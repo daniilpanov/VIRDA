@@ -21,6 +21,10 @@ virda-gui = "virda_gui.app:main"
 virda-gui-viewer = "virda_gui.viewer:main"
 virda-gui-html = "virda_gui.html_export:main"
 
+[dependency-groups]
+# Used only to build the frozen executables (see .github/workflows/build-exe.yml).
+build = ["pyinstaller==6.22.2"]
+
 [tool.uv.sources]
 virda = { workspace = true }
 
