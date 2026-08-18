@@ -364,10 +364,11 @@ scene.add(volume);
 
 let mesh = null;
 let meshMat = null;
+let meshGeo = null;
 if (meshData && meshData.vertices && meshData.faces) {
   const verts = decodeFloat32(meshData.vertices);
   const faces = decodeUint32(meshData.faces);
-  const meshGeo = new THREE.BufferGeometry();
+  meshGeo = new THREE.BufferGeometry();
   meshGeo.setAttribute('position', new THREE.BufferAttribute(verts, 3));
   meshGeo.setIndex(new THREE.BufferAttribute(faces, 1));
   meshGeo.computeVertexNormals();
@@ -385,12 +386,22 @@ if (meshData && meshData.vertices && meshData.faces) {
   scene.add(mesh);
 }
 
+if (mesh) {
+  meshGeo.computeBoundingBox();
+  const mb = meshGeo.boundingBox;
+  boxMin.copy(mb.min);
+  boxMax.copy(mb.max);
+  diagWorld = mb.max.clone().sub(mb.min).length();
+  const md = mb.max.clone().sub(mb.min);
+  minSpacing = Math.min(md.x, md.y, md.z) || 1.0;
+}
+
 const fidGroup = new THREE.Group();
 const fidLabels = fids && fids.points ? fids.points : [];
 let fidMat = null;
 if (fidLabels.length > 0) {
-  const sphereR = Math.max(diagWorld * 0.008, 0.02 * minSpacing);
-  const geo = new THREE.SphereGeometry(sphereR, 12, 12);
+  const sphereR = diagWorld * 0.008;
+  const geo = new THREE.SphereGeometry(Math.max(sphereR, 0.5), 12, 12);
   fidMat = new THREE.MeshBasicMaterial({ color: 0xff4040 });
   for (const p of fidLabels) {
     const s = new THREE.Mesh(geo, fidMat);
