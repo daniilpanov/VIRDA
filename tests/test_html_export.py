@@ -252,6 +252,79 @@ class TestBuildPayload:
         payload = build_payload(project)
         assert "fiducials" not in payload
 
+    def test_normals_in_payload(self, tmp_path: Path) -> None:
+        project = _make_axis_aligned_project(tmp_path)
+        normals = np.ones((8, 3), dtype=np.float64)
+        normals[:, 2] = 1.0
+        normals_path = project / "ese" / "normals.npy"
+        normals_path.parent.mkdir(parents=True, exist_ok=True)
+        np.save(normals_path, normals)
+
+        payload = build_payload(project, normals_path=normals_path, normals_density=2)
+        assert "normals" in payload
+        n = payload["normals"]["count"]
+        assert n == 4  # 8 vertices / density 2
+        decoded = _decode_float32(payload["normals"]["lines"]).reshape(-1, 3)
+        assert decoded.shape == (8, 3)  # 4 segments × 2 endpoints
+
+    def test_auto_detect_ese_normals(self, tmp_path: Path) -> None:
+        project = _make_axis_aligned_project(tmp_path)
+        normals = np.ones((8, 3), dtype=np.float64)
+        ese_path = project / "ese"
+        ese_path.mkdir()
+        np.save(ese_path / "normals.npy", normals)
+
+        payload = build_payload(project)
+        assert "normals" in payload
+        assert payload["normals"]["count"] > 0
+
+    def test_auto_detect_ese_config(self, tmp_path: Path) -> None:
+        import json as _json
+
+        project = _make_axis_aligned_project(tmp_path)
+        ese_dir = project / "config"
+        ese_dir.mkdir()
+        (ese_dir / "ese.json").write_text(
+            _json.dumps({"ese": {"n_electrodes": 64, "ese_offset_mm": 5.0}}),
+            encoding="utf-8",
+        )
+
+        payload = build_payload(project)
+        assert payload["ese_config"]["ese"]["n_electrodes"] == 64
+
+    def test_ese_info_in_html(self, tmp_path: Path) -> None:
+        import json as _json
+
+        project = _make_axis_aligned_project(tmp_path)
+        ese_dir = project / "config"
+        ese_dir.mkdir()
+        (ese_dir / "ese.json").write_text(
+            _json.dumps({"ese": {"n_electrodes": 64, "ese_offset_mm": 5.0}}),
+            encoding="utf-8",
+        )
+
+        payload = build_payload(project)
+        html = render_html(payload)
+        assert "ESE config" in html
+        assert "64" in html
+
+    def test_normals_checkbox_in_html(self, tmp_path: Path) -> None:
+        project = _make_axis_aligned_project(tmp_path)
+        normals = np.ones((8, 3), dtype=np.float64)
+        normals_path = project / "stage2" / "normals.npy"
+        normals_path.parent.mkdir(parents=True, exist_ok=True)
+        np.save(normals_path, normals)
+
+        payload = build_payload(project, normals_path=normals_path)
+        html = render_html(payload)
+        assert "cb-normals" in html
+        assert "normalsGroup" in html
+
+    def test_no_normals_when_not_provided(self, tmp_path: Path) -> None:
+        project = _make_axis_aligned_project(tmp_path)
+        payload = build_payload(project)
+        assert "normals" not in payload
+
     def test_missing_nifti_still_works(self, tmp_path: Path) -> None:
         project = _make_axis_aligned_project(tmp_path)
         (project / "input" / "head.nii.gz").unlink()

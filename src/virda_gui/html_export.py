@@ -29,7 +29,10 @@ from typing import Any
 import numpy as np
 
 from virda_gui.scene import (
+    compute_normal_lines,
     load_fiducial_points,
+    load_normals,
+    sample_normals,
     transform_points,
 )
 
@@ -148,7 +151,11 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
   <!-- MRI volume rendering does not work properly -->
   <label><input type="checkbox" id="cb-mri" disabled> Show MRI</label>
   <label><input type="checkbox" id="cb-fid" checked> Show fiducials</label>
+  <label><input type="checkbox" id="cb-normals"> Show normals</label>
   <label><input type="checkbox" id="cb-boost"> Boost contrast</label>__DEBUG_UI__
+  <div id="ese-info" style="display:none; margin-top:6px; padding-top:6px;
+    border-top:1px solid #3a3a4a; font-size:12px; line-height:1.7;
+    color:#b0b0c0;"></div>
 </div>
 <div id="hint">drag to rotate · wheel / pinch to zoom · shift-drag to pan</div>
 <div id="loader"><div class="spinner"></div><div>Loading data…</div></div>
@@ -411,6 +418,30 @@ if (fidLabels.length > 0) {
   scene.add(fidGroup);
 }
 
+const normalsData = payload.normals;
+let normalsGroup = null;
+if (normalsData && normalsData.lines) {
+  const lineVerts = decodeFloat32(normalsData.lines);
+  const nSeg = normalsData.count;
+  const positions = new Float32Array(nSeg * 6);
+  for (let i = 0; i < nSeg; i++) {
+    positions[i * 6 + 0] = lineVerts[i * 6 + 0];
+    positions[i * 6 + 1] = lineVerts[i * 6 + 1];
+    positions[i * 6 + 2] = lineVerts[i * 6 + 2];
+    positions[i * 6 + 3] = lineVerts[i * 6 + 3];
+    positions[i * 6 + 4] = lineVerts[i * 6 + 4];
+    positions[i * 6 + 5] = lineVerts[i * 6 + 5];
+  }
+  const nGeo = new THREE.BufferGeometry();
+  nGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  const nMat = new THREE.LineBasicMaterial({
+    color: 0x00ffff, linewidth: 2, transparent: true, opacity: 0.8
+  });
+  normalsGroup = new THREE.LineSegments(nGeo, nMat);
+  normalsGroup.visible = false;
+  scene.add(normalsGroup);
+}
+
 const center = boxMin.clone().add(boxMax).multiplyScalar(0.5);
 const radius = diagWorld * 0.6;
 camera.position.set(center.x + radius, center.y + radius * 0.8, center.z + radius * 1.1);
@@ -479,6 +510,7 @@ function updateLabels() {
 const cbMesh = document.getElementById('cb-mesh');
 const cbMri = document.getElementById('cb-mri');
 const cbFid = document.getElementById('cb-fid');
+const cbNormals = document.getElementById('cb-normals');
 const cbBoost = document.getElementById('cb-boost');
 
 cbMesh.addEventListener('change', () => { if (mesh) mesh.visible = cbMesh.checked; });
@@ -486,6 +518,25 @@ cbFid.addEventListener('change', () => {
   fidGroup.visible = cbFid.checked;
   if (fidMat) fidMat.visible = cbFid.checked;
 });
+cbNormals.addEventListener('change', () => {
+  if (normalsGroup) normalsGroup.visible = cbNormals.checked;
+});
+
+if (normalsGroup) { cbNormals.checked = true; normalsGroup.visible = true; }
+
+const eseInfo = document.getElementById('ese-info');
+const eseCfg = payload.ese_config;
+if (eseCfg && eseCfg.ese) {
+  const e = eseCfg.ese;
+  const lines = [];
+  if (e.n_electrodes != null) lines.push('Electrodes: ' + e.n_electrodes);
+  if (e.ese_offset_mm != null) lines.push('Offset: ' + e.ese_offset_mm + ' mm');
+  if (e.ese_reference) lines.push('Reference: ' + e.ese_reference);
+  if (lines.length) {
+    eseInfo.innerHTML = '<b>ESE config</b><br>' + lines.join('<br>');
+    eseInfo.style.display = 'block';
+  }
+}
 if (vol) {
   const stepWorld = __STEP_VOX__ * minSpacing;
   function setBoost(on) {
@@ -559,8 +610,19 @@ def _encode_uint32(faces: np.ndarray) -> str:
     return base64.b64encode(packed).decode("ascii")
 
 
-def build_payload(project_dir: str | Path, max_dim: int = _DEFAULT_MAX_DIM) -> dict[str, Any]:
-    """Read a patient project and return the embedded-viewer payload dict."""
+def build_payload(
+    project_dir: str | Path,
+    max_dim: int = _DEFAULT_MAX_DIM,
+    normals_path: str | Path | None = None,
+    normals_scale: float = 3.0,
+    normals_density: int = 500,
+) -> dict[str, Any]:
+    """Read a patient project and return the embedded-viewer payload dict.
+
+    When a ``ese/`` directory exists with ESE mesh and normals, they are
+    loaded automatically.  The ESE config is read from ``config/ese.json``
+    when present.
+    """
     project = Path(project_dir)
 
     # MRI volume rendering is disabled.
@@ -582,6 +644,12 @@ def build_payload(project_dir: str | Path, max_dim: int = _DEFAULT_MAX_DIM) -> d
         "dataset": project.name,
     }
 
+    # --- ESE config ----------------------------------------------------------
+    ese_config_path = project / "config" / "ese.json"
+    if ese_config_path.is_file():
+        payload["ese_config"] = json.loads(ese_config_path.read_text(encoding="utf-8"))
+
+    # --- Mesh ----------------------------------------------------------------
     vertices_path = project / "mesh" / "scalp_vertices.npy"
     faces_path = project / "mesh" / "scalp_faces.npy"
     if vertices_path.is_file() and faces_path.is_file():
@@ -592,6 +660,7 @@ def build_payload(project_dir: str | Path, max_dim: int = _DEFAULT_MAX_DIM) -> d
             "faces": _encode_uint32(faces),
         }
 
+    # --- Fiducials -----------------------------------------------------------
     fiducials_path = project / "fiducials" / "fiducials.json"
     if fiducials_path.is_file():
         points, labels = load_fiducial_points(fiducials_path)
@@ -600,6 +669,33 @@ def build_payload(project_dir: str | Path, max_dim: int = _DEFAULT_MAX_DIM) -> d
                 "points": transform_points(points, transform).tolist(),
                 "labels": labels,
             }
+
+    # --- Normals -------------------------------------------------------------
+    # Explicit --normals takes priority; otherwise auto-detect ese/normals.npy.
+    normals_file: Path | None = None
+    if normals_path is not None:
+        candidate = Path(normals_path)
+        if candidate.is_file():
+            normals_file = candidate
+    elif (project / "ese" / "normals.npy").is_file():
+        normals_file = project / "ese" / "normals.npy"
+
+    if normals_file is not None and vertices is not None:
+        normals = load_normals(normals_file)
+        idx, sampled = sample_normals(normals, normals_density)
+        origins, tips = compute_normal_lines(
+            transform_points(vertices, transform)[idx],
+            sampled,
+            normals_scale,
+        )
+        n = len(idx)
+        lines = np.empty((n * 2, 3), dtype=np.float32)
+        lines[0::2] = origins
+        lines[1::2] = tips
+        payload["normals"] = {
+            "lines": _encode_float32(lines),
+            "count": n,
+        }
 
     return payload
 
@@ -625,9 +721,18 @@ def export_project(
     output: str | Path,
     max_dim: int = _DEFAULT_MAX_DIM,
     debug: bool = False,
+    normals_path: str | Path | None = None,
+    normals_scale: float = 3.0,
+    normals_density: int = 500,
 ) -> Path:
     """Write the self-contained HTML viewer for a patient project."""
-    payload = build_payload(project_dir, max_dim=max_dim)
+    payload = build_payload(
+        project_dir,
+        max_dim=max_dim,
+        normals_path=normals_path,
+        normals_scale=normals_scale,
+        normals_density=normals_density,
+    )
     output_path = Path(output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(render_html(payload, debug=debug), encoding="utf-8")
@@ -650,13 +755,37 @@ def main() -> None:
         help="Longest volume axis kept after downsampling (default: 128).",
     )
     parser.add_argument(
+        "--normals",
+        help="Path to normals file (normals.npy) for visualisation.",
+    )
+    parser.add_argument(
+        "--normals-scale",
+        type=float,
+        default=3.0,
+        help="Visual length of normal arrows in scene units (default: 3.0).",
+    )
+    parser.add_argument(
+        "--normals-density",
+        type=int,
+        default=500,
+        help="Show one normal per N vertices (default: 500).",
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="Add nsteps/filter/step diagnostics controls to the viewer.",
     )
     args = parser.parse_args()
 
-    export_project(args.project_dir, args.output, max_dim=args.max_dim, debug=args.debug)
+    export_project(
+        args.project_dir,
+        args.output,
+        max_dim=args.max_dim,
+        debug=args.debug,
+        normals_path=args.normals,
+        normals_scale=args.normals_scale,
+        normals_density=args.normals_density,
+    )
     print(f"HTML viewer written to {args.output}")
 
 

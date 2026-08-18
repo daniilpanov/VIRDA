@@ -9,8 +9,8 @@ import nibabel as nib
 import numpy as np
 import trimesh
 
-from virda.config import VirdaSettings
 from virda.io.fiducial_helpers import save_fiducials
+from virda.models.config import Config
 from virda.models.ese_config import ESEConfig
 from virda.models.stage1_result import Stage1Result
 
@@ -22,14 +22,14 @@ class Stage1Exporter:
         segmentation mask
         fiducials
         ESE config
-        settings
+        config
     """
 
     def __init__(
         self,
         project_dir: Path,
         ese_config: ESEConfig | None = None,
-        settings: VirdaSettings | None = None,
+        config: Config | None = None,
         nifti_path: Path | None = None,
         logger: Logger | None = None,
     ) -> None:
@@ -38,7 +38,7 @@ class Stage1Exporter:
             (self.project / subdir).mkdir(parents=True, exist_ok=True)
 
         self._ese_config = ese_config
-        self._settings = settings
+        self._config = config
         self._nifti_path = Path(nifti_path) if nifti_path else None
         self._logger = logger
 
@@ -71,10 +71,10 @@ class Stage1Exporter:
             pipeline_config = {"ese": asdict(self._ese_config)}
             (self.project / "config" / "ese.json").write_text(json.dumps(pipeline_config, indent=2))
 
-        # 5. Processing settings as JSON
-        if self._settings is not None:
+        # 5. Processing config as JSON
+        if self._config is not None:
             (self.project / "input" / "pipeline_config.json").write_text(
-                json.dumps(self._settings.model_dump(), indent=2)
+                json.dumps(self._config.model_dump(mode="json"), indent=2)
             )
 
         # 6. Source NIfTI copy

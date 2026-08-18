@@ -20,9 +20,9 @@ can be reproduced exactly from the project alone.
 | File | Description |
 |---|---|
 | `<source_mri>.nii.gz` | Byte-for-byte copy of the source MRI NIfTI. |
-| `pipeline_config.json` | Full `VirdaSettings` dump (`model_dump()`); written only when settings are supplied. |
+| `pipeline_config.json` | Full merged `Config` dump (`model_dump(mode="json")`); written on every run. |
 
-Example `pipeline_config.json` (values follow the `VirdaSettings` defaults):
+Example `pipeline_config.json` (values follow the `Config` defaults):
 
 ```json
 {
@@ -43,7 +43,13 @@ Example `pipeline_config.json` (values follow the `VirdaSettings` defaults):
   "smoother_nu": -0.53,
   "n_electrodes": null,
   "ese_offset_mm": null,
-  "ese_reference": null
+  "ese_reference": null,
+  "neighborhood_radius_mm": 10.0,
+  "k_neighbors": null,
+  "use_weighted_pca": false,
+  "pca_sigma_mm": 5.0,
+  "min_neighbors": 5,
+  "coordsystem": null
 }
 ```
 

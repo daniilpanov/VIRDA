@@ -1,32 +1,24 @@
+import json
 import os
-from functools import cache
+from collections.abc import Sequence
+from pathlib import Path
+from typing import Any
 
 from pydantic import Field
-from pydantic_settings import (
-    BaseSettings,
-    JsonConfigSettingsSource,
-    PydanticBaseSettingsSource,
-    SettingsConfigDict,
-    YamlConfigSettingsSource,
-)
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from virda.models.ese_config import ESEConfig
+from virda.models.config import Config
+from virda.models.coordsystem import Coordsystem
 from virda.segmentation.head_segmenter import OtsuScope
 
 
-def resolve_config_file(default: str = ".env") -> str:
-    """Return the per-project settings file.
-
-    Defaults to ``.env`` in the current directory. Set the
-    ``VIRDA_CONFIG_FILE`` environment variable to load settings from a file in
-    the processed dataset instead, e.g.::
-
-        VIRDA_CONFIG_FILE=/data/CTRL_1277/.env.json python -m virda ...
-    """
-    return os.getenv("VIRDA_CONFIG_FILE", default)
-
-
 class VirdaSettings(BaseSettings):
+    """Base settings loaded from the environment and the ``.env`` dotenv file.
+
+    This is the lowest-priority settings source: input config files and CLI
+    arguments override it (see :func:`build_config`).
+    """
+
     nifti_path: str | None = None
     project_dir: str | None = None
     fiducials_path: str | None = None
@@ -52,54 +44,69 @@ class VirdaSettings(BaseSettings):
     ese_offset_mm: float | None = None
     ese_reference: str | None = None
 
-    model_config = SettingsConfigDict(
-        cli_parse_args=True,
-        env_file=resolve_config_file(),
-        json_file=resolve_config_file(".env.json"),
-        yaml_file=resolve_config_file(".env.yaml"),
-    )
+    neighborhood_radius_mm: float = Field(default=10.0, gt=0)
+    k_neighbors: int | None = None
+    use_weighted_pca: bool = False
+    pca_sigma_mm: float = Field(default=5.0, gt=0)
+    min_neighbors: int = Field(default=5, ge=1)
 
-    # TODO: In the future, avoid this method and find a replacement
-    @classmethod
-    def settings_customise_sources(
-        cls,
-        settings_cls: type[BaseSettings],
-        init_settings: PydanticBaseSettingsSource,
-        env_settings: PydanticBaseSettingsSource,
-        dotenv_settings: PydanticBaseSettingsSource,
-        file_secret_settings: PydanticBaseSettingsSource,
-    ) -> tuple[PydanticBaseSettingsSource, ...]:
-        """
-        ``pydantic-settings`` does not register the JSON/YAML file sources automatically
-        wire them in explicitly so per-dataset config files actually take effect.
-        CLI and env still override them because of source ordering.
-        @see ``resolve_config_file``
-        """
-        return (
-            init_settings,
-            env_settings,
-            dotenv_settings,
-            JsonConfigSettingsSource(settings_cls, json_file=resolve_config_file()),
-            YamlConfigSettingsSource(settings_cls),
-            file_secret_settings,
-        )
+    model_config = SettingsConfigDict(env_file=".env")
 
 
-def resolve_ese_config(settings: VirdaSettings) -> ESEConfig | None:
-    """Build the ESE config when fully configured, otherwise return None."""
-    if (
-        settings.n_electrodes is None
-        or settings.ese_offset_mm is None
-        or settings.ese_reference is None
-    ):
-        return None
-    return ESEConfig(
-        n_electrodes=settings.n_electrodes,
-        ese_offset_mm=settings.ese_offset_mm,
-        ese_reference=settings.ese_reference,
-    )
+def resolve_config_files(cli_files: list[str] | None = None) -> list[Path]:
+    """Collect the input config files in priority order (last one wins).
+
+    Sources, from lowest to highest priority:
+
+    1. ``VIRDA_CONFIG_FILE`` — legacy single dataset config (e.g. ``.env.json``);
+    2. ``VIRDA_CONFIG_FILES`` — :data:`os.pathsep`-separated list of config files;
+    3. ``--config-file`` CLI arguments, in the order given on the command line.
+    """
+    paths: list[str] = []
+    legacy = os.getenv("VIRDA_CONFIG_FILE")
+    if legacy:
+        paths.append(legacy)
+    env_files = os.getenv("VIRDA_CONFIG_FILES")
+    if env_files:
+        paths.extend(path for path in env_files.split(os.pathsep) if path)
+    if cli_files:
+        paths.extend(cli_files)
+    return [Path(path) for path in paths]
 
 
-@cache
-def get_virda_settings() -> VirdaSettings:
-    return VirdaSettings()
+def load_config_file(path: str | Path) -> dict[str, Any]:
+    """Load one input config file into a flat settings dict.
+
+    An MNE ``coordsystem.json`` (recognized by its ``CoordinateSystem`` or
+    ``FiducialsCoordinates`` key) contributes ``n_electrodes`` and the parsed
+    ``coordsystem`` value; any other JSON file is merged as-is.
+    """
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError(f"config file must contain a JSON object: {path}")
+    if "CoordinateSystem" in data or "FiducialsCoordinates" in data:
+        coordsystem = Coordsystem.model_validate(data)
+        flat: dict[str, Any] = {}
+        if coordsystem.electrode_count is not None:
+            flat["n_electrodes"] = coordsystem.electrode_count
+        flat["coordsystem"] = coordsystem
+        return flat
+    return data
+
+
+def build_config(
+    settings: VirdaSettings,
+    config_files: Sequence[Path | str] | None = None,
+    overrides: dict[str, Any] | None = None,
+) -> Config:
+    """Merge the settings sources into the final :class:`Config`.
+
+    Priority (lowest to highest): ``settings``, then each config file in order,
+    then ``overrides`` (CLI arguments).
+    """
+    data: dict[str, Any] = settings.model_dump()
+    for config_file in config_files or []:
+        data.update(load_config_file(config_file))
+    if overrides:
+        data.update(overrides)
+    return Config.model_validate(data)

@@ -4,6 +4,25 @@ on:
   push:
     branches: [master]
   workflow_dispatch:
+    inputs:
+      n_electrodes:
+        description: Number of electrodes
+        required: false
+        default: "30"
+        type: number
+      ese_offset_mm:
+        description: ESE offset in millimeters
+        required: false
+        default: "5"
+        type: number
+      ese_reference:
+        description: ESE reference (electrode_capsule_center or electrode_body_center)
+        required: false
+        default: "electrode_body_center"
+        type: choice
+        options:
+          - electrode_body_center
+          - electrode_capsule_center
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -55,7 +74,10 @@ jobs:
         run: |
           uv run --no-sync virda \
             --nifti-path "test-data/${{ matrix.dataset }}/head.nii.gz" \
-            --project-dir "patient_project/${{ matrix.dataset }}"
+            --project-dir "patient_project/${{ matrix.dataset }}" \
+            --n-electrodes ${{ inputs.n_electrodes || 30 }} \
+            --ese-offset-mm ${{ inputs.ese_offset_mm || 5 }} \
+            --ese-reference ${{ inputs.ese_reference || 'electrode_body_center' }}
           echo
           echo ">>> Patient project layout:"
           find "patient_project/${{ matrix.dataset }}" -maxdepth 2 -type f | sort
