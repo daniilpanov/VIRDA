@@ -26,7 +26,6 @@ in world coordinates and are transformed into the scene frame accordingly.
 """
 
 import argparse
-import json
 
 import nibabel as nib
 import numpy as np
@@ -34,24 +33,15 @@ import pyvista as pv
 import trimesh
 from nibabel import aff2axcodes
 
+from virda_gui.scene import (
+    downsample,
+    load_fiducial_points,
+    percentile_clim,
+    scene_placement,
+    transform_points,
+)
+
 _BOUNDS = tuple[float, float, float, float, float, float]
-
-
-def _downsample(data: np.ndarray, affine: np.ndarray, stride: int) -> tuple[np.ndarray, np.ndarray]:
-    if stride < 1:
-        raise ValueError(f"downsample must be >= 1, got {stride}")
-    if stride == 1:
-        return data, affine
-    sampled = data[::stride, ::stride, ::stride]
-    scaled = affine @ np.diag([stride, stride, stride, 1.0])
-    return sampled, scaled
-
-
-def _is_axis_aligned(affine: np.ndarray) -> bool:
-    linear = affine[:3, :3]
-    if not np.allclose(linear, np.diag(np.diag(linear))):
-        return False
-    return bool(np.all(np.diag(linear) > 0))
 
 
 def _build_scene(
@@ -68,17 +58,13 @@ def _build_scene(
         volume.point_data["intensity"] = data.ravel(order="F")
 
     scene_mesh = mesh_poly.copy() if mesh_poly is not None else None
-    mm_scene = True
 
-    if affine is not None:
-        if _is_axis_aligned(affine):
-            if volume is not None:
-                volume.spacing = (float(affine[0, 0]), float(affine[1, 1]), float(affine[2, 2]))
-                volume.origin = (float(affine[0, 3]), float(affine[1, 3]), float(affine[2, 3]))
-        else:
-            if scene_mesh is not None:
-                scene_mesh.transform(np.linalg.inv(affine), inplace=True)
-            mm_scene = False
+    spacing, origin, transform, mm_scene = scene_placement(affine)
+    if volume is not None and mm_scene and affine is not None:
+        volume.spacing = tuple(spacing)
+        volume.origin = tuple(origin)
+    if scene_mesh is not None and not mm_scene:
+        scene_mesh.transform(transform, inplace=True)
 
     return volume, scene_mesh, mm_scene
 
@@ -91,18 +77,6 @@ def _load_mesh_poly(mesh_path: str) -> pv.PolyData:
     face_array[:, 0] = 3
     face_array[:, 1:] = faces
     return pv.PolyData(vertices, face_array.ravel())
-
-
-def _load_fiducial_points(path: str) -> tuple[np.ndarray, list[str]]:
-    """Read fiducials JSON (``{"fiducials": [...]}``) into points and labels."""
-    with open(path, encoding="utf-8") as fh:
-        data = json.load(fh)
-    points = np.asarray(
-        [np.asarray(item["coordinates"], dtype=np.float64) for item in data["fiducials"]],
-        dtype=np.float64,
-    )
-    labels = [f"{item['fiducial_id']} ({item['name']})" for item in data["fiducials"]]
-    return points, labels
 
 
 def _scene_bounds_to_world(bounds: _BOUNDS, transform: np.ndarray) -> _BOUNDS:
@@ -243,9 +217,9 @@ def main() -> None:
         affine = nifti_img.affine
         orientation = aff2axcodes(affine)
         if args.downsample > 1:
-            data, affine = _downsample(data, affine, args.downsample)
+            data, affine = downsample(data, affine, args.downsample)
         spacing = tuple(float(zoom) for zoom in np.linalg.norm(affine[:3, :3], axis=0))
-        hi_clim = tuple(float(v) for v in np.percentile(data, (3, 99.9)))
+        hi_clim = percentile_clim(data)
 
     mesh_poly = _load_mesh_poly(args.mesh) if args.mesh else None
     volume, scene_mesh, mm_scene = _build_scene(data, affine, mesh_poly)
@@ -254,7 +228,7 @@ def main() -> None:
     fiducial_points = None
     fiducial_labels: list[str] = []
     if args.fiducials:
-        fiducial_points, fiducial_labels = _load_fiducial_points(args.fiducials)
+        fiducial_points, fiducial_labels = load_fiducial_points(args.fiducials)
 
     plotter = pv.Plotter(title="VIRDA — scalp mesh and/or MRI volume")
     mri_actor = None
@@ -269,8 +243,7 @@ def main() -> None:
     if fiducial_points is not None and len(fiducial_points) > 0:
         scene_points = fiducial_points
         if not mm_scene:
-            inverse = np.linalg.inv(affine)
-            scene_points = fiducial_points @ inverse[:3, :3].T + inverse[:3, 3]
+            scene_points = transform_points(fiducial_points, np.linalg.inv(affine))
         fiducial_actor = plotter.add_points(
             scene_points, color="red", point_size=10, render_points_as_spheres=True
         )
