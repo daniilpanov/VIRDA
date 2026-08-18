@@ -5,11 +5,9 @@ localisation pipeline.  After a successful run the *Results* tab becomes
 available, allowing the user to open the interactive 3D viewer or export
 an HTML viewer.
 
-Stage 3 (real electrode localisation) is预留 placeholders — the *Stage 3*
+Stage 3 (real electrode localisation) has placeholders -- the *Stage 3*
 section and *Results* tab will be fleshed out when that stage ships.
 """
-
-from __future__ import annotations
 
 import queue
 import threading
@@ -35,6 +33,8 @@ from .widgets import (
 
 _DONE_SENTINEL = "__DONE__"
 _ERROR_SENTINEL = "__ERROR__"
+_EXPORT_DONE_SENTINEL = "__EXPORT_DONE__"
+_EXPORT_ERROR_SENTINEL = "__EXPORT_ERROR__"
 
 
 class VirdaApp:
@@ -351,7 +351,7 @@ class VirdaApp:
     def _on_run(self) -> None:
         try:
             config = self._collect_config()
-        except ValueError as exc:
+        except (ValueError, Exception) as exc:
             Messagebox.show_error(str(exc), title="Validation error", parent=self._root)
             return
 
@@ -368,17 +368,6 @@ class VirdaApp:
             target=self._run_pipeline, args=(config,), daemon=True
         )
         self._pipeline_thread.start()
-
-    @staticmethod
-    def _run_pipeline(config: Config) -> queue.Queue[str | None]:
-        """Entry point for the background pipeline thread.
-
-        Returns the queue so the main thread can reference it (unused, kept
-        for symmetry).  In practice the queue is stored on ``self._log_queue``.
-        """
-        # This method is overridden per-instance in ``_on_run`` via the
-        # closure; kept here only for type-checking clarity.
-        raise NotImplementedError
 
     def _run_pipeline(self, config: Config) -> None:
         """Background thread: run the pipeline and post results to the queue."""
@@ -408,11 +397,17 @@ class VirdaApp:
         try:
             while True:
                 msg = self._log_queue.get_nowait()
-                if msg is _DONE_SENTINEL:
+                if msg == _DONE_SENTINEL:
                     self._on_pipeline_done()
                     break
-                if msg is _ERROR_SENTINEL:
+                if msg == _ERROR_SENTINEL:
                     self._on_pipeline_error()
+                    break
+                if msg == _EXPORT_DONE_SENTINEL:
+                    self._log_viewer.append("HTML export completed.")
+                    break
+                if msg == _EXPORT_ERROR_SENTINEL:
+                    self._log_viewer.append("HTML export failed — see log above.")
                     break
                 self._log_viewer.append(msg)
         except queue.Empty:
@@ -432,8 +427,8 @@ class VirdaApp:
         self._update_results_info(success=False)
 
     def _update_results_info(self, *, success: bool) -> None:
-        self._notebook.select(1)  # switch to Results tab
         if success:
+            self._notebook.select(1)  # switch to Results tab
             project = self._last_project_dir or "—"
             self._result_label.configure(
                 text=f"Pipeline completed.\nProject directory: {project}",
@@ -495,10 +490,10 @@ class VirdaApp:
 
                 export_project(str(project), output)
                 self._log_queue.put(f"HTML exported: {output}")
-                self._log_queue.put(_DONE_SENTINEL)
+                self._log_queue.put(_EXPORT_DONE_SENTINEL)
             except Exception as exc:
                 self._log_queue.put(f"HTML export failed: {exc}")
-                self._log_queue.put(_ERROR_SENTINEL)
+                self._log_queue.put(_EXPORT_ERROR_SENTINEL)
 
         threading.Thread(target=_export, daemon=True).start()
 
