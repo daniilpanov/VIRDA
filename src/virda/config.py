@@ -9,6 +9,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from virda.models.config import Config
 from virda.models.coordsystem import Coordsystem
+from virda.models.stage3_config import Stage3Config
 from virda.segmentation.head_segmenter import OtsuScope
 
 
@@ -23,6 +24,7 @@ class VirdaSettings(BaseSettings):
     project_dir: str | None = None
     fiducials_path: str | None = None
     auto_detect_fiducials: bool = False
+    measurements_path: str | None = None
 
     closing_radius: int = 5
 
@@ -49,6 +51,8 @@ class VirdaSettings(BaseSettings):
     use_weighted_pca: bool = False
     pca_sigma_mm: float = Field(default=5.0, gt=0)
     min_neighbors: int = Field(default=5, ge=1)
+
+    residual_threshold_mm: float = Field(default=10.0, gt=0)
 
     model_config = SettingsConfigDict(env_file=".env")
 
@@ -114,3 +118,8 @@ def build_config(
     if overrides:
         data.update(overrides)
     return Config.model_validate(data)
+
+
+def resolve_stage3_config(config: Config) -> Stage3Config:
+    """Build the Stage 3 (localization) config."""
+    return Stage3Config(residual_threshold_mm=config.residual_threshold_mm)
