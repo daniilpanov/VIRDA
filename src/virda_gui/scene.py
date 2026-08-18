@@ -76,3 +76,42 @@ def percentile_clim(data: np.ndarray) -> tuple[float, float]:
     """Intensity window (3rd, 99.9th percentiles) used by the boosted view."""
     lo, hi = np.percentile(data, (3, 99.9))
     return float(lo), float(hi)
+
+
+def load_normals(path: str | Path) -> np.ndarray:
+    """Load per-vertex normals from a ``.npy`` file as an (N, 3) float64 array."""
+    normals = np.load(path)
+    if normals.ndim != 2 or normals.shape[1] != 3:
+        raise ValueError(f"Normals must be (N, 3) array, got shape {normals.shape}")
+    return normals.astype(np.float64)
+
+
+def sample_normals(
+    normals: np.ndarray,
+    density: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Down-sample normals by selecting every *density*-th vertex.
+
+    Returns ``(indices, sampled_normals)`` where ``indices`` are the selected
+    vertex indices and ``sampled_normals`` are the corresponding (N, 3) normal
+    vectors.
+    """
+    step = max(1, density)
+    indices = np.arange(0, len(normals), step)
+    return indices, normals[indices]
+
+
+def compute_normal_lines(
+    points: np.ndarray,
+    normals: np.ndarray,
+    scale: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Compute line-segment endpoints for normal visualisation.
+
+    Given *points* (N, 3) and *normals* (N, 3), return
+    ``(origins, tips)`` each of shape (N, 3) that can be fed into any
+    line-renderer (PyVista, three.js, …).
+    """
+    origins = points
+    tips = points + scale * normals
+    return origins, tips

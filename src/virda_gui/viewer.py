@@ -8,6 +8,9 @@ the visibility of the mesh, the MRI and the fiducial points (with labels), and
 a "Boost contrast" checkbox sharpens the MRI (opaque skin surface) and the mesh
 (bright solid surface that makes holes visible).
 
+When ``--normals`` is supplied, per-vertex normal vectors are drawn as cyan
+line segments originating at each sampled vertex and pointing outward.
+
 Usage
 -----
     virda-gui --nifti <scan.nii.gz>
@@ -15,6 +18,7 @@ Usage
     virda-gui --nifti <scan.nii.gz> --mesh <final_mesh.ply>
     virda-gui --nifti <scan.nii.gz> --mesh <final_mesh.ply> \\
         --fiducials <fiducials/fiducials.json>
+    virda-gui --mesh <ese_mesh.ply> --normals <normals.npy>
 
 At least one of ``--nifti`` or ``--mesh`` is required.
 
@@ -34,9 +38,12 @@ import trimesh
 from nibabel import aff2axcodes
 
 from virda_gui.scene import (
+    compute_normal_lines,
     downsample,
     load_fiducial_points,
+    load_normals,
     percentile_clim,
+    sample_normals,
     scene_placement,
     transform_points,
 )
@@ -77,6 +84,33 @@ def _load_mesh_poly(mesh_path: str) -> pv.PolyData:
     face_array[:, 0] = 3
     face_array[:, 1:] = faces
     return pv.PolyData(vertices, face_array.ravel())
+
+
+def _create_normal_glyphs(
+    points: np.ndarray,
+    normals: np.ndarray,
+    scale: float,
+    density: int,
+) -> pv.PolyData:
+    """Build line-segment glyphs pointing along *normals* at sampled vertices.
+
+    Returns a ``PolyData`` mesh of line segments that can be added to a
+    PyVista plotter.
+    """
+    idx, sampled = sample_normals(normals, density)
+    origins, tips = compute_normal_lines(points[idx], sampled, scale)
+
+    n = len(idx)
+    lines = np.empty((n * 2, 3), dtype=np.float64)
+    lines[0::2] = origins
+    lines[1::2] = tips
+
+    line_cells = np.empty((n, 3), dtype=np.int64)
+    line_cells[:, 0] = 2
+    line_cells[:, 1] = np.arange(0, n * 2, 2)
+    line_cells[:, 2] = np.arange(1, n * 2, 2)
+
+    return pv.PolyData(lines, lines=line_cells.ravel())
 
 
 def _scene_bounds_to_world(bounds: _BOUNDS, transform: np.ndarray) -> _BOUNDS:
@@ -199,6 +233,22 @@ def main() -> None:
         "--fiducials",
         help="Path to fiducials JSON (fiducials/fiducials.json).",
     )
+    parser.add_argument(
+        "--normals",
+        help="Path to normals file (normals.npy) for visualisation.",
+    )
+    parser.add_argument(
+        "--normals-scale",
+        type=float,
+        default=3.0,
+        help="Visual length of normal arrows in scene units (default: 3.0).",
+    )
+    parser.add_argument(
+        "--normals-density",
+        type=int,
+        default=500,
+        help="Show one normal per N vertices (default: 500).",
+    )
     args = parser.parse_args()
 
     if not args.nifti and not args.mesh:
@@ -230,6 +280,15 @@ def main() -> None:
     if args.fiducials:
         fiducial_points, fiducial_labels = load_fiducial_points(args.fiducials)
 
+    normals_data = None
+    if args.normals:
+        normals_data = load_normals(args.normals)
+        if scene_mesh is not None and normals_data.shape[0] != scene_mesh.n_points:
+            raise ValueError(
+                f"Normals count ({normals_data.shape[0]}) does not match "
+                f"mesh vertex count ({scene_mesh.n_points})"
+            )
+
     plotter = pv.Plotter(title="VIRDA — scalp mesh and/or MRI volume")
     mri_actor = None
     mesh_actor = None
@@ -256,6 +315,17 @@ def main() -> None:
             show_points=False,
             shape=None,
         )
+
+    normals_actor = None
+    if normals_data is not None and scene_mesh is not None:
+        scene_normals = normals_data
+        if not mm_scene:
+            inv_rot = np.linalg.inv(affine)[:3, :3]
+            scene_normals = normals_data @ inv_rot.T
+        normals_poly = _create_normal_glyphs(
+            np.asarray(scene_mesh.points), scene_normals, args.normals_scale, args.normals_density
+        )
+        normals_actor = plotter.add_mesh(normals_poly, color="cyan", opacity=0.8, line_width=2)
 
     y = 10
     mri_visible = {"on": True}
@@ -323,6 +393,14 @@ def main() -> None:
         plotter.add_text(
             "Show fiducials", position=(75, y + 10), font_size=18, name="fiducials_label"
         )
+        y += 50
+    if normals_actor is not None:
+
+        def set_normals_visibility(flag: bool) -> None:
+            normals_actor.SetVisibility(flag)
+
+        plotter.add_checkbox_button_widget(set_normals_visibility, value=True, position=(10, y))
+        plotter.add_text("Show normals", position=(75, y + 10), font_size=18, name="normals_label")
         y += 50
     plotter.add_checkbox_button_widget(set_contrast, value=False, position=(10, y))
     plotter.add_text("Boost contrast", position=(75, y + 10), font_size=18, name="contrast_label")
