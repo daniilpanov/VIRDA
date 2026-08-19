@@ -5,6 +5,7 @@ on:
     branches: [master]
   pull_request:
     branches: [master]
+  workflow_dispatch:
 
 # Reject all old actions
 concurrency:
@@ -105,4 +106,42 @@ jobs:
         with:
           name: test-results
           path: junit.xml
+          retention-days: 7
+
+  # ========================================
+  # JOB 3: Integration test (push only)
+  # ========================================
+  integration-test:
+    name: Integration Test (mne-sample)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install 3.14
+
+      - name: Install dependencies
+        run: uv sync --all-extras --frozen
+
+      - name: Run E2E integration test
+        run: |
+          uv run pytest tests/test_stage3_e2e.py \
+            -v --run-integration --tb=long \
+            -s \
+            --junitxml=integration.xml
+
+      - name: Upload integration test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: integration-results
+          path: integration.xml
           retention-days: 7
