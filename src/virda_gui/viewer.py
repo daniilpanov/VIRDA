@@ -24,14 +24,16 @@ Usage
     virda-gui --nifti <scan.nii.gz> --mesh <final_mesh.ply> \\
         --ese-mesh <stage2/ese_mesh.ply> --fiducials <fiducials.json> \\
         --electrodes <localization/electrodes.json>
+    virda-gui --nifti <scan.nii.gz> --mesh <final_mesh.ply> \\
+        --electrodes <electrodes.tsv>
 
 At least one of ``--nifti`` or ``--mesh`` is required. ``--normals`` points to
 the ``stage2/`` output directory (``ese_vertices.npy`` + ``normals.npy``);
 ``--normals-scale`` sets the arrow length in scene units (default 5) and
-``--normals-step`` draws only every N-th normal. ``--electrodes`` points to the
-``stage3/electrodes.json`` written by the Stage 3 exporter: localized electrodes
-are drawn as spheres colored by residual error (red when flagged over the
-threshold) and linked to the fiducials they were measured from.
+``--normals-step`` draws only every N-th normal. ``--electrodes`` accepts either
+the Stage 3 ``electrodes.json`` (localized electrodes colored by residual error,
+with fiducial links) or a tabular file with ``name``, ``x``, ``y``, ``z``
+columns (shown as yellow spheres without links).
 
 If the affine is axis-aligned with positive spacing the scene is shown in world
 millimeters; otherwise the mesh is transformed into voxel index space so that
@@ -128,6 +130,20 @@ def _create_normal_glyphs(
 def _load_electrodes(
     path: str,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[dict[str, float]]]:
+    """Load electrodes from a Stage 3 JSON or a tabular CSV/TSV file.
+
+    Dispatches to ``_load_electrodes_from_json`` for ``.json`` files and to
+    ``_load_electrodes_from_csv`` for everything else (``.tsv``, ``.csv``,
+    ``.txt``).
+    """
+    if path.endswith(".json"):
+        return _load_electrodes_from_json(path)
+    return _load_electrodes_from_csv(path)
+
+
+def _load_electrodes_from_json(
+    path: str,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[dict[str, float]]]:
     """Read ``electrodes.json`` from the Stage 3 output.
 
     Returns scalp points, residuals and flags of the localized electrodes, plus
@@ -156,6 +172,52 @@ def _load_electrodes(
     if not points:
         return np.empty((0, 3)), np.empty(0), np.empty(0), []
     return np.asarray(points), np.asarray(residuals), np.asarray(flags, dtype=bool), measured
+
+
+def _load_electrodes_from_csv(
+    path: str,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[dict[str, float]]]:
+    """Read electrodes from a TSV/CSV with columns: name, x, y, z.
+
+    Returns positions with zero residuals, no flags and no fiducial links.
+    Column names are matched case-insensitively.  The delimiter is detected
+    automatically by :class:`csv.Sniffer`.
+    """
+    import csv
+
+    with open(path, encoding="utf-8") as fh:
+        sample = fh.read(2048)
+        dialect = csv.Sniffer().sniff(sample)
+        fh.seek(0)
+        reader = csv.DictReader(fh, dialect=dialect)
+
+        if not reader.fieldnames:
+            raise ValueError(f"Electrodes file is empty or has no header: {path}")
+
+        col_map = {col.lower().strip(): col for col in reader.fieldnames}
+
+        for required in ("x", "y", "z"):
+            if required not in col_map:
+                raise ValueError(
+                    f"Electrodes file missing required column '{required}', "
+                    f"found: {list(reader.fieldnames)}"
+                )
+
+        points: list[np.ndarray] = []
+        for row in reader:
+            x = float(row[col_map["x"]])
+            y = float(row[col_map["y"]])
+            z = float(row[col_map["z"]])
+            points.append(np.array([x, y, z]))
+
+    if not points:
+        return np.empty((0, 3)), np.empty(0), np.empty(0, dtype=bool), []
+    return (
+        np.asarray(points),
+        np.zeros(len(points)),
+        np.zeros(len(points), dtype=bool),
+        [{} for _ in points],
+    )
 
 
 def _build_electrode_links(
@@ -312,7 +374,10 @@ def main() -> None:
     )
     parser.add_argument(
         "--electrodes",
-        help="Path to Stage 3 electrodes JSON (stage3/electrodes.json).",
+        help=(
+            "Path to electrodes file: Stage 3 JSON (.json) "
+            "or tabular with name/x/y/z columns (.tsv/.csv)."
+        ),
     )
     args = parser.parse_args()
 
@@ -415,24 +480,33 @@ def main() -> None:
     link_actor = None
     flagged_actor = None
     if electrode_points is not None and len(electrode_points) > 0:
-        healthy = ~electrode_flags
-        if healthy.any():
+        is_tabular = bool(np.all(electrode_residuals == 0))
+        if is_tabular:
             electrode_actor = plotter.add_points(
-                electrode_points[healthy],
-                scalars=electrode_residuals[healthy],
-                cmap="jet",
+                electrode_points,
+                color="yellow",
                 point_size=12,
                 render_points_as_spheres=True,
             )
-        if (~healthy).any():
-            flagged_actor = plotter.add_points(
-                electrode_points[~healthy],
-                color="red",
-                point_size=16,
-                render_points_as_spheres=True,
-            )
-        if electrode_actor is None:
-            electrode_actor = flagged_actor
+        else:
+            healthy = ~electrode_flags
+            if healthy.any():
+                electrode_actor = plotter.add_points(
+                    electrode_points[healthy],
+                    scalars=electrode_residuals[healthy],
+                    cmap="jet",
+                    point_size=12,
+                    render_points_as_spheres=True,
+                )
+            if (~healthy).any():
+                flagged_actor = plotter.add_points(
+                    electrode_points[~healthy],
+                    color="red",
+                    point_size=16,
+                    render_points_as_spheres=True,
+                )
+            if electrode_actor is None:
+                electrode_actor = flagged_actor
         links = _build_electrode_links(electrode_points, electrode_measured, fiducial_id_to_point)
         if len(links) > 0:
             flat = links.reshape(-1, 3)
