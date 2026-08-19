@@ -44,7 +44,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: virda-gui-linux-x64
-          path: dist/virda-gui/
+          path: dist/
           if-no-files-found: error
           retention-days: 30
 
@@ -81,7 +81,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: virda-gui-windows-x64
-          path: dist/virda-gui/
+          path: dist/
           if-no-files-found: error
           retention-days: 30
 
