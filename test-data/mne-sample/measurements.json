@@ -1,0 +1,484 @@
+{
+  "electrodes": [
+    {
+      "electrode_id": "EEG 001",
+      "measured_distances": {
+        "NAS": 62.27826737967946,
+        "LPA": 111.67746675946181,
+        "RPA": 158.41587870883887
+      }
+    },
+    {
+      "electrode_id": "EEG 002",
+      "measured_distances": {
+        "NAS": 53.00040017126881,
+        "LPA": 125.13343463333295,
+        "RPA": 147.2944327590899
+      }
+    },
+    {
+      "electrode_id": "EEG 003",
+      "measured_distances": {
+        "NAS": 51.195512843774445,
+        "LPA": 138.14086640192056,
+        "RPA": 131.11074311585494
+      }
+    },
+    {
+      "electrode_id": "EEG 004",
+      "measured_distances": {
+        "NAS": 86.09048072468649,
+        "LPA": 79.45489231238858,
+        "RPA": 165.08453873571983
+      }
+    },
+    {
+      "electrode_id": "EEG 005",
+      "measured_distances": {
+        "NAS": 86.30924109163666,
+        "LPA": 98.9624213645809,
+        "RPA": 162.19173343500867
+      }
+    },
+    {
+      "electrode_id": "EEG 006",
+      "measured_distances": {
+        "NAS": 79.23483903161276,
+        "LPA": 142.9079731443307,
+        "RPA": 121.05692118316878
+      }
+    },
+    {
+      "electrode_id": "EEG 007",
+      "measured_distances": {
+        "NAS": 66.32057100610943,
+        "LPA": 147.05369268070484,
+        "RPA": 102.56151848620765
+      }
+    },
+    {
+      "electrode_id": "EEG 008",
+      "measured_distances": {
+        "NAS": 102.31380368710263,
+        "LPA": 58.15251806223239,
+        "RPA": 166.97002331868538
+      }
+    },
+    {
+      "electrode_id": "EEG 009",
+      "measured_distances": {
+        "NAS": 107.16560479026856,
+        "LPA": 76.2305996778023,
+        "RPA": 168.00079577727752
+      }
+    },
+    {
+      "electrode_id": "EEG 010",
+      "measured_distances": {
+        "NAS": 108.09481466630073,
+        "LPA": 93.05947468168921,
+        "RPA": 166.12323604447943
+      }
+    },
+    {
+      "electrode_id": "EEG 011",
+      "measured_distances": {
+        "NAS": 111.2151845905829,
+        "LPA": 110.84312665163948,
+        "RPA": 158.26592807997602
+      }
+    },
+    {
+      "electrode_id": "EEG 012",
+      "measured_distances": {
+        "NAS": 108.33233697915664,
+        "LPA": 125.37390194041588,
+        "RPA": 149.2496936189337
+      }
+    },
+    {
+      "electrode_id": "EEG 013",
+      "measured_distances": {
+        "NAS": 105.58457437070889,
+        "LPA": 136.3418211608354,
+        "RPA": 132.4980192137363
+      }
+    },
+    {
+      "electrode_id": "EEG 014",
+      "measured_distances": {
+        "NAS": 105.08055925036041,
+        "LPA": 143.29564129113973,
+        "RPA": 116.26848030180709
+      }
+    },
+    {
+      "electrode_id": "EEG 015",
+      "measured_distances": {
+        "NAS": 92.75209438106171,
+        "LPA": 148.29062519303204,
+        "RPA": 93.65502948578838
+      }
+    },
+    {
+      "electrode_id": "EEG 016",
+      "measured_distances": {
+        "NAS": 94.17245737177771,
+        "LPA": 150.90044290217722,
+        "RPA": 68.61972611516832
+      }
+    },
+    {
+      "electrode_id": "EEG 017",
+      "measured_distances": {
+        "NAS": 124.48242229199545,
+        "LPA": 20.00848513329307,
+        "RPA": 162.17085545585476
+      }
+    },
+    {
+      "electrode_id": "EEG 018",
+      "measured_distances": {
+        "NAS": 124.30939107168219,
+        "LPA": 37.58544135952475,
+        "RPA": 167.70333888714657
+      }
+    },
+    {
+      "electrode_id": "EEG 019",
+      "measured_distances": {
+        "NAS": 130.3897903011545,
+        "LPA": 61.88560211924262,
+        "RPA": 171.0815304733419
+      }
+    },
+    {
+      "electrode_id": "EEG 020",
+      "measured_distances": {
+        "NAS": 140.8170950119454,
+        "LPA": 109.08826218050586,
+        "RPA": 162.07742440732451
+      }
+    },
+    {
+      "electrode_id": "EEG 021",
+      "measured_distances": {
+        "NAS": 131.42403902667934,
+        "LPA": 139.19266282549455,
+        "RPA": 130.40022799110025
+      }
+    },
+    {
+      "electrode_id": "EEG 022",
+      "measured_distances": {
+        "NAS": 121.42735569370612,
+        "LPA": 154.55178319444832,
+        "RPA": 85.27894968950008
+      }
+    },
+    {
+      "electrode_id": "EEG 023",
+      "measured_distances": {
+        "NAS": 118.06895878802479,
+        "LPA": 153.65082879240575,
+        "RPA": 53.77728515825307
+      }
+    },
+    {
+      "electrode_id": "EEG 024",
+      "measured_distances": {
+        "NAS": 121.51016384362701,
+        "LPA": 150.54810140863924,
+        "RPA": 23.560499589137066
+      }
+    },
+    {
+      "electrode_id": "EEG 025",
+      "measured_distances": {
+        "NAS": 152.70220781151724,
+        "LPA": 29.425841894224217,
+        "RPA": 167.9870906791642
+      }
+    },
+    {
+      "electrode_id": "EEG 026",
+      "measured_distances": {
+        "NAS": 144.48273470902362,
+        "LPA": 32.985305666348765,
+        "RPA": 163.76755947950207
+      }
+    },
+    {
+      "electrode_id": "EEG 027",
+      "measured_distances": {
+        "NAS": 148.15379419786052,
+        "LPA": 59.80687654278082,
+        "RPA": 169.6123634038604
+      }
+    },
+    {
+      "electrode_id": "EEG 028",
+      "measured_distances": {
+        "NAS": 155.35347378426755,
+        "LPA": 88.5191199681782,
+        "RPA": 172.80089237470276
+      }
+    },
+    {
+      "electrode_id": "EEG 029",
+      "measured_distances": {
+        "NAS": 155.75224467310375,
+        "LPA": 109.22535471133179,
+        "RPA": 165.10361972881714
+      }
+    },
+    {
+      "electrode_id": "EEG 030",
+      "measured_distances": {
+        "NAS": 157.5298099048403,
+        "LPA": 128.97081287476243,
+        "RPA": 151.9129322941335
+      }
+    },
+    {
+      "electrode_id": "EEG 031",
+      "measured_distances": {
+        "NAS": 154.9417765569074,
+        "LPA": 143.40367787122426,
+        "RPA": 135.5002805841002
+      }
+    },
+    {
+      "electrode_id": "EEG 032",
+      "measured_distances": {
+        "NAS": 152.539141444953,
+        "LPA": 152.5011260746591,
+        "RPA": 112.85785404158555
+      }
+    },
+    {
+      "electrode_id": "EEG 033",
+      "measured_distances": {
+        "NAS": 145.97957900698975,
+        "LPA": 156.5837513672718,
+        "RPA": 82.16491097546233
+      }
+    },
+    {
+      "electrode_id": "EEG 034",
+      "measured_distances": {
+        "NAS": 142.7973476100664,
+        "LPA": 154.7041068045827,
+        "RPA": 51.16634902465743
+      }
+    },
+    {
+      "electrode_id": "EEG 035",
+      "measured_distances": {
+        "NAS": 148.2445817795507,
+        "LPA": 153.69232849199932,
+        "RPA": 33.658179158099195
+      }
+    },
+    {
+      "electrode_id": "EEG 036",
+      "measured_distances": {
+        "NAS": 168.5524028954489,
+        "LPA": 45.90760116474831,
+        "RPA": 163.69687749178166
+      }
+    },
+    {
+      "electrode_id": "EEG 037",
+      "measured_distances": {
+        "NAS": 163.7398153919989,
+        "LPA": 48.31550426256112,
+        "RPA": 163.23031266175252
+      }
+    },
+    {
+      "electrode_id": "EEG 038",
+      "measured_distances": {
+        "NAS": 168.494955246769,
+        "LPA": 88.96936474182665,
+        "RPA": 171.506368571619
+      }
+    },
+    {
+      "electrode_id": "EEG 039",
+      "measured_distances": {
+        "NAS": 177.7418341411224,
+        "LPA": 111.76999186233367,
+        "RPA": 167.1932900837557
+      }
+    },
+    {
+      "electrode_id": "EEG 040",
+      "measured_distances": {
+        "NAS": 174.396564682196,
+        "LPA": 144.1616598725256,
+        "RPA": 136.68125223179777
+      }
+    },
+    {
+      "electrode_id": "EEG 041",
+      "measured_distances": {
+        "NAS": 169.89756233302757,
+        "LPA": 152.46535418969307,
+        "RPA": 111.00958586443889
+      }
+    },
+    {
+      "electrode_id": "EEG 042",
+      "measured_distances": {
+        "NAS": 160.6924236254995,
+        "LPA": 152.40122802111387,
+        "RPA": 66.86744570566509
+      }
+    },
+    {
+      "electrode_id": "EEG 043",
+      "measured_distances": {
+        "NAS": 165.65411125930484,
+        "LPA": 150.05993992436692,
+        "RPA": 52.717213921487605
+      }
+    },
+    {
+      "electrode_id": "EEG 044",
+      "measured_distances": {
+        "NAS": 182.68905523730578,
+        "LPA": 71.02421360877248,
+        "RPA": 165.58207623058334
+      }
+    },
+    {
+      "electrode_id": "EEG 045",
+      "measured_distances": {
+        "NAS": 181.5234666345729,
+        "LPA": 81.91455360968646,
+        "RPA": 165.0899087939922
+      }
+    },
+    {
+      "electrode_id": "EEG 046",
+      "measured_distances": {
+        "NAS": 184.46569616722022,
+        "LPA": 98.45021151528844,
+        "RPA": 164.48806491709598
+      }
+    },
+    {
+      "electrode_id": "EEG 047",
+      "measured_distances": {
+        "NAS": 188.06081264579203,
+        "LPA": 112.2670940746611,
+        "RPA": 159.1819170739991
+      }
+    },
+    {
+      "electrode_id": "EEG 048",
+      "measured_distances": {
+        "NAS": 187.04806333872907,
+        "LPA": 126.70753475563812,
+        "RPA": 146.44146594579
+      }
+    },
+    {
+      "electrode_id": "EEG 049",
+      "measured_distances": {
+        "NAS": 188.70416026464363,
+        "LPA": 139.27453408634966,
+        "RPA": 131.75244957302067
+      }
+    },
+    {
+      "electrode_id": "EEG 050",
+      "measured_distances": {
+        "NAS": 183.8844685547191,
+        "LPA": 147.37879029843216,
+        "RPA": 117.99040822751108
+      }
+    },
+    {
+      "electrode_id": "EEG 051",
+      "measured_distances": {
+        "NAS": 182.14762186075535,
+        "LPA": 151.1350783400727,
+        "RPA": 101.91932560440765
+      }
+    },
+    {
+      "electrode_id": "EEG 052",
+      "measured_distances": {
+        "NAS": 176.77701458832018,
+        "LPA": 150.29013299730573,
+        "RPA": 80.66882520739853
+      }
+    },
+    {
+      "electrode_id": "EEG 053",
+      "measured_distances": {
+        "NAS": 186.45412148480554,
+        "LPA": 80.80386547255104,
+        "RPA": 156.04445760112642
+      }
+    },
+    {
+      "electrode_id": "EEG 054",
+      "measured_distances": {
+        "NAS": 194.27229333519014,
+        "LPA": 97.53628293853255,
+        "RPA": 158.70108399124462
+      }
+    },
+    {
+      "electrode_id": "EEG 055",
+      "measured_distances": {
+        "NAS": 193.54442004695193,
+        "LPA": 142.37134830589955,
+        "RPA": 118.87228096208777
+      }
+    },
+    {
+      "electrode_id": "EEG 056",
+      "measured_distances": {
+        "NAS": 192.94869263899918,
+        "LPA": 145.39354792017082,
+        "RPA": 102.33260424421533
+      }
+    },
+    {
+      "electrode_id": "EEG 057",
+      "measured_distances": {
+        "NAS": 197.97622166579848,
+        "LPA": 102.765517711714,
+        "RPA": 151.96221663291274
+      }
+    },
+    {
+      "electrode_id": "EEG 058",
+      "measured_distances": {
+        "NAS": 199.2960649205869,
+        "LPA": 119.74296251902295,
+        "RPA": 135.78574887006727
+      }
+    },
+    {
+      "electrode_id": "EEG 059",
+      "measured_distances": {
+        "NAS": 197.82424307239637,
+        "LPA": 135.2517769167957,
+        "RPA": 119.89153230112382
+      }
+    },
+    {
+      "electrode_id": "EEG 060",
+      "measured_distances": {
+        "NAS": 201.06493011599542,
+        "LPA": 114.8382239168747,
+        "RPA": 132.42160563237277
+      }
+    }
+  ]
+}
