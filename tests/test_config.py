@@ -23,6 +23,8 @@ def sample_coordsystem_dict() -> dict[str, Any]:
             "RPA": {"Head": [75.3, 0.0, 0.0], "MRI": [77.285621, 12.053672, -30.248822]},
         },
         "ElectrodeCount": 60,
+        "ElectrodeOffset": 2.5,
+        "ElectrodeReference": "electrode_capsule_center",
         "Source": "MNE sample dataset",
     }
 
@@ -76,9 +78,13 @@ class TestLoadConfigFile:
         data = load_config_file(config_file)
 
         assert data["n_electrodes"] == 60
+        assert data["ese_offset_mm"] == 2.5
+        assert data["ese_reference"] == "electrode_capsule_center"
         coordsystem = data["coordsystem"]
         assert isinstance(coordsystem, Coordsystem)
         assert coordsystem.coordinate_system == "RAS"
+        assert coordsystem.electrode_offset_mm == 2.5
+        assert coordsystem.electrode_reference == "electrode_capsule_center"
         assert coordsystem.fiducials_coordinates["NASION"].mri == (
             3.379094,
             94.659427,
@@ -149,6 +155,39 @@ class TestBuildConfig:
         assert config.n_electrodes == 60
         assert config.coordsystem is not None
         assert config.coordsystem.electrode_count == 60
+
+    def test_coordsystem_file_maps_ese_params(self, tmp_path) -> None:
+        config_file = tmp_path / "coordsystem.json"
+        config_file.write_text(json.dumps(sample_coordsystem_dict()))
+
+        config = build_config(VirdaSettings(), config_files=[config_file])
+
+        assert config.ese_offset_mm == 2.5
+        assert config.ese_reference == "electrode_capsule_center"
+
+    def test_coordsystem_file_ese_params_without_offset(self, tmp_path) -> None:
+        data = sample_coordsystem_dict()
+        del data["ElectrodeOffset"]
+        config_file = tmp_path / "coordsystem.json"
+        config_file.write_text(json.dumps(data))
+
+        config = build_config(VirdaSettings(), config_files=[config_file])
+
+        assert config.ese_offset_mm is None
+        assert config.ese_reference == "electrode_capsule_center"
+
+    def test_cli_ese_params_beat_coordsystem(self, tmp_path) -> None:
+        config_file = tmp_path / "coordsystem.json"
+        config_file.write_text(json.dumps(sample_coordsystem_dict()))
+
+        config = build_config(
+            VirdaSettings(),
+            config_files=[config_file],
+            overrides={"ese_offset_mm": 5.0, "ese_reference": "electrode_body_center"},
+        )
+
+        assert config.ese_offset_mm == 5.0
+        assert config.ese_reference == "electrode_body_center"
 
     def test_cli_n_electrodes_beats_coordsystem(self, tmp_path) -> None:
         config_file = tmp_path / "coordsystem.json"
