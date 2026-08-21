@@ -34,7 +34,9 @@ def _reweighted(fiducials: Fiducials, weights: dict[str, float]) -> Fiducials:
 def _localize(electrodes: Electrodes, threshold_mm: float = 10.0) -> Electrodes:
     ese = make_ese()
     fiducials = make_fiducials()
-    localizer = BruteForceLocalizer(Stage3Config(residual_threshold_mm=threshold_mm))
+    localizer = BruteForceLocalizer(
+        Stage3Config(residual_threshold_mm=threshold_mm, calibrate_ese_offset=False)
+    )
     return localizer.run(build_context(ese=ese, fiducials=fiducials, electrodes=electrodes))
 
 
@@ -68,7 +70,8 @@ class TestBruteForceLocalizer:
         electrodes = Electrodes(items=[Electrode(electrode_id="E0", measured_distances=distances)])
 
         weighted = _reweighted(fiducials, weights={"NAS": 1e9, "LPA": 0.01, "RPA": 1.0})
-        weighted_result = BruteForceLocalizer(Stage3Config()).run(
+        config = Stage3Config(calibrate_ese_offset=False)
+        weighted_result = BruteForceLocalizer(config).run(
             build_context(ese=ese, fiducials=weighted, electrodes=electrodes)
         )
         unweighted_result = _localize(electrodes)
@@ -193,10 +196,12 @@ class TestOffsetCalibration:
             assert np.linalg.norm(electrode.scalp_coords - points[i]) < 1e-6
             assert electrode.flagged is False
 
-    def test_disabled_by_default(self):
+    def test_disabled_when_flag_off(self):
         ese = make_ese()
         electrodes, _ = self._shifted_electrodes(ese, [0], shift_mm=-2.0)
-        result = _localize(electrodes)
+        result = BruteForceLocalizer(Stage3Config(calibrate_ese_offset=False)).run(
+            build_context(ese=ese, fiducials=make_fiducials(), electrodes=electrodes)
+        )
 
         assert result.calibrated_offset_shift_mm is None
         assert result.items[0].is_localized

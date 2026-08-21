@@ -72,6 +72,39 @@ def _load_electrode_positions() -> dict[str, np.ndarray]:
     return positions
 
 
+def _per_electrode_errors(
+    electrodes: object,
+    electrode_positions: dict[str, np.ndarray],
+) -> dict[str, float]:
+    """Map every localized electrode ID to its error vs the true position.
+
+    This is the per-pair ground truth check: one entry per electrode ID,
+    not a cloud-level aggregate.
+    """
+    from virda.models.electrode import Electrodes
+
+    assert isinstance(electrodes, Electrodes)
+    errors: dict[str, float] = {}
+    for electrode in electrodes.items:
+        if not electrode.is_localized:
+            continue
+        eid = electrode.electrode_id
+        assert eid is not None
+        true_pos = _cras_to_scanner_ras(electrode_positions[eid])
+        errors[eid] = float(np.linalg.norm(electrode.scalp_coords - true_pos))
+    return errors
+
+
+def _print_per_electrode_trace(errors: dict[str, float], limit_mm: float) -> None:
+    """Print a per-electrode ID trace table sorted by error."""
+    rows = sorted(errors.items(), key=lambda kv: kv[1], reverse=True)
+    lines = [f"  {'electrode':<12}{'error':>10}  status"]
+    for eid, err in rows:
+        status = "OK" if err <= limit_mm else "FAIL"
+        lines.append(f"  {eid:<12}{err:>8.2f} mm  {status}")
+    print("\n" + "\n".join(lines))
+
+
 def _generate_measurements_json(
     tmp_path: Path,
     electrode_positions: dict[str, np.ndarray],
@@ -177,6 +210,14 @@ def test_stage3_full_pipeline_with_mne_sample(tmp_path: Path) -> None:
     assert (stage3_dir / "electrode_coords.csv").exists()
     assert (stage3_dir / "localization_summary.json").exists()
 
+    # Per-electrode pair checks: every single ID must localize accurately.
+    per_pair = _per_electrode_errors(electrodes, electrode_positions)
+    assert len(per_pair) == 60
+    _print_per_electrode_trace(per_pair, limit_mm=10.0)
+    worst = sorted(per_pair.items(), key=lambda kv: kv[1], reverse=True)[:5]
+    print("  Worst pairs : " + ", ".join(f"{eid}={err:.2f}mm" for eid, err in worst))
+    assert all(err < 10.0 for err in per_pair.values())
+
     assert median_err < 4.0
     assert mean_err < 6.0
     assert pct_5mm >= 50.0
@@ -240,15 +281,17 @@ def test_stage3_offset_calibration_with_scalp_level_measurements(tmp_path: Path)
 
     shift = electrodes.calibrated_offset_shift_mm
     assert shift is not None
-    assert -20.0 <= shift <= -15.0
+    assert -21.0 <= shift <= -15.0
 
-    error_values: list[float] = []
-    for e in localized:
-        eid = e.electrode_id
-        assert eid is not None
-        true_pos = _cras_to_scanner_ras(electrode_positions[eid])
-        error_values.append(float(np.linalg.norm(e.scalp_coords - true_pos)))
-    errors = np.array(error_values)
+    # Per-electrode pair checks: every single ID must localize accurately.
+    per_pair = _per_electrode_errors(electrodes, electrode_positions)
+    assert len(per_pair) == 60
+    _print_per_electrode_trace(per_pair, limit_mm=10.0)
+    worst = sorted(per_pair.items(), key=lambda kv: kv[1], reverse=True)[:5]
+    print("  Worst pairs : " + ", ".join(f"{eid}={err:.2f}mm" for eid, err in worst))
+    assert all(err < 10.0 for err in per_pair.values())
+
+    errors = np.array(list(per_pair.values()))
     median_err = float(np.median(errors))
     mean_err = float(errors.mean())
     pct_10mm = float((errors <= 10.0).sum() / len(errors) * 100)
@@ -267,3 +310,54 @@ def test_stage3_offset_calibration_with_scalp_level_measurements(tmp_path: Path)
     assert median_err < 6.0
     assert mean_err < 9.0
     assert pct_10mm >= 85.0
+
+
+@pytest.mark.integration
+def test_stage3_committed_measurements_per_electrode_trace(tmp_path: Path) -> None:
+    """Regression test for the real workflow: committed measurements.json.
+
+    Runs Stage 3 on the committed ``test-data/mne-sample/measurements.json``
+    with default settings and verifies EVERY electrode pair individually:
+    each electrode ID must land within a few mm of its true position.
+    This guards against cloud-level metrics hiding individual bad pairs.
+    """
+    from virda.config import VirdaSettings, build_config
+    from virda.main import run, run_stage3
+    from virda.models.ese_mesh import ESEMesh
+
+    electrode_positions = _load_electrode_positions()
+
+    config = build_config(
+        settings=VirdaSettings(),
+        config_files=[MNE_DIR / "coordsystem.json"],
+        overrides={
+            "nifti_path": str(MNE_DIR / "head.nii.gz"),
+            "project_dir": str(tmp_path),
+        },
+    )
+
+    stage1_result, ese_mesh, _ = run(config)
+    assert isinstance(ese_mesh, ESEMesh)
+
+    electrodes = run_stage3(config, stage1_result, ese_mesh, MNE_DIR / "measurements.json")
+
+    assert electrodes is not None
+    localized = [e for e in electrodes.items if e.is_localized]
+    assert len(localized) == 60
+
+    per_pair = _per_electrode_errors(electrodes, electrode_positions)
+    assert len(per_pair) == 60
+    _print_per_electrode_trace(per_pair, limit_mm=10.0)
+
+    errors = np.array(list(per_pair.values()))
+    median_err = float(np.median(errors))
+    worst = sorted(per_pair.items(), key=lambda kv: kv[1], reverse=True)[:5]
+    print(
+        f"\n  Offset shift: {electrodes.calibrated_offset_shift_mm:+.2f} mm\n"
+        f"  Median error: {median_err:.2f} mm\n"
+        f"  Worst pairs : " + ", ".join(f"{eid}={err:.2f}mm" for eid, err in worst)
+    )
+
+    # Every single pair must match; no electrode may fly away.
+    assert all(err < 10.0 for err in per_pair.values())
+    assert median_err < 4.0

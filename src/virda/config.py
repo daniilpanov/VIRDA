@@ -53,7 +53,7 @@ class VirdaSettings(BaseSettings):
     min_neighbors: int = Field(default=5, ge=1)
 
     residual_threshold_mm: float = Field(default=10.0, gt=0)
-    calibrate_ese_offset: bool = False
+    calibrate_ese_offset: bool = True
 
     model_config = SettingsConfigDict(env_file=".env")
 

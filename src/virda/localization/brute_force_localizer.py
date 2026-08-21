@@ -12,10 +12,16 @@ from virda.models.stage3_config import Stage3Config
 
 logger = logging.getLogger(__name__)
 
-_OFFSET_SEARCH_MIN_MM = -20.0
-_OFFSET_SEARCH_MAX_MM = 20.0
+_OFFSET_SEARCH_MIN_MM = -30.0
+_OFFSET_SEARCH_MAX_MM = 30.0
 _OFFSET_SEARCH_STEP_MM = 1.0
+_OFFSET_REFINE_STEP_MM = 0.25
+_OFFSET_REFINE_SPAN_MM = 1.0
 _OFFSET_SHIFT_WARN_MM = 2.0
+
+_REFINE_MAX_ITERATIONS = 16
+_REFINE_TOLERANCE_MM = 1e-9
+_REFINE_MAX_RESIDUAL_MM = 2.0
 
 
 def _mirror_plane_mask(
@@ -75,6 +81,14 @@ class BruteForceLocalizer(ElectrodeLocalizer):
     along the scalp normals is estimated before localization so that systematic
     reference mismatches (e.g. measurements taken on the scalp while the ESE
     models electrode body centers) do not degrade every electrode.
+
+    After the discrete argmin, the electrode position is refined by Gauss-Newton
+    least squares on the sphere equations and snapped back to the nearest
+    allowed vertex.  The discrete search alone suffers from tangential slide:
+    on a coarsely tessellated surface a distant vertex can fit the measured
+    distances better than any vertex near the true intersection point.  The
+    continuous refinement removes that bias while keeping the argmin result as
+    a fallback whenever refinement does not improve the residual.
     """
 
     def __init__(self, config: Stage3Config) -> None:
@@ -103,7 +117,15 @@ class BruteForceLocalizer(ElectrodeLocalizer):
         localized: list[Electrode] = []
         for electrode in electrodes.items:
             localized.append(
-                self._localize_one(electrode, fiducials, ese, distances_to_fiducials, mirror_mask)
+                self._localize_one(
+                    electrode,
+                    fiducials,
+                    ese,
+                    fiducial_coords,
+                    search_vertices,
+                    distances_to_fiducials,
+                    mirror_mask,
+                )
             )
 
         localized_count = sum(1 for electrode in localized if electrode.is_localized)
@@ -134,6 +156,8 @@ class BruteForceLocalizer(ElectrodeLocalizer):
         electrode: Electrode,
         fiducials: Fiducials,
         ese: ESEMesh,
+        fiducial_coords: np.ndarray,
+        search_vertices: np.ndarray,
         distances_to_fiducials: np.ndarray,
         mirror_mask: np.ndarray,
     ) -> Electrode:
@@ -164,6 +188,17 @@ class BruteForceLocalizer(ElectrodeLocalizer):
         if len(present) >= 3:
             total_error[mirror_mask] = np.inf
         best_index = int(np.argmin(total_error))
+        best_residual = float(np.sqrt(total_error[best_index]))
+        if len(present) >= 3:
+            best_index = self._refine_best_index(
+                fiducial_coords[present_indices],
+                measured,
+                weights,
+                search_vertices,
+                mirror_mask,
+                best_index,
+                best_residual,
+            )
         residual_error = float(np.sqrt(total_error[best_index]))
 
         return replace(
@@ -183,7 +218,22 @@ class BruteForceLocalizer(ElectrodeLocalizer):
         fiducials: Fiducials,
         electrodes: Electrodes,
     ) -> float:
-        """Grid-search a global ESE offset shift minimizing median residual."""
+        """Grid-search a global ESE offset shift minimizing median residual.
+
+        A coarse 1 mm sweep over the full range is followed by a fine
+        refinement (``_OFFSET_REFINE_STEP_MM``) around the coarse optimum.
+        """
+
+        def evaluate(shift: float) -> float:
+            cloud = vertices + shift * normals
+            distances_to_fiducials = cdist(cloud, fiducial_coords)
+            mirror_mask = _mirror_plane_mask(cloud, fiducial_coords, normals)
+            residuals = [
+                self._best_residual(electrode, fiducials, distances_to_fiducials, mirror_mask)
+                for electrode in localizable
+            ]
+            return float(np.median(residuals))
+
         localizable = [
             electrode
             for electrode in electrodes.items
@@ -195,22 +245,24 @@ class BruteForceLocalizer(ElectrodeLocalizer):
             logger.warning("Offset calibration skipped: no electrodes with known fiducials")
             return 0.0
 
-        shifts = np.arange(
+        best_shift = 0.0
+        best_score = float(np.inf)
+        for shift in np.arange(
             _OFFSET_SEARCH_MIN_MM,
             _OFFSET_SEARCH_MAX_MM + _OFFSET_SEARCH_STEP_MM / 2,
             _OFFSET_SEARCH_STEP_MM,
-        )
-        best_shift = 0.0
-        best_score = float(np.inf)
-        for shift in shifts:
-            cloud = vertices + float(shift) * normals
-            distances_to_fiducials = cdist(cloud, fiducial_coords)
-            mirror_mask = _mirror_plane_mask(cloud, fiducial_coords, normals)
-            residuals = [
-                self._best_residual(electrode, fiducials, distances_to_fiducials, mirror_mask)
-                for electrode in localizable
-            ]
-            score = float(np.median(residuals))
+        ):
+            score = evaluate(float(shift))
+            if score < best_score:
+                best_score = score
+                best_shift = float(shift)
+
+        for shift in np.arange(
+            best_shift - _OFFSET_REFINE_SPAN_MM,
+            best_shift + _OFFSET_REFINE_SPAN_MM + _OFFSET_REFINE_STEP_MM / 2,
+            _OFFSET_REFINE_STEP_MM,
+        ):
+            score = evaluate(float(shift))
             if score < best_score:
                 best_score = score
                 best_shift = float(shift)
@@ -228,6 +280,74 @@ class BruteForceLocalizer(ElectrodeLocalizer):
                 best_shift,
             )
         return best_shift
+
+    @staticmethod
+    def _refine_best_index(
+        fiducial_coords: np.ndarray,
+        measured: np.ndarray,
+        weights: np.ndarray,
+        cloud: np.ndarray,
+        mirror_mask: np.ndarray,
+        best_index: int,
+        best_residual: float,
+    ) -> int:
+        """Refine the argmin vertex via continuous trilateration and re-snap.
+
+        The Gauss-Newton solution is the actual sphere intersection, so the
+        nearest allowed vertex to it approximates the true electrode position
+        even when the discrete distance-profile fit favored a distant vertex
+        (tangential slide on a coarsely tessellated surface).
+
+        Refinement applies only when all involved fiducials share the same
+        weight: unequal weights declare some measurements less trustworthy,
+        a signal that pure sphere intersection must not override the
+        discrete weighted argmin (weighted-fiducial dominance).  On top of
+        that, the continuous solution is trusted only when it explains the
+        measurements almost perfectly (unweighted residual below
+        ``_REFINE_MAX_RESIDUAL_MM``) and strictly better than the argmin
+        vertex.  A near-zero residual proves the measured distances are
+        mutually consistent and the spheres genuinely intersect near this
+        vertex; otherwise the discrete argmin result is kept.
+        """
+        if not np.all(weights == weights[0]):
+            return best_index
+        refined = BruteForceLocalizer._gauss_newton(
+            fiducial_coords, measured, weights, cloud[best_index]
+        )
+        if refined is None:
+            return best_index
+        predicted = np.linalg.norm(fiducial_coords - refined, axis=1)
+        refined_residual = float(np.sqrt(((predicted - measured) ** 2).sum()))
+        if refined_residual >= best_residual or refined_residual > _REFINE_MAX_RESIDUAL_MM:
+            return best_index
+        allowed = np.flatnonzero(~mirror_mask)
+        squared_distance = ((cloud[allowed] - refined) ** 2).sum(axis=1)
+        return int(allowed[int(np.argmin(squared_distance))])
+
+    @staticmethod
+    def _gauss_newton(
+        fiducial_coords: np.ndarray,
+        measured: np.ndarray,
+        weights: np.ndarray,
+        start: np.ndarray,
+    ) -> np.ndarray | None:
+        """Gauss-Newton least squares for weighted sphere intersection."""
+        x = start.astype(float).copy()
+        sqrt_weights = np.sqrt(weights)
+        for _ in range(_REFINE_MAX_ITERATIONS):
+            diff = x[None, :] - fiducial_coords
+            norms = np.linalg.norm(diff, axis=1)
+            if not np.all(norms > 1e-9):
+                return None
+            residuals = (norms - measured) * sqrt_weights
+            jacobian = diff / norms[:, None] * sqrt_weights[:, None]
+            delta = np.linalg.lstsq(jacobian, -residuals, rcond=None)[0]
+            x = x + delta
+            if float(np.linalg.norm(delta)) < _REFINE_TOLERANCE_MM:
+                break
+        if not np.all(np.isfinite(x)):
+            return None
+        return x
 
     @staticmethod
     def _best_residual(

@@ -7,6 +7,7 @@ class TestStage3Config:
     def test_defaults(self) -> None:
         config = Stage3Config()
         assert config.residual_threshold_mm == 10.0
+        assert config.calibrate_ese_offset is True
 
     @pytest.mark.parametrize("threshold", [0.0, -1.0])
     def test_rejects_non_positive_threshold(self, threshold: float) -> None:
