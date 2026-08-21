@@ -19,8 +19,36 @@ Usage
     virda-gui --nifti <scan.nii.gz> --mesh <final_mesh.ply> \\
         --fiducials <fiducials/fiducials.json>
     virda-gui --mesh <ese_mesh.ply> --normals <normals.npy>
+    virda-gui --nifti <scan.nii.gz> --mesh <final_mesh.ply> \\
+        --ese-mesh <stage2/ese_mesh.ply> --normals <stage2/>
+    virda-gui --nifti <scan.nii.gz> --mesh <final_mesh.ply> \\
+        --ese-mesh <stage2/ese_mesh.ply> --fiducials <fiducials.json> \\
+        --electrodes <localization/electrodes.json>
+    virda-gui --nifti <scan.nii.gz> --mesh <final_mesh.ply> \\
+        --electrodes <electrodes.tsv>
+    virda-gui --nifti <scan.nii.gz> --mesh <final_mesh.ply> \\
+        --electrodes <electrodes_scalp.json> --electrodes <electrodes.tsv>
 
-At least one of ``--nifti`` or ``--mesh`` is required.
+At least one of ``--nifti`` or ``--mesh`` is required. ``--normals`` points to
+the ``stage2/`` output directory (``ese_vertices.npy`` + ``normals.npy``);
+``--normals-scale`` sets the arrow length in scene units (default 5) and
+``--normals-step`` draws only every N-th normal. ``--electrodes`` accepts either
+the Stage 3 ``electrodes.json`` (localized electrodes with fiducial links) or a
+tabular file with ``name``, ``x``, ``y``, ``z`` columns, optionally followed by
+a color for the whole group (e.g. ``--electrodes electrodes.tsv yellow``).
+May be repeated to overlay multiple electrode groups; without an explicit
+color each group gets the next palette entry. All electrodes of a group share
+one color -- flagged ones are drawn larger and in a deeper shade of it. Each
+group has
+a visibility toggle and per-electrode ID labels (taken from the
+``electrode_id``/``name`` field, with generated ``E001``-style fallbacks when
+absent); unchecking a group (or "Show fiducials") hides its labels too, and a
+global "Show labels" checkbox hides every label at once.
+Tabular files usually store FreeSurfer cRAS coordinates. When a scalp mesh is
+supplied the correct frame is detected automatically per file (the frame whose
+points sit closer to the mesh wins) and reported on stdout; pass
+``--electrodes-cras`` (requires ``--nifti``) to force the conversion instead.
+Stage 3 JSON output is always treated as scanner RAS and never converted.
 
 If the affine is axis-aligned with positive spacing the scene is shown in world
 millimeters; otherwise the mesh is transformed into voxel index space so that
@@ -30,12 +58,16 @@ in world coordinates and are transformed into the scene frame accordingly.
 """
 
 import argparse
+import colorsys
+import json
+from typing import Any
 
 import nibabel as nib
 import numpy as np
 import pyvista as pv
 import trimesh
 from nibabel import aff2axcodes
+from scipy.spatial import cKDTree
 
 from virda_gui.scene import (
     compute_normal_lines,
@@ -49,6 +81,7 @@ from virda_gui.scene import (
 )
 
 _BOUNDS = tuple[float, float, float, float, float, float]
+_ELECTRODE_COLORS = ["yellow", "lime", "magenta", "cyan", "orange", "white"]
 
 
 def _build_scene(
@@ -86,6 +119,95 @@ def _load_mesh_poly(mesh_path: str) -> pv.PolyData:
     return pv.PolyData(vertices, face_array.ravel())
 
 
+def _cras_to_scanner_ras_offset(affine: np.ndarray, shape: tuple[int, ...]) -> np.ndarray:
+    """FreeSurfer cRAS -> scanner RAS offset for a NIfTI volume.
+
+    FreeSurfer cRAS coordinates are centered at the volume midpoint while
+    scanner RAS is the affine world frame, so the conversion offset is the
+    affine applied to the center voxel.
+    """
+    center_voxel = (np.asarray(shape[:3], dtype=np.float64) - 1.0) / 2.0
+    return np.array((affine @ np.append(center_voxel, 1.0))[:3], dtype=np.float64)
+
+
+_CRAS_DETECT_RATIO = 0.8
+
+
+def _detect_cras_conversion(
+    points: np.ndarray,
+    mesh_points: np.ndarray,
+    affine: np.ndarray | None,
+    mm_scene: bool,
+    cras_offset: np.ndarray,
+) -> tuple[bool, float, float]:
+    """Decide whether tabular electrode points are FreeSurfer cRAS coordinates.
+
+    Electrodes sit on the scalp, so the correct frame puts them close to the
+    scalp mesh while the wrong frame displaces the whole group by ``|c_ras|``.
+    Both hypotheses -- raw scanner RAS and cRAS shifted by ``cras_offset`` --
+    are moved into the scene frame (voxel indices when ``mm_scene`` is False)
+    and scored by the median distance from each electrode to its nearest mesh
+    vertex.  Conversion wins only when it improves the fit by
+    ``_CRAS_DETECT_RATIO``; near-ties keep the points untouched.
+
+    Returns ``(needs_conversion, raw_distance_mm, shifted_distance_mm)``.
+    """
+    scene_transform = None if (affine is None or mm_scene) else np.linalg.inv(affine)
+
+    def _median_distance(pts: np.ndarray) -> float:
+        scene_pts = transform_points(pts, scene_transform) if scene_transform is not None else pts
+        distances, _ = cKDTree(mesh_points).query(scene_pts)
+        return float(np.median(distances))
+
+    d_raw = _median_distance(points)
+    d_shift = _median_distance(points + cras_offset)
+    return d_shift < _CRAS_DETECT_RATIO * d_raw, d_raw, d_shift
+
+
+def _cras_decision_message(label: str, converted: bool, d_raw: float, d_shift: float) -> str:
+    """One-line QC report of the automatic cRAS frame detection."""
+    verdict = "cRAS detected" if converted else "scanner RAS assumed"
+    action = "converted" if converted else "unchanged"
+    return f"{label}: {verdict} (median dist {d_raw:.1f} -> {d_shift:.1f} mm), {action}"
+
+
+def _parse_electrode_specs(specs: list[list[str]]) -> list[tuple[str, str | None]]:
+    """Split ``--electrodes FILE [COLOR]`` occurrences into (path, color) pairs."""
+    pairs: list[tuple[str, str | None]] = []
+    for spec in specs:
+        if len(spec) == 1:
+            pairs.append((spec[0], None))
+        elif len(spec) == 2:
+            pairs.append((spec[0], spec[1]))
+        else:
+            raise ValueError(
+                f"--electrodes expects FILE [COLOR], got {len(spec)} values: {' '.join(spec)}"
+            )
+    return pairs
+
+
+def _resolve_group_color(color: str | None, index: int) -> str:
+    """Return the explicit group color or the default palette entry.
+
+    Raises ``ValueError`` when an explicit color is not understood by VTK.
+    """
+    if color is not None:
+        try:
+            pv.Color(color)
+        except ValueError:
+            raise ValueError(f"invalid electrode color {color!r}") from None
+        return color
+    return _ELECTRODE_COLORS[index % len(_ELECTRODE_COLORS)]
+
+
+def _intensify_color(color: str) -> str:
+    """Return a deeper, more saturated shade of *color* for flagged electrodes."""
+    r, g, b = pv.Color(color).float_rgb
+    h, lightness, sat = colorsys.rgb_to_hls(r, g, b)
+    darker = colorsys.hls_to_rgb(h, min(0.45, lightness * 0.7), min(1.0, sat * 1.6))
+    return pv.Color(darker).hex_rgb
+
+
 def _create_normal_glyphs(
     points: np.ndarray,
     normals: np.ndarray,
@@ -111,6 +233,138 @@ def _create_normal_glyphs(
     line_cells[:, 2] = np.arange(1, n * 2, 2)
 
     return pv.PolyData(lines, lines=line_cells.ravel())
+
+
+def _load_electrodes(
+    path: str,
+    cras_offset: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[dict[str, float]], list[str]]:
+    """Load electrodes from a Stage 3 JSON or a tabular CSV/TSV file.
+
+    Dispatches to ``_load_electrodes_from_json`` for ``.json`` files and to
+    ``_load_electrodes_from_csv`` for everything else (``.tsv``, ``.csv``,
+    ``.txt``).  ``cras_offset`` applies only to tabular files: Stage 3 JSON
+    output is already in scanner RAS, while TSV/CSV electrode tables may
+    store FreeSurfer cRAS coordinates that need converting first.  Returns
+    per-electrode display names (the ``electrode_id``/``name`` field, or a
+    generated ``E001``-style fallback).
+    """
+    if path.endswith(".json"):
+        return _load_electrodes_from_json(path)
+    return _load_electrodes_from_csv(path, cras_offset=cras_offset)
+
+
+def _load_electrodes_from_json(
+    path: str,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[dict[str, float]], list[str]]:
+    """Read ``electrodes.json`` from the Stage 3 output.
+
+    Returns scalp points, residuals, flags, measured distances and display
+    names of the localized electrodes (used to draw fiducial links and ID
+    labels). Non-localized electrodes are skipped.
+    """
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+    points: list[np.ndarray] = []
+    residuals: list[float] = []
+    flags: list[bool] = []
+    measured: list[dict[str, float]] = []
+    names: list[str] = []
+    for index, item in enumerate(data):
+        coords = item.get("coords") or item.get("scalp_coords")
+        if coords is None:
+            continue
+        points.append(np.asarray(coords, dtype=np.float64))
+        residuals.append(float(item.get("residual_error") or 0.0))
+        flags.append(bool(item.get("flagged", False)))
+        measured.append(
+            {
+                str(fiducial_id): float(distance)
+                for fiducial_id, distance in item.get("measured_distances", {}).items()
+            }
+        )
+        names.append(str(item.get("electrode_id") or f"E{index + 1:03d}"))
+    if not points:
+        return np.empty((0, 3)), np.empty(0), np.empty(0), [], []
+    return (
+        np.asarray(points),
+        np.asarray(residuals),
+        np.asarray(flags, dtype=bool),
+        measured,
+        names,
+    )
+
+
+def _load_electrodes_from_csv(
+    path: str,
+    cras_offset: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[dict[str, float]], list[str]]:
+    """Read electrodes from a TSV/CSV with columns: name, x, y, z.
+
+    Returns positions with zero residuals, no flags and no fiducial links.
+    Column names are matched case-insensitively.  The delimiter is detected
+    automatically by :class:`csv.Sniffer`.  When ``cras_offset`` is given the
+    positions are treated as FreeSurfer cRAS and shifted into scanner RAS.
+    """
+    import csv
+
+    with open(path, encoding="utf-8") as fh:
+        sample = fh.read(2048)
+        dialect = csv.Sniffer().sniff(sample)
+        fh.seek(0)
+        reader = csv.DictReader(fh, dialect=dialect)
+
+        if not reader.fieldnames:
+            raise ValueError(f"Electrodes file is empty or has no header: {path}")
+
+        col_map = {col.lower().strip(): col for col in reader.fieldnames}
+
+        for required in ("x", "y", "z"):
+            if required not in col_map:
+                raise ValueError(
+                    f"Electrodes file missing required column '{required}', "
+                    f"found: {list(reader.fieldnames)}"
+                )
+
+        name_col = col_map.get("name")
+        points: list[np.ndarray] = []
+        names: list[str] = []
+        for index, row in enumerate(reader):
+            x = float(row[col_map["x"]])
+            y = float(row[col_map["y"]])
+            z = float(row[col_map["z"]])
+            points.append(np.array([x, y, z]))
+            raw_name = row.get(name_col) if name_col is not None else None
+            names.append(str(raw_name).strip() if raw_name else f"E{index + 1:03d}")
+
+    if not points:
+        return np.empty((0, 3)), np.empty(0), np.empty(0, dtype=bool), [], []
+    positions = np.asarray(points)
+    if cras_offset is not None:
+        positions = positions + cras_offset
+    return (
+        positions,
+        np.zeros(len(points)),
+        np.zeros(len(points), dtype=bool),
+        [{} for _ in points],
+        names,
+    )
+
+
+def _build_electrode_links(
+    points: np.ndarray,
+    measured: list[dict[str, float]],
+    fiducial_id_to_point: dict[str, np.ndarray],
+) -> np.ndarray:
+    """Return (N, 2, 3) line segments from each electrode to its measured fiducials."""
+    pairs: list[np.ndarray] = []
+    for point, distances in zip(points, measured, strict=True):
+        for fiducial_id in distances:
+            if fiducial_id in fiducial_id_to_point:
+                pairs.append(np.vstack([point, fiducial_id_to_point[fiducial_id]]))
+    if not pairs:
+        return np.empty((0, 2, 3))
+    return np.asarray(pairs)
 
 
 def _scene_bounds_to_world(bounds: _BOUNDS, transform: np.ndarray) -> _BOUNDS:
@@ -249,16 +503,45 @@ def main() -> None:
         default=500,
         help="Show one normal per N vertices (default: 500).",
     )
+    parser.add_argument(
+        "--electrodes",
+        action="append",
+        nargs="*",
+        default=[],
+        metavar="FILE [COLOR]",
+        help=(
+            "Electrodes file: Stage 3 JSON (.json) "
+            "or tabular with name/x/y/z columns (.tsv/.csv), "
+            "optionally followed by a color for the whole group, e.g. "
+            "--electrodes electrodes.tsv yellow. May be repeated to overlay "
+            "multiple groups (without a color each group gets the next "
+            "palette entry)."
+        ),
+    )
+    parser.add_argument(
+        "--electrodes-cras",
+        action="store_true",
+        help=(
+            "Force cRAS -> scanner RAS conversion of tabular electrode files "
+            "(.tsv/.csv) using the --nifti affine. Without the flag the frame "
+            "is detected automatically when a --mesh is supplied (the frame "
+            "whose points sit closer to the mesh wins). Stage 3 JSON output "
+            "is always already in scanner RAS."
+        ),
+    )
     args = parser.parse_args()
 
     if not args.nifti and not args.mesh:
         parser.error("at least one of --nifti or --mesh is required")
+    if args.electrodes_cras and not args.nifti:
+        parser.error("--electrodes-cras requires --nifti")
 
     data = None
     affine = None
     spacing = None
     orientation = None
     hi_clim = None
+    cras_offset: np.ndarray | None = None
     if args.nifti:
         nifti_img = nib.load(args.nifti)
         data = nifti_img.get_fdata(dtype=np.float32)
@@ -266,6 +549,7 @@ def main() -> None:
             data = data[..., 0]
         affine = nifti_img.affine
         orientation = aff2axcodes(affine)
+        cras_offset = _cras_to_scanner_ras_offset(affine, tuple(int(d) for d in data.shape))
         if args.downsample > 1:
             data, affine = downsample(data, affine, args.downsample)
         spacing = tuple(float(zoom) for zoom in np.linalg.norm(affine[:3, :3], axis=0))
@@ -311,9 +595,11 @@ def main() -> None:
             fiducial_labels,
             font_size=12,
             text_color="white",
-            background_color="black",
             show_points=False,
-            shape=None,
+            shape="rounded_rect",
+            shape_color="black",
+            shape_opacity=0.65,
+            always_visible=True,
         )
 
     normals_actor = None
@@ -326,6 +612,102 @@ def main() -> None:
             np.asarray(scene_mesh.points), scene_normals, args.normals_scale, args.normals_density
         )
         normals_actor = plotter.add_mesh(normals_poly, color="cyan", opacity=0.8, line_width=2)
+
+    fiducial_id_to_point: dict[str, np.ndarray] = {}
+    if fiducial_points is not None:
+        scene_fiducials = fiducial_points
+        if not mm_scene:
+            scene_fiducials = transform_points(fiducial_points, np.linalg.inv(affine))
+        for label, point in zip(fiducial_labels, scene_fiducials, strict=True):
+            fiducial_id_to_point[label.split(" (")[0]] = point
+
+    try:
+        electrode_specs = _parse_electrode_specs(args.electrodes)
+    except ValueError as exc:
+        parser.error(str(exc))
+
+    electrode_groups: list[dict] = []
+    for gi, (epath, spec_color) in enumerate(electrode_specs):
+        points, _, flags, measured, names = _load_electrodes(epath)
+        label = epath.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+        if not epath.endswith(".json") and cras_offset is not None and len(points) > 0:
+            if args.electrodes_cras:
+                points = points + cras_offset
+                print(f"{label}: cRAS conversion forced by --electrodes-cras")
+            elif scene_mesh is not None:
+                converted, d_raw, d_shift = _detect_cras_conversion(
+                    points, scene_mesh.points, affine, mm_scene, cras_offset
+                )
+                if converted:
+                    points = points + cras_offset
+                print(_cras_decision_message(label, converted, d_raw, d_shift))
+        if len(points) > 0 and not mm_scene:
+            points = transform_points(points, np.linalg.inv(affine))
+        electrode_groups.append(
+            {
+                "points": points,
+                "flags": flags,
+                "measured": measured,
+                "names": names,
+                "label": label,
+                "color": _resolve_group_color(spec_color, gi),
+            }
+        )
+
+    electrode_actors_per_group: list[list] = []
+    flagged_actors_per_group: list[list] = []
+    link_actors_per_group: list[list] = []
+    label_actors_per_group: list[list[Any]] = []
+    for group in electrode_groups:
+        pts = group["points"]
+        flg = group["flags"]
+        meas = group["measured"]
+        color = group["color"]
+        e_actors: list = []
+        f_actors: list = []
+        l_actors: list = []
+        n_actors: list[Any] = []
+        if pts is not None and len(pts) > 0:
+            healthy = ~flg
+            if healthy.any():
+                e_actors.append(
+                    plotter.add_points(
+                        pts[healthy],
+                        color=color,
+                        point_size=12,
+                        render_points_as_spheres=True,
+                    )
+                )
+            if (~healthy).any():
+                f_actors.append(
+                    plotter.add_points(
+                        pts[~healthy],
+                        color=_intensify_color(color),
+                        point_size=17,
+                        render_points_as_spheres=True,
+                    )
+                )
+            links = _build_electrode_links(pts, meas, fiducial_id_to_point)
+            if len(links) > 0:
+                flat = links.reshape(-1, 3)
+                l_actors.append(plotter.add_lines(flat, color=color, width=1))
+            n_actors.append(
+                plotter.add_point_labels(
+                    pts,
+                    group["names"],
+                    font_size=12,
+                    text_color="white",
+                    show_points=False,
+                    shape="rounded_rect",
+                    shape_color="black",
+                    shape_opacity=0.65,
+                    always_visible=True,
+                )
+            )
+        electrode_actors_per_group.append(e_actors)
+        flagged_actors_per_group.append(f_actors)
+        link_actors_per_group.append(l_actors)
+        label_actors_per_group.append(n_actors)
 
     y = 10
     mri_visible = {"on": True}
@@ -353,7 +735,8 @@ def main() -> None:
                 mesh_actor.prop.specular_power = 100.0
                 mesh_actor.prop.ambient = 0.0
         if volume is not None:
-            plotter.remove_scalar_bar()
+            if "intensity" in plotter.scalar_bars:
+                plotter.remove_scalar_bar("intensity")
             plotter.remove_actor(mri_actor)
             if flag:
                 mri_actor = plotter.add_volume(
@@ -382,12 +765,37 @@ def main() -> None:
         plotter.add_checkbox_button_widget(set_mri_visibility, value=True, position=(10, y))
         plotter.add_text("Show MRI", position=(75, y + 10), font_size=18, name="mri_label")
         y += 50
+
+    # Visibility is state-driven: a label is shown only when both its group
+    # (or the fiducials) and the global "Show labels" toggle are on.
+    fiducial_state = {"on": True}
+    labels_state = {"on": True}
+    group_states = [{"on": True} for _ in electrode_groups]
+
+    def _apply_labels_visibility() -> None:
+        for gi in range(len(electrode_groups)):
+            for a in label_actors_per_group[gi]:
+                a.SetVisibility(group_states[gi]["on"] and labels_state["on"])
+        if fiducial_label_actor is not None:
+            fiducial_label_actor.SetVisibility(fiducial_state["on"] and labels_state["on"])
+
+    def _apply_group_visibility(gi: int) -> None:
+        visible = group_states[gi]["on"]
+        for a in (
+            electrode_actors_per_group[gi]
+            + flagged_actors_per_group[gi]
+            + link_actors_per_group[gi]
+        ):
+            a.SetVisibility(visible)
+        for a in label_actors_per_group[gi]:
+            a.SetVisibility(visible and labels_state["on"])
+
     if fiducial_actor is not None:
 
         def set_fiducials_visibility(flag: bool) -> None:
-            fiducial_actor.SetVisibility(flag)
-            if fiducial_label_actor is not None:
-                fiducial_label_actor.SetVisibility(flag)
+            fiducial_state["on"] = bool(flag)
+            fiducial_actor.SetVisibility(fiducial_state["on"])
+            _apply_labels_visibility()
 
         plotter.add_checkbox_button_widget(set_fiducials_visibility, value=True, position=(10, y))
         plotter.add_text(
@@ -402,6 +810,42 @@ def main() -> None:
         plotter.add_checkbox_button_widget(set_normals_visibility, value=True, position=(10, y))
         plotter.add_text("Show normals", position=(75, y + 10), font_size=18, name="normals_label")
         y += 50
+
+    if any(label_actors_per_group) or fiducial_label_actor is not None:
+
+        def set_labels_visibility(flag: bool) -> None:
+            labels_state["on"] = bool(flag)
+            _apply_labels_visibility()
+
+        plotter.add_checkbox_button_widget(set_labels_visibility, value=True, position=(10, y))  # type: ignore[arg-type]
+        plotter.add_text("Show labels", position=(75, y + 10), font_size=18, name="labels_label")
+        y += 50
+    for gi, (group, e_actors, f_actors, l_actors) in enumerate(
+        zip(
+            electrode_groups,
+            electrode_actors_per_group,
+            flagged_actors_per_group,
+            link_actors_per_group,
+            strict=True,
+        )
+    ):
+        label = group["label"]
+        color = group["color"]
+        all_actors = e_actors + f_actors
+
+        def make_group_toggle(idx: int) -> Any:
+            def _toggle(flag: bool) -> None:
+                group_states[idx]["on"] = bool(flag)
+                _apply_group_visibility(idx)
+
+            return _toggle
+
+        if all_actors or l_actors or label_actors_per_group[gi]:
+            plotter.add_checkbox_button_widget(make_group_toggle(gi), value=True, position=(10, y))  # type: ignore[arg-type]
+            plotter.add_text(
+                f"Show {label}", position=(75, y + 10), font_size=18, name=f"elec_{label}"
+            )
+            y += 50
     plotter.add_checkbox_button_widget(set_contrast, value=False, position=(10, y))
     plotter.add_text("Boost contrast", position=(75, y + 10), font_size=18, name="contrast_label")
     plotter.add_axes(interactive=False)

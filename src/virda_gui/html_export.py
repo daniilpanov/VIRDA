@@ -151,6 +151,7 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
   <!-- MRI volume rendering does not work properly -->
   <label><input type="checkbox" id="cb-mri" disabled> Show MRI</label>
   <label><input type="checkbox" id="cb-fid" checked> Show fiducials</label>
+  <label><input type="checkbox" id="cb-elec"> Show electrodes</label>
   <label><input type="checkbox" id="cb-normals"> Show normals</label>
   <label><input type="checkbox" id="cb-boost"> Boost contrast</label>__DEBUG_UI__
   <div id="ese-info" style="display:none; margin-top:6px; padding-top:6px;
@@ -418,6 +419,73 @@ if (fidLabels.length > 0) {
   scene.add(fidGroup);
 }
 
+const elecData = payload.electrodes;
+const elecGroup = new THREE.Group();
+const elecLinksGroup = new THREE.Group();
+let elecLabelsData = [];
+if (elecData && elecData.points && elecData.points.length > 0) {
+  const sphereR = diagWorld * 0.006;
+  const geo = new THREE.SphereGeometry(Math.max(sphereR, 0.4), 10, 10);
+  const residuals = elecData.residuals || [];
+  const flags = elecData.flags || [];
+  const hasResiduals = residuals.some(r => r > 0);
+  function jetColor(t) {
+    t = Math.max(0, Math.min(1, t));
+    const r = Math.min(1, Math.max(0, 1.5 - Math.abs(t - 0.75) * 4));
+    const g = Math.min(1, Math.max(0, 1.5 - Math.abs(t - 0.5) * 4));
+    const b = Math.min(1, Math.max(0, 1.5 - Math.abs(t - 0.25) * 4));
+    return new THREE.Color(r, g, b);
+  }
+  let maxRes = 1;
+  if (hasResiduals) {
+    maxRes = Math.max(...residuals.filter(r => r > 0), 1);
+  }
+  const fidPosMap = {};
+  if (fids && fids.points && fids.labels) {
+    fids.labels.forEach((l, i) => { fidPosMap[l] = fids.points[i]; });
+  }
+  for (let i = 0; i < elecData.points.length; i++) {
+    const p = elecData.points[i];
+    const flagged = flags[i];
+    const res = residuals[i] || 0;
+    let color;
+    if (flagged) {
+      color = new THREE.Color(0xff2020);
+    } else if (hasResiduals && res > 0) {
+      color = jetColor(res / maxRes);
+    } else {
+      color = new THREE.Color(0xffff00);
+    }
+    const mat = new THREE.MeshBasicMaterial({ color });
+    const s = new THREE.Mesh(geo, mat);
+    s.position.set(p[0], p[1], p[2]);
+    elecGroup.add(s);
+    const eid = elecData.ids ? elecData.ids[i] : 'E' + (i + 1);
+    elecLabelsData.push({ pos: p, id: eid, res, flagged });
+    if (elecData.links && elecData.links[i]) {
+      const link = elecData.links[i];
+      for (const [fid, dist] of Object.entries(link)) {
+        if (dist == null || !fidPosMap[fid]) continue;
+        const lineGeo = new THREE.BufferGeometry();
+        const fv = fidPosMap[fid];
+        const verts = new Float32Array([
+          p[0], p[1], p[2], fv[0], fv[1], fv[2],
+        ]);
+        lineGeo.setAttribute('position',
+          new THREE.BufferAttribute(verts, 3));
+        const lineMat = new THREE.LineBasicMaterial({
+          color: 0x888888, transparent: true, opacity: 0.4,
+        });
+        elecLinksGroup.add(new THREE.LineSegments(lineGeo, lineMat));
+      }
+    }
+  }
+  elecGroup.visible = false;
+  elecLinksGroup.visible = false;
+  scene.add(elecGroup);
+  scene.add(elecLinksGroup);
+}
+
 const normalsData = payload.normals;
 let normalsGroup = null;
 if (normalsData && normalsData.lines) {
@@ -482,6 +550,23 @@ function updateLabels() {
       labelLayer.appendChild(el);
     }
   }
+  if (elecGroup.visible && elecLabelsData.length > 0) {
+    const fontSize = Math.max(8, Math.min(11, diagWorld * 0.002));
+    for (const ed of elecLabelsData) {
+      const p = new THREE.Vector3(ed.pos[0], ed.pos[1], ed.pos[2]);
+      const scr = worldToScreen(p, camera);
+      if (!scr.visible) continue;
+      const el = document.createElement('div');
+      el.className = 'fid-label';
+      el.style.fontSize = fontSize + 'px';
+      el.style.background = ed.flagged ? 'rgba(180,0,0,0.7)' : 'rgba(0,0,0,0.55)';
+      el.style.color = ed.flagged ? '#ffa0a0' : '#d0d0ff';
+      el.textContent = ed.id;
+      el.style.left = scr.x + 'px';
+      el.style.top = scr.y + 'px';
+      labelLayer.appendChild(el);
+    }
+  }
   if (axisCodes) {
     const dirs = [
       [1, 0, 0, '#ff5555', axisCodes[0]],
@@ -510,6 +595,7 @@ function updateLabels() {
 const cbMesh = document.getElementById('cb-mesh');
 const cbMri = document.getElementById('cb-mri');
 const cbFid = document.getElementById('cb-fid');
+const cbElec = document.getElementById('cb-elec');
 const cbNormals = document.getElementById('cb-normals');
 const cbBoost = document.getElementById('cb-boost');
 
@@ -517,6 +603,10 @@ cbMesh.addEventListener('change', () => { if (mesh) mesh.visible = cbMesh.checke
 cbFid.addEventListener('change', () => {
   fidGroup.visible = cbFid.checked;
   if (fidMat) fidMat.visible = cbFid.checked;
+});
+cbElec.addEventListener('change', () => {
+  elecGroup.visible = cbElec.checked;
+  elecLinksGroup.visible = cbElec.checked;
 });
 cbNormals.addEventListener('change', () => {
   if (normalsGroup) normalsGroup.visible = cbNormals.checked;
@@ -616,6 +706,7 @@ def build_payload(
     normals_path: str | Path | None = None,
     normals_scale: float = 3.0,
     normals_density: int = 500,
+    electrodes_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Read a patient project and return the embedded-viewer payload dict.
 
@@ -697,6 +788,44 @@ def build_payload(
             "count": n,
         }
 
+    # --- Electrodes -----------------------------------------------------------
+    electrodes_file: Path | None = None
+    if electrodes_path is not None:
+        candidate = Path(electrodes_path)
+        if candidate.is_file():
+            electrodes_file = candidate
+    elif (project / "localization" / "electrodes.json").is_file():
+        electrodes_file = project / "localization" / "electrodes.json"
+
+    if electrodes_file is not None:
+        electrodes_raw = json.loads(electrodes_file.read_text(encoding="utf-8"))
+        if isinstance(electrodes_raw, dict):
+            electrodes_raw = electrodes_raw.get("electrodes", [])
+        points = []
+        residuals = []
+        flags = []
+        ids = []
+        links = []
+        for item in electrodes_raw:
+            coords = item.get("coords") or item.get("scalp_coords")
+            if coords is None:
+                continue
+            points.append(
+                transform_points(np.asarray(coords)[np.newaxis, :], transform)[0].tolist()
+            )
+            residuals.append(float(item.get("residual_error") or 0.0))
+            flags.append(bool(item.get("flagged", False)))
+            ids.append(item.get("electrode_id", ""))
+            links.append({str(k): float(v) for k, v in item.get("measured_distances", {}).items()})
+        if points:
+            payload["electrodes"] = {
+                "points": points,
+                "residuals": residuals,
+                "flags": flags,
+                "ids": ids,
+                "links": links,
+            }
+
     return payload
 
 
@@ -724,6 +853,7 @@ def export_project(
     normals_path: str | Path | None = None,
     normals_scale: float = 3.0,
     normals_density: int = 500,
+    electrodes_path: str | Path | None = None,
 ) -> Path:
     """Write the self-contained HTML viewer for a patient project."""
     payload = build_payload(
@@ -732,6 +862,7 @@ def export_project(
         normals_path=normals_path,
         normals_scale=normals_scale,
         normals_density=normals_density,
+        electrodes_path=electrodes_path,
     )
     output_path = Path(output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -771,6 +902,12 @@ def main() -> None:
         help="Show one normal per N vertices (default: 500).",
     )
     parser.add_argument(
+        "--electrodes",
+        help=(
+            "Path to electrodes JSON (localization/electrodes.json). Auto-detected in project dir."
+        ),
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="Add nsteps/filter/step diagnostics controls to the viewer.",
@@ -785,6 +922,7 @@ def main() -> None:
         normals_path=args.normals,
         normals_scale=args.normals_scale,
         normals_density=args.normals_density,
+        electrodes_path=args.electrodes,
     )
     print(f"HTML viewer written to {args.output}")
 
