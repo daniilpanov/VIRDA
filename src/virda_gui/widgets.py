@@ -1,15 +1,17 @@
 """Reusable tkinter widgets for the VIRDA GUI application.
 
-Provides ``FileSelector``, ``DirectorySelector``, ``CollapsibleSection`` and
-``LogViewer`` — thin wrappers around standard ttk / ttkbootstrap widgets that
-reduce boilerplate in the main application window.
+Provides ``FileSelector``, ``DirectorySelector``, ``CollapsibleSection``,
+``LogViewer`` and ``ElectrodeGroupRow`` — thin wrappers around standard ttk /
+ttkbootstrap widgets that reduce boilerplate in the main application window.
 """
 
 from __future__ import annotations
 
 import tkinter as tk
+import tkinter.colorchooser as colorchooser
 import tkinter.filedialog as filedialog
 import tkinter.scrolledtext as scrolledtext
+from collections.abc import Callable
 from datetime import datetime
 from tkinter import ttk
 from typing import Literal
@@ -25,12 +27,13 @@ class FileSelector(ttk.Frame):
         master: tk.Misc,
         label: str,
         filetypes: list[tuple[str, str]] | None = None,
+        label_width: int = 14,
         **kwargs: object,
     ) -> None:
         super().__init__(master, **kwargs)
         self._filetypes = filetypes or [("All files", "*")]
 
-        self._label = ttk.Label(self, text=label, width=14, anchor="w")
+        self._label = ttk.Label(self, text=label, width=label_width, anchor="w")
         self._label.pack(side=tk.LEFT, padx=(0, 6))
 
         self._var = tk.StringVar()
@@ -189,3 +192,67 @@ class LogViewer(ttk.LabelFrame):
         self._text.configure(state=tk.NORMAL)
         self._text.delete("1.0", tk.END)
         self._text.configure(state=tk.DISABLED)
+
+
+class ElectrodeGroupRow(ttk.Frame):
+    """One electrode overlay group row: file selector + color picker + remove.
+
+    Used by the main window to let the user overlay several electrode files
+    (Stage 3 ``electrodes.json`` or tabular TSV/CSV tables) in the 3D viewer,
+    each with its own color.
+    """
+
+    def __init__(
+        self,
+        master: tk.Misc,
+        on_remove: Callable[[], None],
+        color: str = "yellow",
+        **kwargs: object,
+    ) -> None:
+        super().__init__(master, **kwargs)
+        self._color = color
+
+        self._selector = FileSelector(
+            self,
+            label="",
+            label_width=0,
+            filetypes=[
+                ("Electrodes", "*.json *.tsv *.csv *.txt"),
+                ("All files", "*.*"),
+            ],
+        )
+        self._selector.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        self._swatch = tk.Button(
+            self,
+            bg=color,
+            activebackground=color,
+            width=3,
+            relief=tk.FLAT,
+            command=self._pick_color,
+        )
+        self._swatch.pack(side=tk.LEFT, padx=(6, 0))
+
+        self._remove_btn = ttk.Button(self, text="✕", width=3, command=on_remove)
+        self._remove_btn.pack(side=tk.LEFT, padx=(6, 0))
+
+    def _pick_color(self) -> None:
+        result = colorchooser.askcolor(color=self._color, parent=self)
+        hex_color = result[1] if result and result[1] else None
+        if hex_color:
+            self.set_color(str(hex_color))
+
+    def get(self) -> str:
+        """Return the selected electrode file path (empty string if unset)."""
+        return self._selector.get()
+
+    def get_color(self) -> str:
+        """Return the current group color (name or #rrggbb)."""
+        return self._color
+
+    def set_color(self, color: str) -> None:
+        self._color = color
+        self._swatch.configure(bg=color, activebackground=color)
+
+    def set(self, value: str) -> None:
+        self._selector.set(value)
