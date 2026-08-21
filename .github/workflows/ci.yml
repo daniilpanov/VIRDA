@@ -135,6 +135,7 @@ jobs:
         run: |
           uv run pytest tests/test_stage3_e2e.py \
             -v --run-integration --tb=long \
+            -n auto \
             -s \
             --junitxml=integration.xml
 
