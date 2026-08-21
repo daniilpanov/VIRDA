@@ -21,8 +21,11 @@ class MeasurementsLoaderFromJson(MeasurementsLoader):
           "fiducial_weights": {"NAS": 1.5}
         }
 
-    ``fiducial_weights`` is optional; when present it overrides the weights of
-    the :class:`Fiducials` store used by the localizer.
+    ``electrode_id`` is optional; when missing or empty, sequential ids
+    (``E001``, ``E002``, ...) are assigned in file order so that downstream
+    consumers always see stable identifiers.  ``fiducial_weights`` is
+    optional; when present it overrides the weights of the :class:`Fiducials`
+    store used by the localizer.
     """
 
     def _process(self, context: PipelineContext, path: MeasurementsPath) -> Electrodes:
@@ -31,18 +34,17 @@ class MeasurementsLoaderFromJson(MeasurementsLoader):
             json.loads(path.measurements_path.read_text(encoding="utf-8")),
         )
         self._apply_weights(context, data)
-        return Electrodes(
-            items=[
-                Electrode(
-                    electrode_id=item["electrode_id"],
-                    measured_distances={
-                        str(fiducial_id): float(distance)
-                        for fiducial_id, distance in item["measured_distances"].items()
-                    },
-                )
-                for item in data["electrodes"]
-            ]
-        )
+        items = [
+            Electrode(
+                electrode_id=item.get("electrode_id") or f"E{index + 1:03d}",
+                measured_distances={
+                    str(fiducial_id): float(distance)
+                    for fiducial_id, distance in item["measured_distances"].items()
+                },
+            )
+            for index, item in enumerate(data["electrodes"])
+        ]
+        return Electrodes(items=items)
 
     @staticmethod
     def _apply_weights(context: PipelineContext, data: dict[str, Any]) -> None:

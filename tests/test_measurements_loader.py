@@ -45,6 +45,38 @@ class TestMeasurementsLoader:
         assert electrode.electrode_id == "Fz"
         assert electrode.measured_distances == {"NAS": 120.5, "LPA": 131.2}
 
+    def test_generates_ids_when_missing(self, tmp_path) -> None:
+        path = tmp_path / "measurements.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "electrodes": [
+                        {"measured_distances": {"NAS": 120.5}},
+                        {"electrode_id": "Fz", "measured_distances": {"NAS": 131.2}},
+                        {"measured_distances": {"NAS": 140.0}},
+                    ]
+                }
+            )
+        )
+
+        result = MeasurementsLoaderFromJson().run(
+            build_context(measurements_path=MeasurementsPath(path))
+        )
+
+        assert [e.electrode_id for e in result.items] == ["E001", "Fz", "E003"]
+
+    def test_empty_id_is_replaced_with_generated(self, tmp_path) -> None:
+        path = tmp_path / "measurements.json"
+        path.write_text(
+            json.dumps({"electrodes": [{"electrode_id": "", "measured_distances": {"NAS": 1.0}}]})
+        )
+
+        result = MeasurementsLoaderFromJson().run(
+            build_context(measurements_path=MeasurementsPath(path))
+        )
+
+        assert result.items[0].electrode_id == "E001"
+
     def test_applies_fiducial_weights(self, tmp_path) -> None:
         path = tmp_path / "measurements.json"
         path.write_text(

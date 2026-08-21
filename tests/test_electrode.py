@@ -15,8 +15,13 @@ class TestElectrode:
         assert electrode.is_localized is False
 
     def test_rejects_empty_id(self) -> None:
-        with pytest.raises(ValueError, match="non-empty string"):
+        with pytest.raises(ValueError, match="None or a non-empty string"):
             Electrode(electrode_id="", measured_distances={"NAS": 120.0})
+
+    def test_allows_missing_id(self) -> None:
+        electrode = Electrode(measured_distances={"NAS": 120.0})
+        assert electrode.electrode_id is None
+        assert electrode.is_localized is False
 
     def test_rejects_empty_measurements(self) -> None:
         with pytest.raises(ValueError, match="at least one measurement"):
@@ -57,6 +62,15 @@ class TestElectrodes:
                     Electrode(electrode_id="Fz", measured_distances={"NAS": 121.0}),
                 ]
             )
+
+    def test_allows_multiple_anonymous_electrodes(self) -> None:
+        electrodes = Electrodes(
+            items=[
+                Electrode(measured_distances={"NAS": 120.0}),
+                Electrode(measured_distances={"NAS": 121.0}),
+            ]
+        )
+        assert electrodes.ids == [None, None]
 
     def test_get_returns_matching_electrode(self) -> None:
         electrodes = Electrodes(

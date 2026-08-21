@@ -1,12 +1,12 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
 
 @dataclass(frozen=True)
 class Electrode:
-    electrode_id: str
-    measured_distances: dict[str, float]
+    electrode_id: str | None = None
+    measured_distances: dict[str, float] = field(default_factory=dict)
     ese_coords: np.ndarray | None = None
     scalp_coords: np.ndarray | None = None
     residual_error: float | None = None
@@ -14,8 +14,8 @@ class Electrode:
     flagged: bool = False
 
     def __post_init__(self) -> None:
-        if not self.electrode_id:
-            raise ValueError("electrode_id must be a non-empty string")
+        if self.electrode_id is not None and not self.electrode_id:
+            raise ValueError("electrode_id must be None or a non-empty string")
         if not self.measured_distances:
             raise ValueError("measured_distances must contain at least one measurement")
         for fiducial_id, distance in self.measured_distances.items():
@@ -39,15 +39,15 @@ class Electrodes:
     items: list[Electrode]
 
     def __post_init__(self) -> None:
-        ids = [electrode.electrode_id for electrode in self.items]
+        ids = [electrode.electrode_id for electrode in self.items if electrode.electrode_id]
         if len(ids) != len(set(ids)):
             raise ValueError(f"Electrode ids must be unique, got {ids}")
 
     @property
-    def ids(self) -> list[str]:
+    def ids(self) -> list[str | None]:
         return [electrode.electrode_id for electrode in self.items]
 
-    def get(self, electrode_id: str) -> Electrode | None:
+    def get(self, electrode_id: str | None) -> Electrode | None:
         for electrode in self.items:
             if electrode.electrode_id == electrode_id:
                 return electrode
