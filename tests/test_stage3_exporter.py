@@ -46,6 +46,38 @@ class TestStage3Exporter:
         assert result.items[0].scalp_coords is not None
         assert np.allclose(data[0]["scalp_coords"], result.items[0].scalp_coords.tolist())
 
+    def test_exports_electrodes_scalp_json(self, tmp_path) -> None:
+        ese = make_ese()
+        fiducials = make_fiducials()
+        result = _localize(make_electrodes(ese.vertices[[0, 42]], fiducials))
+        exporter = Stage3Exporter(project_dir=tmp_path, stage3_config=Stage3Config())
+        exporter.provide(result)
+
+        data = json.loads((tmp_path / "localization" / "electrodes_scalp.json").read_text())
+        assert len(data) == 2
+        assert data[0]["electrode_id"] == "E0"
+        assert data[0]["coords"] is not None
+        assert result.items[0].scalp_coords is not None
+        assert np.allclose(data[0]["coords"], result.items[0].scalp_coords.tolist())
+        assert data[0]["residual_error"] < 1e-6
+        assert "ese_coords" not in data[0]
+
+    def test_exports_electrodes_ese_json(self, tmp_path) -> None:
+        ese = make_ese()
+        fiducials = make_fiducials()
+        result = _localize(make_electrodes(ese.vertices[[0, 42]], fiducials))
+        exporter = Stage3Exporter(project_dir=tmp_path, stage3_config=Stage3Config())
+        exporter.provide(result)
+
+        data = json.loads((tmp_path / "localization" / "electrodes_ese.json").read_text())
+        assert len(data) == 2
+        assert data[0]["electrode_id"] == "E0"
+        assert data[0]["coords"] is not None
+        assert result.items[0].ese_coords is not None
+        assert np.allclose(data[0]["coords"], result.items[0].ese_coords.tolist())
+        assert data[0]["residual_error"] < 1e-6
+        assert "scalp_coords" not in data[0]
+
     def test_exports_csv(self, tmp_path) -> None:
         ese = make_ese()
         fiducials = make_fiducials()

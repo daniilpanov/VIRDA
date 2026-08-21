@@ -49,6 +49,23 @@ class Stage3Exporter(Provider[Electrodes]):
             )
         )
 
+        for suffix, attr in [("scalp", "scalp_coords"), ("ese", "ese_coords")]:
+            (stage3_dir / f"electrodes_{suffix}.json").write_text(
+                json.dumps(
+                    [
+                        {
+                            "electrode_id": electrode.electrode_id,
+                            "coords": _to_list(getattr(electrode, attr)),
+                            "residual_error": electrode.residual_error,
+                            "confidence": electrode.confidence,
+                            "flagged": electrode.flagged,
+                        }
+                        for electrode in electrodes
+                    ],
+                    indent=2,
+                )
+            )
+
         with (stage3_dir / "electrode_coords.csv").open("w", newline="") as f:
             writer = csv.DictWriter(
                 f,

@@ -48,6 +48,8 @@ class TestStage3Pipeline:
 
         stage3_dir = tmp_path / "localization"
         assert (stage3_dir / "electrodes.json").exists()
+        assert (stage3_dir / "electrodes_scalp.json").exists()
+        assert (stage3_dir / "electrodes_ese.json").exists()
         assert (stage3_dir / "electrode_coords.csv").exists()
         assert (stage3_dir / "localization_summary.json").exists()
 
