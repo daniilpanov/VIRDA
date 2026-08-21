@@ -53,6 +53,25 @@ class TestFiducialModel:
                 ]
             )
 
+    def test_fiducial_defaults_to_unit_weight(self) -> None:
+        fiducial = Fiducial(
+            fiducial_id="NAS",
+            name="Nasion",
+            coordinates=np.array([0.0, 88.0, -10.0]),
+            coordinate_system="world",
+        )
+        assert fiducial.weight == 1.0
+
+    def test_fiducial_validates_weight(self) -> None:
+        with pytest.raises(ValueError, match="weight must be positive"):
+            Fiducial(
+                fiducial_id="NAS",
+                name="Nasion",
+                coordinates=np.array([0.0, 88.0, -10.0]),
+                coordinate_system="world",
+                weight=0.0,
+            )
+
     def test_fiducials_get_returns_matching_fiducial(self) -> None:
         fiducials = make_fiducials()
         lpa = fiducials.get("LPA")

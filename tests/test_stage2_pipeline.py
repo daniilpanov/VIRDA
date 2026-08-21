@@ -141,7 +141,7 @@ class TestMainRunIntegration:
 
         from virda.main import run
 
-        stage1_result, ese_mesh = run(config)
+        stage1_result, ese_mesh, electrodes = run(config)
 
         assert ese_mesh is not None
         assert ese_mesh.vertices.shape[0] == stage1_result.mesh.vertices.shape[0]
@@ -163,8 +163,9 @@ class TestMainRunIntegration:
 
         from virda.main import run
 
-        stage1_result, ese_mesh = run(config)
+        stage1_result, ese_mesh, electrodes = run(config)
 
         assert isinstance(stage1_result, Stage1Result)
         assert ese_mesh is None
+        assert electrodes is None
         assert not (tmp_path / "ese").exists()

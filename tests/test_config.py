@@ -5,9 +5,16 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from virda.config import VirdaSettings, build_config, load_config_file, resolve_config_files
+from virda.config import (
+    VirdaSettings,
+    build_config,
+    load_config_file,
+    resolve_config_files,
+    resolve_stage3_config,
+)
 from virda.models.config import Config
 from virda.models.coordsystem import Coordsystem
+from virda.models.stage3_config import Stage3Config
 
 
 def sample_coordsystem_dict() -> dict[str, Any]:
@@ -235,3 +242,11 @@ class TestBuildConfig:
         assert stage2_config.k_neighbors == 30
         assert stage2_config.use_weighted_pca is True
         assert stage2_config.pca_sigma_mm == 7.0
+
+    def test_to_stage3_config(self) -> None:
+        config = Config(residual_threshold_mm=5.0)
+
+        stage3_config = resolve_stage3_config(config)
+
+        assert isinstance(stage3_config, Stage3Config)
+        assert stage3_config.residual_threshold_mm == 5.0
