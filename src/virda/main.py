@@ -100,7 +100,12 @@ def _parse_cli_args() -> argparse.Namespace:
             )
         )
         _add_option(parser, name, value_type)
-    for name in ("auto_detect_fiducials", "seal_enabled", "use_weighted_pca"):
+    for name in (
+        "auto_detect_fiducials",
+        "seal_enabled",
+        "use_weighted_pca",
+        "calibrate_ese_offset",
+    ):
         _add_bool_option(parser, name)
     return parser.parse_args()
 

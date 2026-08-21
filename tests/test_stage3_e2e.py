@@ -181,3 +181,89 @@ def test_stage3_full_pipeline_with_mne_sample(tmp_path: Path) -> None:
     assert mean_err < 6.0
     assert pct_5mm >= 50.0
     assert pct_10mm >= 90.0
+
+
+@pytest.mark.integration
+def test_stage3_offset_calibration_with_scalp_level_measurements(tmp_path: Path) -> None:
+    """Scalp-level measurements localize accurately with offset calibration.
+
+    Reproduces the real-world case behind flagged electrodes: distances are
+    measured from the digitized scalp contact points while the ESE models
+    electrode body centers (``ese_offset_mm=20``).  With
+    ``calibrate_ese_offset`` enabled Stage 3 must estimate the ~-18 mm shift
+    and still recover the true positions.
+    """
+    import json
+
+    from virda.config import VirdaSettings, build_config, load_config_file
+    from virda.main import run, run_stage3
+    from virda.models.coordsystem import Coordsystem
+    from virda.models.ese_mesh import ESEMesh
+
+    coordsystem_data = load_config_file(MNE_DIR / "coordsystem.json")
+    coordsystem: Coordsystem = coordsystem_data["coordsystem"]
+    fiducial_coords = {f.fiducial_id: f.coordinates for f in coordsystem.to_fiducials().items}
+
+    electrode_positions = _load_electrode_positions()
+
+    config = build_config(
+        settings=VirdaSettings(),
+        config_files=[MNE_DIR / "coordsystem.json"],
+        overrides={
+            "nifti_path": str(MNE_DIR / "head.nii.gz"),
+            "project_dir": str(tmp_path),
+            "calibrate_ese_offset": True,
+        },
+    )
+
+    stage1_result, ese_mesh, _ = run(config)
+    assert isinstance(ese_mesh, ESEMesh)
+
+    electrodes_json = [
+        {
+            "electrode_id": name,
+            "measured_distances": {
+                fid: float(np.linalg.norm(_cras_to_scanner_ras(pos) - fcoords))
+                for fid, fcoords in fiducial_coords.items()
+            },
+        }
+        for name, pos in electrode_positions.items()
+    ]
+    measurements_path = tmp_path / "electrodes_scalp_level.json"
+    measurements_path.write_text(json.dumps({"electrodes": electrodes_json}, indent=2))
+
+    electrodes = run_stage3(config, stage1_result, ese_mesh, measurements_path)
+
+    assert electrodes is not None
+    localized = [e for e in electrodes.items if e.is_localized]
+    assert len(localized) == 60
+
+    shift = electrodes.calibrated_offset_shift_mm
+    assert shift is not None
+    assert -20.0 <= shift <= -15.0
+
+    error_values: list[float] = []
+    for e in localized:
+        eid = e.electrode_id
+        assert eid is not None
+        true_pos = _cras_to_scanner_ras(electrode_positions[eid])
+        error_values.append(float(np.linalg.norm(e.scalp_coords - true_pos)))
+    errors = np.array(error_values)
+    median_err = float(np.median(errors))
+    mean_err = float(errors.mean())
+    pct_10mm = float((errors <= 10.0).sum() / len(errors) * 100)
+
+    print(
+        f"\n  Calibrated offset shift: {shift:+.1f} mm\n"
+        f"  Mean error   : {mean_err:.2f} mm\n"
+        f"  Median error : {median_err:.2f} mm\n"
+        f"  Max error    : {errors.max():.2f} mm\n"
+        f"  Within 10 mm : {pct_10mm:.1f}%"
+    )
+
+    summary = json.loads((tmp_path / "localization" / "localization_summary.json").read_text())
+    assert summary["calibrated_ese_offset_shift_mm"] == pytest.approx(shift)
+
+    assert median_err < 6.0
+    assert mean_err < 9.0
+    assert pct_10mm >= 85.0

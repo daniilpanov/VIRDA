@@ -53,6 +53,7 @@ class VirdaSettings(BaseSettings):
     min_neighbors: int = Field(default=5, ge=1)
 
     residual_threshold_mm: float = Field(default=10.0, gt=0)
+    calibrate_ese_offset: bool = False
 
     model_config = SettingsConfigDict(env_file=".env")
 
@@ -122,4 +123,7 @@ def build_config(
 
 def resolve_stage3_config(config: Config) -> Stage3Config:
     """Build the Stage 3 (localization) config."""
-    return Stage3Config(residual_threshold_mm=config.residual_threshold_mm)
+    return Stage3Config(
+        residual_threshold_mm=config.residual_threshold_mm,
+        calibrate_ese_offset=config.calibrate_ese_offset,
+    )

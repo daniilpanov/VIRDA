@@ -91,6 +91,7 @@ class Stage3Exporter(Provider[Electrodes]):
                     "n_flagged": sum(1 for electrode in electrodes if electrode.flagged),
                     "median_residual_mm": float(np.median(residuals)) if residuals else None,
                     "residual_threshold_mm": self._stage3_config.residual_threshold_mm,
+                    "calibrated_ese_offset_shift_mm": result.calibrated_offset_shift_mm,
                 },
                 indent=2,
             )

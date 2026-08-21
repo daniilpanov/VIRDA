@@ -50,6 +50,7 @@ class Config(BaseModel):
     coordsystem: Coordsystem | None = None
 
     residual_threshold_mm: float = 10.0
+    calibrate_ese_offset: bool = False
 
     def to_ese_config(self) -> ESEConfig | None:
         """Build the ESE config when fully configured, otherwise return None."""

@@ -37,6 +37,7 @@ class Electrode:
 @dataclass(frozen=True)
 class Electrodes:
     items: list[Electrode]
+    calibrated_offset_shift_mm: float | None = None
 
     def __post_init__(self) -> None:
         ids = [electrode.electrode_id for electrode in self.items if electrode.electrode_id]
