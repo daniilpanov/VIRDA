@@ -37,6 +37,9 @@ the Stage 3 ``electrodes.json`` (localized electrodes colored by residual error,
 with fiducial links) or a tabular file with ``name``, ``x``, ``y``, ``z``
 columns (shown as yellow spheres without links). May be repeated to overlay
 multiple electrode groups; each group gets its own color and visibility toggle.
+Tabular files usually store FreeSurfer cRAS coordinates; pass
+``--electrodes-cras`` (requires ``--nifti``) to convert them into scanner RAS
+so they overlay the MRI correctly. Stage 3 JSON output never needs the flag.
 
 If the affine is axis-aligned with positive spacing the scene is shown in world
 millimeters; otherwise the mesh is transformed into voxel index space so that
@@ -104,6 +107,17 @@ def _load_mesh_poly(mesh_path: str) -> pv.PolyData:
     return pv.PolyData(vertices, face_array.ravel())
 
 
+def _cras_to_scanner_ras_offset(affine: np.ndarray, shape: tuple[int, ...]) -> np.ndarray:
+    """FreeSurfer cRAS -> scanner RAS offset for a NIfTI volume.
+
+    FreeSurfer cRAS coordinates are centered at the volume midpoint while
+    scanner RAS is the affine world frame, so the conversion offset is the
+    affine applied to the center voxel.
+    """
+    center_voxel = (np.asarray(shape[:3], dtype=np.float64) - 1.0) / 2.0
+    return np.array((affine @ np.append(center_voxel, 1.0))[:3], dtype=np.float64)
+
+
 def _create_normal_glyphs(
     points: np.ndarray,
     normals: np.ndarray,
@@ -133,16 +147,19 @@ def _create_normal_glyphs(
 
 def _load_electrodes(
     path: str,
+    cras_offset: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[dict[str, float]]]:
     """Load electrodes from a Stage 3 JSON or a tabular CSV/TSV file.
 
     Dispatches to ``_load_electrodes_from_json`` for ``.json`` files and to
     ``_load_electrodes_from_csv`` for everything else (``.tsv``, ``.csv``,
-    ``.txt``).
+    ``.txt``).  ``cras_offset`` applies only to tabular files: Stage 3 JSON
+    output is already in scanner RAS, while TSV/CSV electrode tables may
+    store FreeSurfer cRAS coordinates that need converting first.
     """
     if path.endswith(".json"):
         return _load_electrodes_from_json(path)
-    return _load_electrodes_from_csv(path)
+    return _load_electrodes_from_csv(path, cras_offset=cras_offset)
 
 
 def _load_electrodes_from_json(
@@ -180,12 +197,14 @@ def _load_electrodes_from_json(
 
 def _load_electrodes_from_csv(
     path: str,
+    cras_offset: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[dict[str, float]]]:
     """Read electrodes from a TSV/CSV with columns: name, x, y, z.
 
     Returns positions with zero residuals, no flags and no fiducial links.
     Column names are matched case-insensitively.  The delimiter is detected
-    automatically by :class:`csv.Sniffer`.
+    automatically by :class:`csv.Sniffer`.  When ``cras_offset`` is given the
+    positions are treated as FreeSurfer cRAS and shifted into scanner RAS.
     """
     import csv
 
@@ -216,8 +235,11 @@ def _load_electrodes_from_csv(
 
     if not points:
         return np.empty((0, 3)), np.empty(0), np.empty(0, dtype=bool), []
+    positions = np.asarray(points)
+    if cras_offset is not None:
+        positions = positions + cras_offset
     return (
-        np.asarray(points),
+        positions,
         np.zeros(len(points)),
         np.zeros(len(points), dtype=bool),
         [{} for _ in points],
@@ -405,16 +427,28 @@ def main() -> None:
             "May be repeated to overlay multiple groups (each gets its own color)."
         ),
     )
+    parser.add_argument(
+        "--electrodes-cras",
+        action="store_true",
+        help=(
+            "Tabular electrode files (.tsv/.csv) store FreeSurfer cRAS "
+            "coordinates; convert them to scanner RAS using the --nifti "
+            "affine. Stage 3 JSON output is always already in scanner RAS."
+        ),
+    )
     args = parser.parse_args()
 
     if not args.nifti and not args.mesh:
         parser.error("at least one of --nifti or --mesh is required")
+    if args.electrodes_cras and not args.nifti:
+        parser.error("--electrodes-cras requires --nifti")
 
     data = None
     affine = None
     spacing = None
     orientation = None
     hi_clim = None
+    cras_offset: np.ndarray | None = None
     if args.nifti:
         nifti_img = nib.load(args.nifti)
         data = nifti_img.get_fdata(dtype=np.float32)
@@ -422,6 +456,8 @@ def main() -> None:
             data = data[..., 0]
         affine = nifti_img.affine
         orientation = aff2axcodes(affine)
+        if args.electrodes_cras:
+            cras_offset = _cras_to_scanner_ras_offset(affine, tuple(int(d) for d in data.shape))
         if args.downsample > 1:
             data, affine = downsample(data, affine, args.downsample)
         spacing = tuple(float(zoom) for zoom in np.linalg.norm(affine[:3, :3], axis=0))
@@ -493,7 +529,7 @@ def main() -> None:
 
     electrode_groups: list[dict] = []
     for epath in args.electrodes:
-        points, residuals, flags, measured = _load_electrodes(epath)
+        points, residuals, flags, measured = _load_electrodes(epath, cras_offset=cras_offset)
         if points is not None and len(points) > 0 and not mm_scene:
             points = transform_points(points, np.linalg.inv(affine))
         label = epath.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
