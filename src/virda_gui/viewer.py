@@ -26,6 +26,8 @@ Usage
         --electrodes <localization/electrodes.json>
     virda-gui --nifti <scan.nii.gz> --mesh <final_mesh.ply> \\
         --electrodes <electrodes.tsv>
+    virda-gui --nifti <scan.nii.gz> --mesh <final_mesh.ply> \\
+        --electrodes <electrodes_scalp.json> --electrodes <electrodes.tsv>
 
 At least one of ``--nifti`` or ``--mesh`` is required. ``--normals`` points to
 the ``stage2/`` output directory (``ese_vertices.npy`` + ``normals.npy``);
@@ -33,7 +35,8 @@ the ``stage2/`` output directory (``ese_vertices.npy`` + ``normals.npy``);
 ``--normals-step`` draws only every N-th normal. ``--electrodes`` accepts either
 the Stage 3 ``electrodes.json`` (localized electrodes colored by residual error,
 with fiducial links) or a tabular file with ``name``, ``x``, ``y``, ``z``
-columns (shown as yellow spheres without links).
+columns (shown as yellow spheres without links). May be repeated to overlay
+multiple electrode groups; each group gets its own color and visibility toggle.
 
 If the affine is axis-aligned with positive spacing the scene is shown in world
 millimeters; otherwise the mesh is transformed into voxel index space so that
@@ -63,6 +66,7 @@ from virda_gui.scene import (
 )
 
 _BOUNDS = tuple[float, float, float, float, float, float]
+_ELECTRODE_COLORS = ["yellow", "lime", "magenta", "cyan", "orange", "white"]
 
 
 def _build_scene(
@@ -157,7 +161,7 @@ def _load_electrodes_from_json(
     flags: list[bool] = []
     measured: list[dict[str, float]] = []
     for item in data:
-        coords = item.get("scalp_coords")
+        coords = item.get("coords") or item.get("scalp_coords")
         if coords is None:
             continue
         points.append(np.asarray(coords, dtype=np.float64))
@@ -336,6 +340,24 @@ def _print_qc(
     print("=" * 62)
 
 
+def _add_electrode_checkbox(
+    plotter: pv.Plotter,
+    y: int,
+    label: str,
+    color: str,
+    point_actors: list,
+    link_actors: list,
+) -> None:
+    all_actors = point_actors + link_actors
+
+    def _toggle(flag: bool) -> None:
+        for a in all_actors:
+            a.SetVisibility(flag)
+
+    plotter.add_checkbox_button_widget(_toggle, value=True, position=(10, y))
+    plotter.add_text(f"Show {label}", position=(75, y + 10), font_size=18, name=f"elec_{label}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="virda-gui",
@@ -374,9 +396,13 @@ def main() -> None:
     )
     parser.add_argument(
         "--electrodes",
+        action="append",
+        default=[],
+        metavar="FILE",
         help=(
-            "Path to electrodes file: Stage 3 JSON (.json) "
-            "or tabular with name/x/y/z columns (.tsv/.csv)."
+            "Electrodes file: Stage 3 JSON (.json) "
+            "or tabular with name/x/y/z columns (.tsv/.csv). "
+            "May be repeated to overlay multiple groups (each gets its own color)."
         ),
     )
     args = parser.parse_args()
@@ -459,58 +485,79 @@ def main() -> None:
 
     fiducial_id_to_point: dict[str, np.ndarray] = {}
     if fiducial_points is not None:
-        for label, point in zip(fiducial_labels, fiducial_points, strict=True):
+        scene_fiducials = fiducial_points
+        if not mm_scene:
+            scene_fiducials = transform_points(fiducial_points, np.linalg.inv(affine))
+        for label, point in zip(fiducial_labels, scene_fiducials, strict=True):
             fiducial_id_to_point[label.split(" (")[0]] = point
 
-    electrode_points = None
-    electrode_residuals = None
-    electrode_flags = None
-    electrode_measured: list[dict[str, float]] = []
-    if args.electrodes:
-        (
-            electrode_points,
-            electrode_residuals,
-            electrode_flags,
-            electrode_measured,
-        ) = _load_electrodes(args.electrodes)
-    if electrode_points is not None and len(electrode_points) > 0 and not mm_scene:
-        electrode_points = transform_points(electrode_points, np.linalg.inv(affine))
+    electrode_groups: list[dict] = []
+    for epath in args.electrodes:
+        points, residuals, flags, measured = _load_electrodes(epath)
+        if points is not None and len(points) > 0 and not mm_scene:
+            points = transform_points(points, np.linalg.inv(affine))
+        label = epath.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+        electrode_groups.append(
+            {
+                "points": points,
+                "residuals": residuals,
+                "flags": flags,
+                "measured": measured,
+                "label": label,
+            }
+        )
 
-    electrode_actor = None
-    link_actor = None
-    flagged_actor = None
-    if electrode_points is not None and len(electrode_points) > 0:
-        is_tabular = bool(np.all(electrode_residuals == 0))
-        if is_tabular:
-            electrode_actor = plotter.add_points(
-                electrode_points,
-                color="yellow",
-                point_size=12,
-                render_points_as_spheres=True,
-            )
-        else:
-            healthy = ~electrode_flags
-            if healthy.any():
-                electrode_actor = plotter.add_points(
-                    electrode_points[healthy],
-                    scalars=electrode_residuals[healthy],
-                    cmap="jet",
-                    point_size=12,
-                    render_points_as_spheres=True,
+    electrode_actors_per_group: list[list] = []
+    flagged_actors_per_group: list[list] = []
+    link_actors_per_group: list[list] = []
+    for gi, group in enumerate(electrode_groups):
+        pts = group["points"]
+        res = group["residuals"]
+        flg = group["flags"]
+        meas = group["measured"]
+        color = _ELECTRODE_COLORS[gi % len(_ELECTRODE_COLORS)]
+        e_actors: list = []
+        f_actors: list = []
+        l_actors: list = []
+        if pts is not None and len(pts) > 0:
+            is_tabular = bool(np.all(res == 0))
+            if is_tabular:
+                e_actors.append(
+                    plotter.add_points(
+                        pts,
+                        color=color,
+                        point_size=12,
+                        render_points_as_spheres=True,
+                    )
                 )
-            if (~healthy).any():
-                flagged_actor = plotter.add_points(
-                    electrode_points[~healthy],
-                    color="red",
-                    point_size=16,
-                    render_points_as_spheres=True,
-                )
-            if electrode_actor is None:
-                electrode_actor = flagged_actor
-        links = _build_electrode_links(electrode_points, electrode_measured, fiducial_id_to_point)
-        if len(links) > 0:
-            flat = links.reshape(-1, 3)
-            link_actor = plotter.add_lines(flat, color="cyan", width=1)
+            else:
+                healthy = ~flg
+                if healthy.any():
+                    e_actors.append(
+                        plotter.add_points(
+                            pts[healthy],
+                            scalars=res[healthy],
+                            cmap="jet",
+                            point_size=12,
+                            render_points_as_spheres=True,
+                        )
+                    )
+                if (~healthy).any():
+                    f_actors.append(
+                        plotter.add_points(
+                            pts[~healthy],
+                            color="red",
+                            point_size=16,
+                            render_points_as_spheres=True,
+                        )
+                    )
+            links = _build_electrode_links(pts, meas, fiducial_id_to_point)
+            if len(links) > 0:
+                flat = links.reshape(-1, 3)
+                l_actors.append(plotter.add_lines(flat, color=color, width=1))
+        electrode_actors_per_group.append(e_actors)
+        flagged_actors_per_group.append(f_actors)
+        link_actors_per_group.append(l_actors)
 
     y = 10
     mri_visible = {"on": True}
@@ -588,26 +635,21 @@ def main() -> None:
         plotter.add_checkbox_button_widget(set_normals_visibility, value=True, position=(10, y))
         plotter.add_text("Show normals", position=(75, y + 10), font_size=18, name="normals_label")
         y += 50
-    if electrode_actor is not None:
-
-        def set_electrodes_visibility(flag: bool) -> None:
-            electrode_actor.SetVisibility(flag)
-            if flagged_actor is not None:
-                flagged_actor.SetVisibility(flag)
-
-        plotter.add_checkbox_button_widget(set_electrodes_visibility, value=True, position=(10, y))
-        plotter.add_text(
-            "Show electrodes", position=(75, y + 10), font_size=18, name="electrodes_label"
+    for gi, (group, e_actors, f_actors, l_actors) in enumerate(
+        zip(
+            electrode_groups,
+            electrode_actors_per_group,
+            flagged_actors_per_group,
+            link_actors_per_group,
+            strict=True,
         )
-        y += 50
-    if link_actor is not None:
-
-        def set_links_visibility(flag: bool) -> None:
-            link_actor.SetVisibility(flag)
-
-        plotter.add_checkbox_button_widget(set_links_visibility, value=True, position=(10, y))
-        plotter.add_text("Show links", position=(75, y + 10), font_size=18, name="links_label")
-        y += 50
+    ):
+        label = group["label"]
+        color = _ELECTRODE_COLORS[gi % len(_ELECTRODE_COLORS)]
+        all_actors = e_actors + f_actors
+        if all_actors or l_actors:
+            _add_electrode_checkbox(plotter, y, label, color, all_actors, l_actors)
+            y += 50
     plotter.add_checkbox_button_widget(set_contrast, value=False, position=(10, y))
     plotter.add_text("Boost contrast", position=(75, y + 10), font_size=18, name="contrast_label")
     plotter.add_axes(interactive=False)

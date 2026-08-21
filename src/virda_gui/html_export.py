@@ -807,7 +807,7 @@ def build_payload(
         ids = []
         links = []
         for item in electrodes_raw:
-            coords = item.get("scalp_coords")
+            coords = item.get("coords") or item.get("scalp_coords")
             if coords is None:
                 continue
             points.append(
