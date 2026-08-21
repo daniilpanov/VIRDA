@@ -5,7 +5,9 @@ import numpy as np
 import pytest
 
 from virda_gui.viewer import (
+    _cras_decision_message,
     _cras_to_scanner_ras_offset,
+    _detect_cras_conversion,
     _load_electrodes,
 )
 
@@ -14,6 +16,14 @@ def _write_tsv(path: Path, rows: list[tuple[str, float, float, float]]) -> None:
     lines = ["name\tx\ty\tz"]
     lines += [f"{name}\t{x}\t{y}\t{z}" for name, x, y, z in rows]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _sphere_points(n: int = 400, radius: float = 80.0) -> np.ndarray:
+    idx = np.arange(n, dtype=np.float64)
+    y = 1.0 - 2.0 * idx / (n - 1)
+    r = np.sqrt(np.clip(1.0 - y * y, 0.0, 1.0))
+    theta = idx * np.pi * (3.0 - np.sqrt(5.0))
+    return np.column_stack([r * np.cos(theta), r * np.sin(theta), y]) * radius
 
 
 class TestCrasToScannerRasOffset:
@@ -108,3 +118,71 @@ class TestTabularCrasConversion:
         _, _, _, _, names = _load_electrodes(str(path))
 
         assert names == ["E001", "Cz"]
+
+
+class TestCrasAutoDetection:
+    OFFSET = np.array([4.77, -8.54, -26.79])
+
+    def test_detects_cras_when_shifted_points_fit_mesh(self) -> None:
+        mesh = _sphere_points()
+        true_pts = mesh[::40].copy()
+        raw = true_pts - self.OFFSET
+
+        converted, d_raw, d_shift = _detect_cras_conversion(raw, mesh, None, True, self.OFFSET)
+
+        assert converted is True
+        assert d_raw > 10.0
+        assert d_shift == pytest.approx(0.0, abs=1e-6)
+
+    def test_keeps_scanner_ras_when_already_fitting(self) -> None:
+        mesh = _sphere_points()
+        true_pts = mesh[::40].copy()
+
+        converted, d_raw, d_shift = _detect_cras_conversion(true_pts, mesh, None, True, self.OFFSET)
+
+        assert converted is False
+        assert d_raw == pytest.approx(0.0, abs=1e-6)
+        assert d_shift > 10.0
+
+    def test_ambiguous_half_shift_prefers_no_conversion(self) -> None:
+        mesh = _sphere_points()
+        true_pts = mesh[::40].copy()
+        raw = true_pts - 0.5 * self.OFFSET
+
+        converted, d_raw, d_shift = _detect_cras_conversion(raw, mesh, None, True, self.OFFSET)
+
+        assert converted is False
+        assert d_shift == pytest.approx(d_raw, rel=0.2)
+
+    def test_voxel_scene_with_rotated_affine(self) -> None:
+        angle = 0.3
+        affine = np.eye(4)
+        affine[:3, :3] = 2.0 * np.array(
+            [
+                [np.cos(angle), -np.sin(angle), 0.0],
+                [np.sin(angle), np.cos(angle), 0.0],
+                [0.0, 0.0, 1.0],
+            ]
+        )
+        affine[:3, 3] = [10.0, 20.0, 30.0]
+        true_pts = _sphere_points()[::40].copy()
+        mesh_voxel = true_pts @ np.linalg.inv(affine[:3, :3]).T + np.linalg.inv(affine)[:3, 3]
+        raw = true_pts - self.OFFSET
+
+        converted, _, d_shift = _detect_cras_conversion(
+            raw, mesh_voxel, affine, mm_scene=False, cras_offset=self.OFFSET
+        )
+
+        assert converted is True
+        assert d_shift == pytest.approx(0.0, abs=1e-6)
+
+    def test_decision_message_formatting(self) -> None:
+        message = _cras_decision_message("electrodes.tsv", True, 27.3, 2.94)
+
+        assert message == "electrodes.tsv: cRAS detected (median dist 27.3 -> 2.9 mm), converted"
+
+        message = _cras_decision_message("electrodes.tsv", False, 2.1, 28.6)
+
+        assert (
+            message == "electrodes.tsv: scanner RAS assumed (median dist 2.1 -> 28.6 mm), unchanged"
+        )

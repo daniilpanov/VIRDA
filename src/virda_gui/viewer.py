@@ -39,9 +39,11 @@ columns (shown as yellow spheres without links). May be repeated to overlay
 multiple electrode groups; each group gets its own color, visibility toggle
 and per-electrode ID labels (taken from the ``electrode_id``/``name`` field,
 with generated ``E001``-style fallbacks when absent).
-Tabular files usually store FreeSurfer cRAS coordinates; pass
-``--electrodes-cras`` (requires ``--nifti``) to convert them into scanner RAS
-so they overlay the MRI correctly. Stage 3 JSON output never needs the flag.
+Tabular files usually store FreeSurfer cRAS coordinates. When a scalp mesh is
+supplied the correct frame is detected automatically per file (the frame whose
+points sit closer to the mesh wins) and reported on stdout; pass
+``--electrodes-cras`` (requires ``--nifti``) to force the conversion instead.
+Stage 3 JSON output is always treated as scanner RAS and never converted.
 
 If the affine is axis-aligned with positive spacing the scene is shown in world
 millimeters; otherwise the mesh is transformed into voxel index space so that
@@ -59,6 +61,7 @@ import numpy as np
 import pyvista as pv
 import trimesh
 from nibabel import aff2axcodes
+from scipy.spatial import cKDTree
 
 from virda_gui.scene import (
     compute_normal_lines,
@@ -119,6 +122,47 @@ def _cras_to_scanner_ras_offset(affine: np.ndarray, shape: tuple[int, ...]) -> n
     """
     center_voxel = (np.asarray(shape[:3], dtype=np.float64) - 1.0) / 2.0
     return np.array((affine @ np.append(center_voxel, 1.0))[:3], dtype=np.float64)
+
+
+_CRAS_DETECT_RATIO = 0.8
+
+
+def _detect_cras_conversion(
+    points: np.ndarray,
+    mesh_points: np.ndarray,
+    affine: np.ndarray | None,
+    mm_scene: bool,
+    cras_offset: np.ndarray,
+) -> tuple[bool, float, float]:
+    """Decide whether tabular electrode points are FreeSurfer cRAS coordinates.
+
+    Electrodes sit on the scalp, so the correct frame puts them close to the
+    scalp mesh while the wrong frame displaces the whole group by ``|c_ras|``.
+    Both hypotheses -- raw scanner RAS and cRAS shifted by ``cras_offset`` --
+    are moved into the scene frame (voxel indices when ``mm_scene`` is False)
+    and scored by the median distance from each electrode to its nearest mesh
+    vertex.  Conversion wins only when it improves the fit by
+    ``_CRAS_DETECT_RATIO``; near-ties keep the points untouched.
+
+    Returns ``(needs_conversion, raw_distance_mm, shifted_distance_mm)``.
+    """
+    scene_transform = None if (affine is None or mm_scene) else np.linalg.inv(affine)
+
+    def _median_distance(pts: np.ndarray) -> float:
+        scene_pts = transform_points(pts, scene_transform) if scene_transform is not None else pts
+        distances, _ = cKDTree(mesh_points).query(scene_pts)
+        return float(np.median(distances))
+
+    d_raw = _median_distance(points)
+    d_shift = _median_distance(points + cras_offset)
+    return d_shift < _CRAS_DETECT_RATIO * d_raw, d_raw, d_shift
+
+
+def _cras_decision_message(label: str, converted: bool, d_raw: float, d_shift: float) -> str:
+    """One-line QC report of the automatic cRAS frame detection."""
+    verdict = "cRAS detected" if converted else "scanner RAS assumed"
+    action = "converted" if converted else "unchanged"
+    return f"{label}: {verdict} (median dist {d_raw:.1f} -> {d_shift:.1f} mm), {action}"
 
 
 def _create_normal_glyphs(
@@ -450,9 +494,11 @@ def main() -> None:
         "--electrodes-cras",
         action="store_true",
         help=(
-            "Tabular electrode files (.tsv/.csv) store FreeSurfer cRAS "
-            "coordinates; convert them to scanner RAS using the --nifti "
-            "affine. Stage 3 JSON output is always already in scanner RAS."
+            "Force cRAS -> scanner RAS conversion of tabular electrode files "
+            "(.tsv/.csv) using the --nifti affine. Without the flag the frame "
+            "is detected automatically when a --mesh is supplied (the frame "
+            "whose points sit closer to the mesh wins). Stage 3 JSON output "
+            "is always already in scanner RAS."
         ),
     )
     args = parser.parse_args()
@@ -475,8 +521,7 @@ def main() -> None:
             data = data[..., 0]
         affine = nifti_img.affine
         orientation = aff2axcodes(affine)
-        if args.electrodes_cras:
-            cras_offset = _cras_to_scanner_ras_offset(affine, tuple(int(d) for d in data.shape))
+        cras_offset = _cras_to_scanner_ras_offset(affine, tuple(int(d) for d in data.shape))
         if args.downsample > 1:
             data, affine = downsample(data, affine, args.downsample)
         spacing = tuple(float(zoom) for zoom in np.linalg.norm(affine[:3, :3], axis=0))
@@ -548,10 +593,21 @@ def main() -> None:
 
     electrode_groups: list[dict] = []
     for epath in args.electrodes:
-        points, residuals, flags, measured, names = _load_electrodes(epath, cras_offset=cras_offset)
-        if points is not None and len(points) > 0 and not mm_scene:
-            points = transform_points(points, np.linalg.inv(affine))
+        points, residuals, flags, measured, names = _load_electrodes(epath)
         label = epath.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+        if not epath.endswith(".json") and cras_offset is not None and len(points) > 0:
+            if args.electrodes_cras:
+                points = points + cras_offset
+                print(f"{label}: cRAS conversion forced by --electrodes-cras")
+            elif scene_mesh is not None:
+                converted, d_raw, d_shift = _detect_cras_conversion(
+                    points, scene_mesh.points, affine, mm_scene, cras_offset
+                )
+                if converted:
+                    points = points + cras_offset
+                print(_cras_decision_message(label, converted, d_raw, d_shift))
+        if len(points) > 0 and not mm_scene:
+            points = transform_points(points, np.linalg.inv(affine))
         electrode_groups.append(
             {
                 "points": points,
