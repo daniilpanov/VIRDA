@@ -1,12 +1,14 @@
 """VIRDA GUI application — main window with ttkbootstrap.
 
 Launches a tkinter GUI for configuring and running the VIRDA electrode
-localisation pipeline.  After a successful run the *Results* tab becomes
-available, allowing the user to open the interactive 3D viewer or export
-an HTML viewer.
+localisation pipeline (Stage 1 segmentation/mesh, Stage 2 ESE and Stage 3
+localization).  After a successful run the *Results* tab shows a summary and
+the user can open the interactive 3D viewer (with electrode overlays) or
+export an HTML viewer.
 
-Stage 3 (real electrode localisation) has placeholders -- the *Stage 3*
-section and *Results* tab will be fleshed out when that stage ships.
+Electrode overlay groups (Stage 3 ``electrodes.json`` or tabular TSV/CSV
+tables) can be managed in the *Electrode Groups* section; after a run with
+measurements the localized ``stage3/electrodes.json`` is added automatically.
 """
 
 import queue
@@ -27,6 +29,7 @@ from virda.models.config import Config
 
 from .widgets import (
     DirectorySelector,
+    ElectrodeGroupRow,
     FileSelector,
     LabeledField,
     LogViewer,
@@ -36,6 +39,8 @@ _DONE_SENTINEL = "__DONE__"
 _ERROR_SENTINEL = "__ERROR__"
 _EXPORT_DONE_SENTINEL = "__EXPORT_DONE__"
 _EXPORT_ERROR_SENTINEL = "__EXPORT_ERROR__"
+
+_ELECTRODE_PALETTE = ["yellow", "lime", "magenta", "cyan", "orange", "white"]
 
 _ADVANCED_FIELD_DEFAULTS: dict[str, str] = {
     "otsu_scope": "all",
@@ -57,6 +62,8 @@ _ADVANCED_FIELD_DEFAULTS: dict[str, str] = {
     "pca_sigma_mm": "5.0",
     "min_neighbors": "5",
     "use_weighted_pca": "false",
+    "residual_threshold_mm": "10.0",
+    "calibrate_ese_offset": "true",
 }
 
 _CONFIG_KEY_TO_ADVANCED: dict[str, str] = {
@@ -79,6 +86,8 @@ _CONFIG_KEY_TO_ADVANCED: dict[str, str] = {
     "pca_sigma_mm": "pca_sigma_mm",
     "min_neighbors": "min_neighbors",
     "use_weighted_pca": "use_weighted_pca",
+    "residual_threshold_mm": "residual_threshold_mm",
+    "calibrate_ese_offset": "calibrate_ese_offset",
 }
 
 _CONFIG_KEY_TO_INPUT: dict[str, str] = {
@@ -147,6 +156,7 @@ class AdvancedSettingsDialog(tk.Toplevel):
         self._build_mesh_section(self._scroll_frame)
         self._build_ese_section(self._scroll_frame)
         self._build_neighborhood_section(self._scroll_frame)
+        self._build_stage3_section(self._scroll_frame)
 
         btn_frame = ttk.Frame(self._scroll_frame)
         btn_frame.pack(fill=X, padx=8, pady=8)
@@ -197,6 +207,13 @@ class AdvancedSettingsDialog(tk.Toplevel):
         self._add_field(frame, "min_neighbors", "Min neighbors", "entry")
         self._add_field(frame, "use_weighted_pca", "Weighted PCA", "check")
 
+    def _build_stage3_section(self, parent: tk.Misc) -> None:
+        frame = ttk.LabelFrame(parent, text="  Stage 3: Localization  ")
+        frame.pack(fill=X, padx=8, pady=4)
+
+        self._add_field(frame, "residual_threshold_mm", "Residual threshold (mm)", "entry")
+        self._add_field(frame, "calibrate_ese_offset", "Calibrate ESE offset", "check")
+
     def _add_field(self, parent: tk.Misc, key: str, label: str, widget_type: str) -> None:
         values = _ADVANCED_COMBO_FIELDS.get(key) if widget_type == "combo" else None
         field = LabeledField(
@@ -238,6 +255,9 @@ class VirdaApp:
         self._export_btn: ttkb.Button | None = None
         self._last_project_dir: str | None = None
         self._advanced_values: dict[str, str] = dict(_ADVANCED_FIELD_DEFAULTS)
+        self._electrode_rows: list[ElectrodeGroupRow] = []
+        self._palette_index = 0
+        self._stage3_summary: dict[str, Any] | None = None
 
         self._build_ui()
         self._poll_log_queue()
@@ -293,6 +313,13 @@ class VirdaApp:
         self._fiducials.pack(fill=X, padx=6, pady=4)
         self._fiducials._var.trace_add("write", self._on_fiducials_path_changed)
 
+        self._measurements = FileSelector(
+            input_frame,
+            label="Measurements",
+            filetypes=[("JSON", "*.json"), ("All files", "*.*")],
+        )
+        self._measurements.pack(fill=X, padx=6, pady=4)
+
         self._auto_detect_fid = LabeledField(
             input_frame,
             label="Auto detect fiducials",
@@ -300,6 +327,32 @@ class VirdaApp:
             default="false",
         )
         self._auto_detect_fid.pack(fill=X, padx=6, pady=(4, 6))
+
+        groups_frame = ttk.LabelFrame(parent, text="  Electrode Groups (viewer overlays)  ")
+        groups_frame.pack(fill=X, padx=8, pady=(4, 4))
+
+        self._groups_inner = ttk.Frame(groups_frame)
+        self._groups_inner.pack(fill=X, padx=6, pady=(4, 2))
+
+        groups_btns = ttk.Frame(groups_frame)
+        groups_btns.pack(fill=X, padx=6, pady=(0, 6))
+
+        ttkb.Button(
+            groups_btns,
+            text="Add group",
+            bootstyle="secondary-outline",
+            command=self._on_add_electrode_group,
+            width=12,
+        ).pack(side=LEFT, padx=(0, 8))
+
+        self._electrodes_cras_var = tk.StringVar(value="false")
+        ttk.Checkbutton(
+            groups_btns,
+            text="Force cRAS conversion",
+            variable=self._electrodes_cras_var,
+            onvalue="true",
+            offvalue="false",
+        ).pack(side=LEFT)
 
         btn_frame = ttk.Frame(parent)
         btn_frame.pack(fill=X, padx=8, pady=(4, 2))
@@ -404,6 +457,9 @@ class VirdaApp:
                 if widget is not None and not widget.get():
                     widget.set(str(data[config_key]))
 
+        if data.get("measurements_path") and not self._measurements.get():
+            self._measurements.set(str(data["measurements_path"]))
+
         for config_key, adv_key in _CONFIG_KEY_TO_ADVANCED.items():
             if config_key in data and not self._advanced_values.get(adv_key):
                 self._advanced_values[adv_key] = str(data[config_key])
@@ -431,6 +487,58 @@ class VirdaApp:
         self._root.wait_window(dialog)
         if dialog.confirmed:
             self._advanced_values = dialog.result_values
+
+    # ------------------------------------------------------------------
+    # Electrode groups
+    # ------------------------------------------------------------------
+
+    def _on_add_electrode_group(self, path: str = "", color: str | None = None) -> None:
+        if color is None:
+            color = _ELECTRODE_PALETTE[self._palette_index % len(_ELECTRODE_PALETTE)]
+            self._palette_index += 1
+
+        row = ElectrodeGroupRow(
+            self._groups_inner,
+            on_remove=lambda: self._on_remove_electrode_group(row),
+            color=color,
+        )
+        if path:
+            row.set(path)
+        row.pack(fill=X, pady=2)
+        self._electrode_rows.append(row)
+
+    def _on_remove_electrode_group(self, row: ElectrodeGroupRow) -> None:
+        if row in self._electrode_rows:
+            self._electrode_rows.remove(row)
+        row.destroy()
+
+    def _collect_electrode_specs(self) -> list[tuple[str, str]]:
+        """Return (path, color) pairs of all non-empty electrode group rows."""
+        specs: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for row in self._electrode_rows:
+            path = row.get().strip()
+            if not path or path in seen:
+                continue
+            seen.add(path)
+            specs.append((path, row.get_color()))
+        return specs
+
+    def _ensure_stage3_electrodes_group(self) -> str | None:
+        """Add the Stage 3 output as a group unless already present.
+
+        Returns the added path or None when there is nothing to add.
+        """
+        if not self._last_project_dir:
+            return None
+        electrodes_path = Path(self._last_project_dir) / "stage3" / "electrodes.json"
+        if not electrodes_path.is_file():
+            return None
+        path_str = str(electrodes_path)
+        if any(row.get().strip() == path_str for row in self._electrode_rows):
+            return None
+        self._on_add_electrode_group(path=path_str)
+        return path_str
 
     # ------------------------------------------------------------------
     # Config collection
@@ -480,6 +588,8 @@ class VirdaApp:
             use_weighted_pca=adv["use_weighted_pca"] == "true",
             pca_sigma_mm=_float(adv["pca_sigma_mm"], 5.0),
             min_neighbors=_int(adv["min_neighbors"], 5),
+            residual_threshold_mm=_float(adv["residual_threshold_mm"], 10.0),  # type: ignore[arg-type]
+            calibrate_ese_offset=adv["calibrate_ese_offset"] == "true",
         )
 
     # ------------------------------------------------------------------
@@ -501,17 +611,28 @@ class VirdaApp:
         self._log_viewer.clear()
         self._log_queue.put("Starting pipeline...")
         self._last_project_dir = config.project_dir
+        self._stage3_summary = None
+
+        measurements_path = self._measurements.get().strip() or None
+        if measurements_path and not Path(measurements_path).is_file():
+            Messagebox.show_error(
+                f"Measurements file not found:\n{measurements_path}",
+                title="Measurements error",
+                parent=self._root,
+            )
+            self._on_pipeline_error()
+            return
 
         self._pipeline_thread = threading.Thread(
-            target=self._run_pipeline, args=(config,), daemon=True
+            target=self._run_pipeline, args=(config, measurements_path), daemon=True
         )
         self._pipeline_thread.start()
 
-    def _run_pipeline(self, config: Config) -> None:
+    def _run_pipeline(self, config: Config, measurements_path: str | None) -> None:
         """Background thread: run the pipeline and post results to the queue."""
         try:
             self._log_queue.put("Building configuration...")
-            stage1_result, ese_mesh = run(config)
+            stage1_result, ese_mesh, electrodes = run(config, measurements_path)
 
             msg = f"Stage 1: mesh with {len(stage1_result.mesh.vertices)} vertices"
             self._log_queue.put(msg)
@@ -519,6 +640,24 @@ class VirdaApp:
             if ese_mesh is not None:
                 msg = f"Stage 2: ESE mesh with {len(ese_mesh.vertices)} vertices"
                 self._log_queue.put(msg)
+
+            if electrodes is not None:
+                items = electrodes.items
+                localized = sum(1 for e in items if e.is_localized)
+                flagged = sum(1 for e in items if e.flagged)
+                shift = electrodes.calibrated_offset_shift_mm
+                msg = f"Stage 3: {localized}/{len(items)} electrodes localized ({flagged} flagged)"
+                if shift is not None:
+                    msg += f", ESE offset shift {shift:.2f} mm"
+                self._log_queue.put(msg)
+                self._stage3_summary = {
+                    "total": len(items),
+                    "localized": localized,
+                    "flagged": flagged,
+                    "offset_shift_mm": shift,
+                }
+            elif measurements_path:
+                self._log_queue.put("Stage 3 skipped: ESE mesh or measurements are not available.")
 
             self._log_queue.put("Pipeline completed successfully.")
             self._log_queue.put(_DONE_SENTINEL)
@@ -553,6 +692,9 @@ class VirdaApp:
         self._root.after(100, self._poll_log_queue)
 
     def _on_pipeline_done(self) -> None:
+        added = self._ensure_stage3_electrodes_group()
+        if added:
+            self._log_viewer.append(f"Electrode group added: {added}")
         self._run_btn.configure(state=tk.NORMAL)
         self._viewer_btn.configure(state=tk.NORMAL)
         self._export_btn.configure(state=tk.NORMAL)
@@ -568,10 +710,18 @@ class VirdaApp:
         if success:
             self._notebook.select(1)  # switch to Results tab
             project = self._last_project_dir or "—"
-            self._result_label.configure(
-                text=f"Pipeline completed.\nProject directory: {project}",
-                foreground="green",
-            )
+            text = f"Pipeline completed.\nProject directory: {project}"
+            summary = self._stage3_summary
+            if summary:
+                shift = summary["offset_shift_mm"]
+                shift_text = f", offset shift {shift:.2f} mm" if shift is not None else ""
+                text += (
+                    f"\nStage 3: {summary['localized']}/{summary['total']} electrodes "
+                    f"localized ({summary['flagged']} flagged{shift_text})"
+                )
+            else:
+                text += "\nStage 3: not run (no measurements provided)."
+            self._result_label.configure(text=text, foreground="green")
         else:
             self._result_label.configure(
                 text="Pipeline failed. Check the log for details.",
@@ -604,6 +754,12 @@ class VirdaApp:
             kwargs["fiducials_path"] = str(fiducials_path)
         if normals_path.exists():
             kwargs["normals_path"] = str(normals_path)
+
+        self._ensure_stage3_electrodes_group()
+        electrode_specs = self._collect_electrode_specs()
+        if electrode_specs:
+            kwargs["electrode_specs"] = electrode_specs
+            kwargs["electrodes_cras"] = self._electrodes_cras_var.get() == "true"
 
         if not kwargs:
             Messagebox.show_warning(
