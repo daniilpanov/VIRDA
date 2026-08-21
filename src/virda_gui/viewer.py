@@ -567,9 +567,11 @@ def main() -> None:
             fiducial_labels,
             font_size=12,
             text_color="white",
-            background_color="black",
             show_points=False,
-            shape=None,
+            shape="rounded_rect",
+            shape_color="black",
+            shape_opacity=0.65,
+            always_visible=True,
         )
 
     normals_actor = None
@@ -675,9 +677,11 @@ def main() -> None:
                     group["names"],
                     font_size=12,
                     text_color="white",
-                    background_color="black",
                     show_points=False,
-                    shape=None,
+                    shape="rounded_rect",
+                    shape_color="black",
+                    shape_opacity=0.65,
+                    always_visible=True,
                 )
             )
         electrode_actors_per_group.append(e_actors)
