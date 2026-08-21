@@ -43,5 +43,7 @@
     }
   },
   "ElectrodeCount": 60,
+  "ElectrodeOffset": 20,
+  "ElectrodeReference": "electrode_body_center",
   "Source": "MNE sample dataset (MNE-sample-data), subject sample: sample_audvis_raw.fif digitization"
 }

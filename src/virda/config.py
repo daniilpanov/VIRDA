@@ -89,6 +89,10 @@ def load_config_file(path: str | Path) -> dict[str, Any]:
         flat: dict[str, Any] = {}
         if coordsystem.electrode_count is not None:
             flat["n_electrodes"] = coordsystem.electrode_count
+        if coordsystem.electrode_offset_mm is not None:
+            flat["ese_offset_mm"] = coordsystem.electrode_offset_mm
+        if coordsystem.electrode_reference is not None:
+            flat["ese_reference"] = coordsystem.electrode_reference
         flat["coordsystem"] = coordsystem
         return flat
     return data
