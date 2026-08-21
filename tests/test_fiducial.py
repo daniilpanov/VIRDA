@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from typing import cast
 
@@ -98,3 +99,29 @@ class TestFiducialHelpers:
         assert lpa is not None
         assert lpa.name == "Left pre-auricular"
         assert lpa.definition_method == "manual"
+
+    def test_load_fiducials_accepts_mne_coordsystem_json(self, tmp_path: Path) -> None:
+        path = tmp_path / "coordsystem.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "CoordinateSystem": "RAS",
+                    "CoordinateUnits": "mm",
+                    "FiducialsCoordinates": {
+                        "NASION": {"Head": [0.0, 102.6, 0.0], "MRI": [3.38, 94.66, 32.26]},
+                        "LPA": {"Head": [-71.38, 0.0, 0.0], "MRI": [-69.26, 10.59, -25.0]},
+                        "RPA": {"Head": [75.27, 0.0, 0.0], "MRI": [77.29, 12.05, -25.4]},
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        fiducials = load_fiducials(path)
+
+        assert fiducials.ids == ["NAS", "LPA", "RPA"]
+        nas = fiducials.get("NAS")
+        assert nas is not None
+        assert nas.coordinates.tolist() == [3.38, 94.66, 32.26]
+        assert nas.coordinate_system == "world"
+        assert nas.definition_method == "imported"

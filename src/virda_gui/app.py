@@ -6,26 +6,39 @@ localization).  After a successful run the *Results* tab shows a summary and
 the user can open the interactive 3D viewer (with electrode overlays) or
 export an HTML viewer.
 
+The *Saved Results* tab browses the artifacts of any project directory:
+it lists everything saved by previous pipeline runs (mesh, fiducials, ESE,
+localization, QC reports, logs) with previews and one-click access to the 3D
+viewer / HTML export for that project.
+
 Electrode overlay groups (Stage 3 ``electrodes.json`` or tabular TSV/CSV
 tables) can be managed in the *Electrode Groups* section; after a run with
-measurements the localized ``stage3/electrodes.json`` is added automatically.
+measurements the localized ``localization/electrodes.json`` is added
+automatically. Fiducials from an MNE ``coordsystem.json`` loaded as the
+config file are passed to the pipeline automatically.
 """
 
+import json
+import os
 import queue
 import threading
 import tkinter as tk
+import tkinter.scrolledtext as scrolledtext
+from datetime import datetime
 from pathlib import Path
 from tkinter import ttk
 from typing import Any
 
+import numpy as np
 import ttkbootstrap as ttkb
-from ttkbootstrap.constants import BOTH, LEFT, YES, W, X
+from ttkbootstrap.constants import BOTH, LEFT, RIGHT, YES, E, W, X, Y
 from ttkbootstrap.dialogs import Messagebox
 
 from virda.config import load_config_file
 from virda.io.fiducial_helpers import load_fiducials
 from virda.main import run
 from virda.models.config import Config
+from virda.models.coordsystem import Coordsystem
 
 from .widgets import (
     DirectorySelector,
@@ -41,6 +54,21 @@ _EXPORT_DONE_SENTINEL = "__EXPORT_DONE__"
 _EXPORT_ERROR_SENTINEL = "__EXPORT_ERROR__"
 
 _ELECTRODE_PALETTE = ["yellow", "lime", "magenta", "cyan", "orange", "white"]
+
+_PROJECT_ARTIFACT_DIRS = [
+    "input",
+    "segmentation",
+    "mesh",
+    "fiducials",
+    "config",
+    "ese",
+    "localization",
+    "quality_control",
+    "logs",
+]
+
+_TEXT_PREVIEW_SUFFIXES = {".txt", ".log", ".csv", ".tsv", ".md"}
+_PREVIEW_MAX_CHARS = 8000
 
 _ADVANCED_FIELD_DEFAULTS: dict[str, str] = {
     "otsu_scope": "all",
@@ -258,6 +286,8 @@ class VirdaApp:
         self._electrode_rows: list[ElectrodeGroupRow] = []
         self._palette_index = 0
         self._stage3_summary: dict[str, Any] | None = None
+        self._coordsystem: Coordsystem | None = None
+        self._results_tree_paths: dict[str, Path] = {}
 
         self._build_ui()
         self._poll_log_queue()
@@ -276,8 +306,12 @@ class VirdaApp:
         self._results_frame = ttk.Frame(self._notebook)
         self._notebook.add(self._results_frame, text="  Results  ")
 
+        self._saved_results_frame = ttk.Frame(self._notebook)
+        self._notebook.add(self._saved_results_frame, text="  Saved Results  ")
+
         self._build_config_tab()
         self._build_results_tab()
+        self._build_saved_results_tab()
 
     # ---- Configuration tab ----
 
@@ -432,11 +466,86 @@ class VirdaApp:
         export_btn.pack(side=LEFT)
         self._results_export_btn = export_btn
 
+    # ---- Saved Results tab ----
+
+    def _build_saved_results_tab(self) -> None:
+        parent = self._saved_results_frame
+
+        row = ttk.Frame(parent)
+        row.pack(fill=X, padx=8, pady=(8, 4))
+
+        self._results_project_dir = DirectorySelector(row, label="Project dir")
+        self._results_project_dir.pack(side=LEFT, fill=X, expand=True)
+
+        ttkb.Button(
+            row,
+            text="Refresh",
+            bootstyle="secondary-outline",
+            command=self._refresh_saved_results,
+            width=10,
+        ).pack(side=LEFT, padx=(6, 0))
+
+        tree_frame = ttk.Frame(parent)
+        tree_frame.pack(fill=BOTH, expand=YES, padx=8, pady=4)
+
+        columns = ("size", "modified")
+        self._results_tree = ttk.Treeview(
+            tree_frame, columns=columns, selectmode="browse", show="tree headings", height=9
+        )
+        self._results_tree.heading("#0", text="Artifact", anchor=W)
+        self._results_tree.heading("size", text="Size", anchor=E)
+        self._results_tree.heading("modified", text="Modified", anchor=W)
+        self._results_tree.column("#0", stretch=True)
+        self._results_tree.column("size", width=90, minwidth=70, anchor=E, stretch=False)
+        self._results_tree.column("modified", width=150, minwidth=120, anchor=W, stretch=False)
+
+        tree_scroll = ttk.Scrollbar(tree_frame, orient="vertical", command=self._results_tree.yview)
+        self._results_tree.configure(yscrollcommand=tree_scroll.set)
+        self._results_tree.pack(side=LEFT, fill=BOTH, expand=YES)
+        tree_scroll.pack(side=LEFT, fill=Y)
+        self._results_tree.bind("<<TreeviewSelect>>", self._on_results_artifact_selected)
+
+        preview_frame = ttk.LabelFrame(parent, text="  Preview  ")
+        preview_frame.pack(fill=BOTH, expand=YES, padx=8, pady=(2, 4))
+
+        self._results_preview = scrolledtext.ScrolledText(
+            preview_frame, height=10, state=tk.DISABLED, wrap=tk.WORD, font=("TkDefaultFont", 9)
+        )
+        self._results_preview.pack(fill=BOTH, expand=True, padx=6, pady=6)
+
+        actions = ttk.Frame(parent)
+        actions.pack(fill=X, padx=8, pady=(0, 8))
+
+        ttkb.Button(
+            actions,
+            text="Open 3D Viewer",
+            bootstyle="info",
+            command=self._on_open_viewer_from_results,
+        ).pack(side=LEFT, padx=(0, 8))
+
+        ttkb.Button(
+            actions,
+            text="Export HTML Viewer",
+            bootstyle="secondary",
+            command=self._on_export_html_from_results,
+        ).pack(side=LEFT, padx=(0, 8))
+
+        ttkb.Button(
+            actions,
+            text="Show in Explorer",
+            bootstyle="secondary-outline",
+            command=self._on_show_in_explorer,
+        ).pack(side=LEFT)
+
+        self._results_summary_label = ttk.Label(actions, text="")
+        self._results_summary_label.pack(side=RIGHT)
+
     # ------------------------------------------------------------------
     # Config file handling
     # ------------------------------------------------------------------
 
     def _on_config_file_changed(self, *_args: Any) -> None:
+        self._coordsystem = None
         path = self._config_file.get()
         if not path:
             return
@@ -463,6 +572,10 @@ class VirdaApp:
         for config_key, adv_key in _CONFIG_KEY_TO_ADVANCED.items():
             if config_key in data and not self._advanced_values.get(adv_key):
                 self._advanced_values[adv_key] = str(data[config_key])
+
+        # Keep the parsed MNE coordsystem (its fiducials feed Stage 1).
+        coordsystem = data.get("coordsystem")
+        self._coordsystem = coordsystem if isinstance(coordsystem, Coordsystem) else None
 
     def _on_fiducials_path_changed(self, *_args: Any) -> None:
         path = self._fiducials.get()
@@ -524,14 +637,15 @@ class VirdaApp:
             specs.append((path, row.get_color()))
         return specs
 
-    def _ensure_stage3_electrodes_group(self) -> str | None:
+    def _ensure_stage3_electrodes_group(self, project_dir: str | Path | None = None) -> str | None:
         """Add the Stage 3 output as a group unless already present.
 
         Returns the added path or None when there is nothing to add.
         """
-        if not self._last_project_dir:
+        resolved = project_dir or self._last_project_dir
+        if not resolved:
             return None
-        electrodes_path = Path(self._last_project_dir) / "stage3" / "electrodes.json"
+        electrodes_path = Path(resolved) / "localization" / "electrodes.json"
         if not electrodes_path.is_file():
             return None
         path_str = str(electrodes_path)
@@ -569,6 +683,7 @@ class VirdaApp:
             project_dir=project,
             fiducials_path=fiducials or None,
             auto_detect_fiducials=self._auto_detect_fid.get() == "true",
+            coordsystem=self._coordsystem,
             closing_radius=_int(adv["closing_radius"], 5),
             otsu_scope=adv["otsu_scope"] or "all",  # type: ignore[arg-type]
             otsu_threshold_scale=_float(adv["otsu_threshold_scale"], 0.6),
@@ -700,6 +815,9 @@ class VirdaApp:
         self._export_btn.configure(state=tk.NORMAL)
         self._results_viewer_btn.configure(state=tk.NORMAL)
         self._results_export_btn.configure(state=tk.NORMAL)
+        if self._last_project_dir:
+            self._results_project_dir.set(self._last_project_dir)
+            self._refresh_saved_results()
         self._update_results_info(success=True)
 
     def _on_pipeline_error(self) -> None:
@@ -733,10 +851,26 @@ class VirdaApp:
     # ------------------------------------------------------------------
 
     def _on_open_viewer(self) -> None:
-        if not self._last_project_dir:
+        resolved = self._last_project_dir or self._project_dir.get().strip()
+        if not resolved:
+            Messagebox.show_warning(
+                "No project directory selected. Run the pipeline or pick a Project dir.",
+                parent=self._root,
+            )
             return
+        self._open_viewer(Path(resolved))
 
-        project = Path(self._last_project_dir)
+    def _on_open_viewer_from_results(self) -> None:
+        project = self._selected_results_project()
+        if project is None:
+            Messagebox.show_warning(
+                "Select a valid project directory on the Saved Results tab first.",
+                parent=self._root,
+            )
+            return
+        self._open_viewer(project)
+
+    def _open_viewer(self, project: Path) -> None:
         mesh_path = project / "mesh" / "final_mesh.ply"
         fiducials_path = project / "fiducials" / "fiducials.json"
         normals_path = project / "ese" / "normals.npy"
@@ -748,6 +882,13 @@ class VirdaApp:
         kwargs: dict[str, Any] = {}
         if nifti:
             kwargs["nifti_path"] = nifti
+        else:
+            # Fall back to the MRI copy stored in the project directory.
+            for pattern in ("input/*.nii.gz", "input/*.nii"):
+                found = sorted(project.glob(pattern))
+                if found:
+                    kwargs["nifti_path"] = str(found[0])
+                    break
         if mesh_path.exists():
             kwargs["mesh_path"] = str(mesh_path)
         if fiducials_path.exists():
@@ -755,7 +896,7 @@ class VirdaApp:
         if normals_path.exists():
             kwargs["normals_path"] = str(normals_path)
 
-        self._ensure_stage3_electrodes_group()
+        self._ensure_stage3_electrodes_group(project)
         electrode_specs = self._collect_electrode_specs()
         if electrode_specs:
             kwargs["electrode_specs"] = electrode_specs
@@ -770,10 +911,26 @@ class VirdaApp:
         threading.Thread(target=show_viewer, kwargs=kwargs, daemon=True).start()
 
     def _on_export_html(self) -> None:
-        if not self._last_project_dir:
+        resolved = self._last_project_dir or self._project_dir.get().strip()
+        if not resolved:
+            Messagebox.show_warning(
+                "No project directory selected. Run the pipeline or pick a Project dir.",
+                parent=self._root,
+            )
             return
+        self._export_html(Path(resolved))
 
-        project = Path(self._last_project_dir)
+    def _on_export_html_from_results(self) -> None:
+        project = self._selected_results_project()
+        if project is None:
+            Messagebox.show_warning(
+                "Select a valid project directory on the Saved Results tab first.",
+                parent=self._root,
+            )
+            return
+        self._export_html(project)
+
+    def _export_html(self, project: Path) -> None:
         output = project / "viewer.html"
 
         self._log_viewer.append(f"Exporting HTML viewer to {output}...")
@@ -790,6 +947,170 @@ class VirdaApp:
                 self._log_queue.put(_EXPORT_ERROR_SENTINEL)
 
         threading.Thread(target=_export, daemon=True).start()
+
+    # ------------------------------------------------------------------
+    # Saved Results tab
+    # ------------------------------------------------------------------
+
+    def _selected_results_project(self) -> Path | None:
+        raw = self._results_project_dir.get().strip()
+        if not raw:
+            return None
+        project = Path(raw)
+        return project if project.is_dir() else None
+
+    def _refresh_saved_results(self) -> None:
+        tree = self._results_tree
+        for iid in tree.get_children():
+            tree.delete(iid)
+        self._results_tree_paths.clear()
+        self._set_results_preview("")
+
+        project = self._selected_results_project()
+        if project is None:
+            self._results_summary_label.configure(text="Select a valid project directory.")
+            return
+
+        root_iid = tree.insert("", "end", text=project.name, open=True, values=("<dir>", ""))
+        self._results_tree_paths[root_iid] = project
+
+        known = [name for name in _PROJECT_ARTIFACT_DIRS if (project / name).is_dir()]
+        extra_dirs = sorted(
+            entry.name
+            for entry in project.iterdir()
+            if entry.is_dir() and entry.name not in _PROJECT_ARTIFACT_DIRS
+        )
+        loose_files = sorted(entry for entry in project.iterdir() if entry.is_file())
+
+        n_files = 0
+        for subdir in known + extra_dirs:
+            node = project / subdir
+            group_iid = tree.insert(root_iid, "end", text=subdir, open=False, values=("<dir>", ""))
+            self._results_tree_paths[group_iid] = node
+            for file_path in sorted(node.rglob("*")):
+                if not file_path.is_file():
+                    continue
+                rel = file_path.relative_to(node).as_posix()
+                child = tree.insert(
+                    group_iid,
+                    "end",
+                    text=rel,
+                    values=(self._format_file_size(file_path), self._format_mtime(file_path)),
+                )
+                self._results_tree_paths[child] = file_path
+                n_files += 1
+
+        for file_path in loose_files:
+            child = tree.insert(
+                root_iid,
+                "end",
+                text=file_path.name,
+                values=(self._format_file_size(file_path), self._format_mtime(file_path)),
+            )
+            self._results_tree_paths[child] = file_path
+            n_files += 1
+
+        self._results_summary_label.configure(
+            text=f"{n_files} file(s)" if n_files else "No saved artifacts found yet."
+        )
+
+    def _on_results_artifact_selected(self, *_args: Any) -> None:
+        selection = self._results_tree.selection()
+        if not selection:
+            return
+        path = self._results_tree_paths.get(selection[0])
+        if path is None:
+            return
+        try:
+            if path.is_dir():
+                n = sum(1 for p in path.rglob("*") if p.is_file())
+                preview = f"{path}\n\n{n} file(s) in this folder."
+            else:
+                preview = self._preview_artifact(path)
+        except Exception as exc:
+            preview = f"Failed to read {path}:\n{exc}"
+        self._set_results_preview(preview)
+
+    def _set_results_preview(self, text: str) -> None:
+        self._results_preview.configure(state=tk.NORMAL)
+        self._results_preview.delete("1.0", tk.END)
+        self._results_preview.insert(tk.END, text)
+        self._results_preview.configure(state=tk.DISABLED)
+
+    @staticmethod
+    def _format_file_size(path: Path) -> str:
+        size = float(path.stat().st_size)
+        for unit in ("B", "KB", "MB", "GB"):
+            if size < 1024 or unit == "GB":
+                return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+            size /= 1024
+        return f"{size:.1f} GB"
+
+    @staticmethod
+    def _format_mtime(path: Path) -> str:
+        return datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+
+    @staticmethod
+    def _preview_artifact(path: Path) -> str:
+        """Human-readable preview of a saved artifact (JSON/NIfTI/npy/PLY/text)."""
+        name = path.name.lower()
+        suffix = path.suffix.lower()
+        header_text = f"{path}\n{'-' * 60}\n"
+
+        def _truncate(body: str) -> str:
+            if len(body) > _PREVIEW_MAX_CHARS:
+                body = (
+                    body[:_PREVIEW_MAX_CHARS]
+                    + f"\n\n... (truncated to first {_PREVIEW_MAX_CHARS} characters)"
+                )
+            return header_text + body
+
+        if suffix == ".json":
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return _truncate(json.dumps(data, indent=2, ensure_ascii=False))
+
+        if name.endswith((".nii.gz", ".nii")):
+            import nibabel as nib
+
+            img: Any = nib.load(str(path))
+            nii_header: Any = img.header
+            shape = tuple(int(v) for v in nii_header.get_data_shape())
+            zooms = tuple(round(float(z), 3) for z in nii_header.get_zooms()[:3])
+            return (
+                header_text + f"NIfTI volume\n  shape         : {shape}\n  spacing (mm)  : {zooms}"
+            )
+
+        if suffix == ".npy":
+            array = np.load(path, allow_pickle=False)
+            body = f"NumPy array\n  shape : {array.shape}\n  dtype : {array.dtype}"
+            return _truncate(body)
+
+        if suffix == ".ply":
+            lines: list[str] = []
+            with open(path, "rb") as fh:
+                for line in fh:
+                    decoded = line.decode("ascii", errors="replace").rstrip("\r\n")
+                    lines.append(decoded)
+                    if len(lines) >= 100 or decoded.strip() == "end_header":
+                        break
+            return _truncate("PLY header:\n" + "\n".join(lines))
+
+        if suffix in _TEXT_PREVIEW_SUFFIXES:
+            return _truncate(path.read_text(encoding="utf-8", errors="replace"))
+
+        size_kb = path.stat().st_size / 1024
+        return header_text + f"(binary file, no preview — {size_kb:.1f} KB)"
+
+    def _on_show_in_explorer(self) -> None:
+        project = self._selected_results_project()
+        if project is None:
+            Messagebox.show_warning(
+                "Select a valid project directory on the Saved Results tab first.",
+                parent=self._root,
+            )
+            return
+        if hasattr(os, "startfile"):
+            os.startfile(str(project))  # noqa: S606 - opens the folder in Explorer
 
     # ------------------------------------------------------------------
     # Lifecycle

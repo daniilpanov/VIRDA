@@ -1,5 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import importlib.util
 import os
 import re
 import sys
@@ -27,6 +28,22 @@ PATH_EX = []
 
 CONSOLE = True
 DEBUG = False
+
+# ==========================================================
+# Исключения из прод-сборки
+#
+# mypy — dev-зависимость и в рантайме не нужна. pyvista
+# импортирует pyvista.typing.mypy_plugin, но тот поднимает mypy
+# только если он установлен (importlib.util.find_spec('mypy')).
+# Без mypy в бандле этот блок просто пропускается. Заодно это
+# чинит ModuleNotFoundError: No module named '<hash>__mypyc' —
+# скомпилированные (mypyc) модули mypy PyInstaller собирает
+# без их hash-named общих расширений.
+# ==========================================================
+
+EXCLUDED_MODULES = [
+    "mypy",
+]
 
 # ==========================================================
 # Базовые списки PyInstaller
@@ -542,7 +559,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=runtime_hooks,
-    excludes=[],
+    excludes=EXCLUDED_MODULES,
     noarchive=False,
     optimize=0,
 )

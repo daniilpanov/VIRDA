@@ -6,6 +6,7 @@ from typing import Any, cast
 
 import numpy as np
 
+from virda.models.coordsystem import Coordsystem
 from virda.models.fiducial import Fiducial, Fiducials
 
 
@@ -28,8 +29,15 @@ def save_fiducials(path: Path, fiducials: Fiducials) -> None:
 
 
 def load_fiducials(path: Path) -> Fiducials:
-    """Read a JSON file written by :func:`save_fiducials` into a :class:`Fiducials` model."""
+    """Read a JSON file into a :class:`Fiducials` model.
+
+    Accepts both the format written by :func:`save_fiducials` and MNE-style
+    ``coordsystem.json`` files (detected by their ``FiducialsCoordinates``
+    key); the latter are converted via :meth:`Coordsystem.to_fiducials`.
+    """
     data = cast(dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
+    if "FiducialsCoordinates" in data:
+        return Coordsystem.model_validate(data).to_fiducials()
     items = [
         Fiducial(
             fiducial_id=item["fiducial_id"],
