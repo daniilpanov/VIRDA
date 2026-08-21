@@ -190,17 +190,21 @@ def run(
         .run()
         .get_store_notnull(ESEMesh)
     )
-    electrodes = _run_stage3(config, stage1_result, ese_mesh, measurements_path)
+    electrodes = run_stage3(config, stage1_result, ese_mesh, measurements_path)
     return stage1_result, ese_mesh, electrodes
 
 
-def _run_stage3(
+def run_stage3(
     config: Config,
     stage1_result: Stage1Result,
     ese_mesh: ESEMesh | None,
     measurements_path: str | Path | None = None,
 ) -> Electrodes | None:
-    """Build and export localized electrodes when ESE and measurements are available."""
+    """Localize electrodes (Stage 3) from precomputed Stage 1/2 results.
+
+    Allows callers that already have the scalp mesh and ESE surface to run
+    localization without repeating Stages 1-2.
+    """
     from virda.io.loader.measurements_loader import MeasurementsLoaderFromJson
     from virda.localization.brute_force_localizer import BruteForceLocalizer
     from virda.models.fiducial import Fiducials
