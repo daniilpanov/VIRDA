@@ -42,7 +42,8 @@ one color -- flagged ones are drawn larger and in a deeper shade of it. Each
 group has
 a visibility toggle and per-electrode ID labels (taken from the
 ``electrode_id``/``name`` field, with generated ``E001``-style fallbacks when
-absent); a global "Show labels" checkbox hides every label at once.
+absent); unchecking a group (or "Show fiducials") hides its labels too, and a
+global "Show labels" checkbox hides every label at once.
 Tabular files usually store FreeSurfer cRAS coordinates. When a scalp mesh is
 supplied the correct frame is detected automatically per file (the frame whose
 points sit closer to the mesh wins) and reported on stdout; pass
@@ -466,24 +467,6 @@ def _print_qc(
     print("=" * 62)
 
 
-def _add_electrode_checkbox(
-    plotter: pv.Plotter,
-    y: int,
-    label: str,
-    color: str,
-    point_actors: list,
-    link_actors: list,
-) -> None:
-    all_actors = point_actors + link_actors
-
-    def _toggle(flag: bool) -> None:
-        for a in all_actors:
-            a.SetVisibility(flag)
-
-    plotter.add_checkbox_button_widget(_toggle, value=True, position=(10, y))
-    plotter.add_text(f"Show {label}", position=(75, y + 10), font_size=18, name=f"elec_{label}")
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="virda-gui",
@@ -782,10 +765,37 @@ def main() -> None:
         plotter.add_checkbox_button_widget(set_mri_visibility, value=True, position=(10, y))
         plotter.add_text("Show MRI", position=(75, y + 10), font_size=18, name="mri_label")
         y += 50
+
+    # Visibility is state-driven: a label is shown only when both its group
+    # (or the fiducials) and the global "Show labels" toggle are on.
+    fiducial_state = {"on": True}
+    labels_state = {"on": True}
+    group_states = [{"on": True} for _ in electrode_groups]
+
+    def _apply_labels_visibility() -> None:
+        for gi in range(len(electrode_groups)):
+            for a in label_actors_per_group[gi]:
+                a.SetVisibility(group_states[gi]["on"] and labels_state["on"])
+        if fiducial_label_actor is not None:
+            fiducial_label_actor.SetVisibility(fiducial_state["on"] and labels_state["on"])
+
+    def _apply_group_visibility(gi: int) -> None:
+        visible = group_states[gi]["on"]
+        for a in (
+            electrode_actors_per_group[gi]
+            + flagged_actors_per_group[gi]
+            + link_actors_per_group[gi]
+        ):
+            a.SetVisibility(visible)
+        for a in label_actors_per_group[gi]:
+            a.SetVisibility(visible and labels_state["on"])
+
     if fiducial_actor is not None:
 
         def set_fiducials_visibility(flag: bool) -> None:
-            fiducial_actor.SetVisibility(flag)
+            fiducial_state["on"] = bool(flag)
+            fiducial_actor.SetVisibility(fiducial_state["on"])
+            _apply_labels_visibility()
 
         plotter.add_checkbox_button_widget(set_fiducials_visibility, value=True, position=(10, y))
         plotter.add_text(
@@ -801,30 +811,40 @@ def main() -> None:
         plotter.add_text("Show normals", position=(75, y + 10), font_size=18, name="normals_label")
         y += 50
 
-    label_toggle_actors: list[Any] = [a for actors in label_actors_per_group for a in actors]
-    if fiducial_label_actor is not None:
-        label_toggle_actors.append(fiducial_label_actor)
-    if label_toggle_actors:
+    if any(label_actors_per_group) or fiducial_label_actor is not None:
 
         def set_labels_visibility(flag: bool) -> None:
-            for a in label_toggle_actors:
-                a.SetVisibility(flag)
+            labels_state["on"] = bool(flag)
+            _apply_labels_visibility()
 
         plotter.add_checkbox_button_widget(set_labels_visibility, value=True, position=(10, y))  # type: ignore[arg-type]
         plotter.add_text("Show labels", position=(75, y + 10), font_size=18, name="labels_label")
         y += 50
-    for group, e_actors, f_actors, l_actors in zip(
-        electrode_groups,
-        electrode_actors_per_group,
-        flagged_actors_per_group,
-        link_actors_per_group,
-        strict=True,
+    for gi, (group, e_actors, f_actors, l_actors) in enumerate(
+        zip(
+            electrode_groups,
+            electrode_actors_per_group,
+            flagged_actors_per_group,
+            link_actors_per_group,
+            strict=True,
+        )
     ):
         label = group["label"]
         color = group["color"]
         all_actors = e_actors + f_actors
-        if all_actors or l_actors:
-            _add_electrode_checkbox(plotter, y, label, color, all_actors, l_actors)
+
+        def make_group_toggle(idx: int) -> Any:
+            def _toggle(flag: bool) -> None:
+                group_states[idx]["on"] = bool(flag)
+                _apply_group_visibility(idx)
+
+            return _toggle
+
+        if all_actors or l_actors or label_actors_per_group[gi]:
+            plotter.add_checkbox_button_widget(make_group_toggle(gi), value=True, position=(10, y))  # type: ignore[arg-type]
+            plotter.add_text(
+                f"Show {label}", position=(75, y + 10), font_size=18, name=f"elec_{label}"
+            )
             y += 50
     plotter.add_checkbox_button_widget(set_contrast, value=False, position=(10, y))
     plotter.add_text("Boost contrast", position=(75, y + 10), font_size=18, name="contrast_label")
