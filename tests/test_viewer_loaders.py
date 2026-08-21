@@ -36,20 +36,38 @@ class TestTabularCrasConversion:
         _write_tsv(path, [("Fz", 1.0, 2.0, 3.0), ("Cz", 4.0, 5.0, 6.0)])
         offset = np.array([10.0, -1.0, 0.5])
 
-        points, residuals, flags, measured = _load_electrodes(str(path), cras_offset=offset)
+        points, residuals, flags, measured, names = _load_electrodes(str(path), cras_offset=offset)
 
         assert np.asarray(points) == pytest.approx(np.array([[11.0, 1.0, 3.5], [14.0, 4.0, 6.5]]))
         assert len(residuals) == 2
         assert not flags.any()
         assert measured == [{}, {}]
+        assert names == ["Fz", "Cz"]
 
     def test_without_offset_points_unchanged(self, tmp_path: Path) -> None:
         path = tmp_path / "electrodes.tsv"
         _write_tsv(path, [("Fz", 1.0, 2.0, 3.0)])
 
-        points, _, _, _ = _load_electrodes(str(path))
+        points, _, _, _, _ = _load_electrodes(str(path))
 
         assert np.asarray(points) == pytest.approx(np.array([[1.0, 2.0, 3.0]]))
+
+    def test_missing_name_column_generates_ids(self, tmp_path: Path) -> None:
+        path = tmp_path / "electrodes.csv"
+        path.write_text("x,y,z\n1,2,3\n4,5,6\n", encoding="utf-8")
+
+        _, _, _, _, names = _load_electrodes(str(path))
+
+        assert names == ["E001", "E002"]
+
+    def test_blank_name_cell_generates_id(self, tmp_path: Path) -> None:
+        path = tmp_path / "electrodes.tsv"
+        lines = ["name\tx\ty\tz", "\t1\t2\t3"]
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        _, _, _, _, names = _load_electrodes(str(path))
+
+        assert names == ["E001"]
 
     def test_json_group_ignores_cras_offset(self, tmp_path: Path) -> None:
         path = tmp_path / "electrodes.json"
@@ -68,8 +86,25 @@ class TestTabularCrasConversion:
         )
         offset = np.array([100.0, 100.0, 100.0])
 
-        points, residuals, flags, _ = _load_electrodes(str(path), cras_offset=offset)
+        points, residuals, flags, _, names = _load_electrodes(str(path), cras_offset=offset)
 
         assert np.asarray(points) == pytest.approx(np.array([[1.0, 2.0, 3.0]]))
         assert residuals == pytest.approx([0.5])
         assert not flags.any()
+        assert names == ["E1"]
+
+    def test_json_without_ids_generates_names(self, tmp_path: Path) -> None:
+        path = tmp_path / "electrodes.json"
+        path.write_text(
+            json.dumps(
+                [
+                    {"coords": [1.0, 2.0, 3.0]},
+                    {"coords": [4.0, 5.0, 6.0], "electrode_id": "Cz"},
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        _, _, _, _, names = _load_electrodes(str(path))
+
+        assert names == ["E001", "Cz"]

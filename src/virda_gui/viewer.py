@@ -36,7 +36,9 @@ the ``stage2/`` output directory (``ese_vertices.npy`` + ``normals.npy``);
 the Stage 3 ``electrodes.json`` (localized electrodes colored by residual error,
 with fiducial links) or a tabular file with ``name``, ``x``, ``y``, ``z``
 columns (shown as yellow spheres without links). May be repeated to overlay
-multiple electrode groups; each group gets its own color and visibility toggle.
+multiple electrode groups; each group gets its own color, visibility toggle
+and per-electrode ID labels (taken from the ``electrode_id``/``name`` field,
+with generated ``E001``-style fallbacks when absent).
 Tabular files usually store FreeSurfer cRAS coordinates; pass
 ``--electrodes-cras`` (requires ``--nifti``) to convert them into scanner RAS
 so they overlay the MRI correctly. Stage 3 JSON output never needs the flag.
@@ -50,6 +52,7 @@ in world coordinates and are transformed into the scene frame accordingly.
 
 import argparse
 import json
+from typing import Any
 
 import nibabel as nib
 import numpy as np
@@ -148,14 +151,16 @@ def _create_normal_glyphs(
 def _load_electrodes(
     path: str,
     cras_offset: np.ndarray | None = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[dict[str, float]]]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[dict[str, float]], list[str]]:
     """Load electrodes from a Stage 3 JSON or a tabular CSV/TSV file.
 
     Dispatches to ``_load_electrodes_from_json`` for ``.json`` files and to
     ``_load_electrodes_from_csv`` for everything else (``.tsv``, ``.csv``,
     ``.txt``).  ``cras_offset`` applies only to tabular files: Stage 3 JSON
     output is already in scanner RAS, while TSV/CSV electrode tables may
-    store FreeSurfer cRAS coordinates that need converting first.
+    store FreeSurfer cRAS coordinates that need converting first.  Returns
+    per-electrode display names (the ``electrode_id``/``name`` field, or a
+    generated ``E001``-style fallback).
     """
     if path.endswith(".json"):
         return _load_electrodes_from_json(path)
@@ -164,12 +169,12 @@ def _load_electrodes(
 
 def _load_electrodes_from_json(
     path: str,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[dict[str, float]]]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[dict[str, float]], list[str]]:
     """Read ``electrodes.json`` from the Stage 3 output.
 
-    Returns scalp points, residuals and flags of the localized electrodes, plus
-    the measured distances per electrode (used to draw fiducial links). Non-
-    localized electrodes are skipped.
+    Returns scalp points, residuals, flags, measured distances and display
+    names of the localized electrodes (used to draw fiducial links and ID
+    labels). Non-localized electrodes are skipped.
     """
     with open(path, encoding="utf-8") as fh:
         data = json.load(fh)
@@ -177,7 +182,8 @@ def _load_electrodes_from_json(
     residuals: list[float] = []
     flags: list[bool] = []
     measured: list[dict[str, float]] = []
-    for item in data:
+    names: list[str] = []
+    for index, item in enumerate(data):
         coords = item.get("coords") or item.get("scalp_coords")
         if coords is None:
             continue
@@ -190,15 +196,22 @@ def _load_electrodes_from_json(
                 for fiducial_id, distance in item.get("measured_distances", {}).items()
             }
         )
+        names.append(str(item.get("electrode_id") or f"E{index + 1:03d}"))
     if not points:
-        return np.empty((0, 3)), np.empty(0), np.empty(0), []
-    return np.asarray(points), np.asarray(residuals), np.asarray(flags, dtype=bool), measured
+        return np.empty((0, 3)), np.empty(0), np.empty(0), [], []
+    return (
+        np.asarray(points),
+        np.asarray(residuals),
+        np.asarray(flags, dtype=bool),
+        measured,
+        names,
+    )
 
 
 def _load_electrodes_from_csv(
     path: str,
     cras_offset: np.ndarray | None = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[dict[str, float]]]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[dict[str, float]], list[str]]:
     """Read electrodes from a TSV/CSV with columns: name, x, y, z.
 
     Returns positions with zero residuals, no flags and no fiducial links.
@@ -226,15 +239,19 @@ def _load_electrodes_from_csv(
                     f"found: {list(reader.fieldnames)}"
                 )
 
+        name_col = col_map.get("name")
         points: list[np.ndarray] = []
-        for row in reader:
+        names: list[str] = []
+        for index, row in enumerate(reader):
             x = float(row[col_map["x"]])
             y = float(row[col_map["y"]])
             z = float(row[col_map["z"]])
             points.append(np.array([x, y, z]))
+            raw_name = row.get(name_col) if name_col is not None else None
+            names.append(str(raw_name).strip() if raw_name else f"E{index + 1:03d}")
 
     if not points:
-        return np.empty((0, 3)), np.empty(0), np.empty(0, dtype=bool), []
+        return np.empty((0, 3)), np.empty(0), np.empty(0, dtype=bool), [], []
     positions = np.asarray(points)
     if cras_offset is not None:
         positions = positions + cras_offset
@@ -243,6 +260,7 @@ def _load_electrodes_from_csv(
         np.zeros(len(points)),
         np.zeros(len(points), dtype=bool),
         [{} for _ in points],
+        names,
     )
 
 
@@ -369,8 +387,9 @@ def _add_electrode_checkbox(
     color: str,
     point_actors: list,
     link_actors: list,
+    label_actors: list[Any] | None = None,
 ) -> None:
-    all_actors = point_actors + link_actors
+    all_actors = point_actors + link_actors + (label_actors or [])
 
     def _toggle(flag: bool) -> None:
         for a in all_actors:
@@ -529,7 +548,7 @@ def main() -> None:
 
     electrode_groups: list[dict] = []
     for epath in args.electrodes:
-        points, residuals, flags, measured = _load_electrodes(epath, cras_offset=cras_offset)
+        points, residuals, flags, measured, names = _load_electrodes(epath, cras_offset=cras_offset)
         if points is not None and len(points) > 0 and not mm_scene:
             points = transform_points(points, np.linalg.inv(affine))
         label = epath.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
@@ -539,6 +558,7 @@ def main() -> None:
                 "residuals": residuals,
                 "flags": flags,
                 "measured": measured,
+                "names": names,
                 "label": label,
             }
         )
@@ -546,6 +566,7 @@ def main() -> None:
     electrode_actors_per_group: list[list] = []
     flagged_actors_per_group: list[list] = []
     link_actors_per_group: list[list] = []
+    label_actors_per_group: list[list[Any]] = []
     for gi, group in enumerate(electrode_groups):
         pts = group["points"]
         res = group["residuals"]
@@ -555,6 +576,7 @@ def main() -> None:
         e_actors: list = []
         f_actors: list = []
         l_actors: list = []
+        n_actors: list[Any] = []
         if pts is not None and len(pts) > 0:
             is_tabular = bool(np.all(res == 0))
             if is_tabular:
@@ -591,9 +613,21 @@ def main() -> None:
             if len(links) > 0:
                 flat = links.reshape(-1, 3)
                 l_actors.append(plotter.add_lines(flat, color=color, width=1))
+            n_actors.append(
+                plotter.add_point_labels(
+                    pts,
+                    group["names"],
+                    font_size=12,
+                    text_color="white",
+                    background_color="black",
+                    show_points=False,
+                    shape=None,
+                )
+            )
         electrode_actors_per_group.append(e_actors)
         flagged_actors_per_group.append(f_actors)
         link_actors_per_group.append(l_actors)
+        label_actors_per_group.append(n_actors)
 
     y = 10
     mri_visible = {"on": True}
@@ -671,20 +705,21 @@ def main() -> None:
         plotter.add_checkbox_button_widget(set_normals_visibility, value=True, position=(10, y))
         plotter.add_text("Show normals", position=(75, y + 10), font_size=18, name="normals_label")
         y += 50
-    for gi, (group, e_actors, f_actors, l_actors) in enumerate(
+    for gi, (group, e_actors, f_actors, l_actors, n_actors) in enumerate(
         zip(
             electrode_groups,
             electrode_actors_per_group,
             flagged_actors_per_group,
             link_actors_per_group,
+            label_actors_per_group,
             strict=True,
         )
     ):
         label = group["label"]
         color = _ELECTRODE_COLORS[gi % len(_ELECTRODE_COLORS)]
         all_actors = e_actors + f_actors
-        if all_actors or l_actors:
-            _add_electrode_checkbox(plotter, y, label, color, all_actors, l_actors)
+        if all_actors or l_actors or n_actors:
+            _add_electrode_checkbox(plotter, y, label, color, all_actors, l_actors, n_actors)
             y += 50
     plotter.add_checkbox_button_widget(set_contrast, value=False, position=(10, y))
     plotter.add_text("Boost contrast", position=(75, y + 10), font_size=18, name="contrast_label")
