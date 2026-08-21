@@ -353,7 +353,8 @@ def main() -> None:
                 mesh_actor.prop.specular_power = 100.0
                 mesh_actor.prop.ambient = 0.0
         if volume is not None:
-            plotter.remove_scalar_bar()
+            if "intensity" in plotter.scalar_bars:
+                plotter.remove_scalar_bar("intensity")
             plotter.remove_actor(mri_actor)
             if flag:
                 mri_actor = plotter.add_volume(
