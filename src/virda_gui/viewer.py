@@ -23,7 +23,7 @@ Usage
         --ese-mesh <stage2/ese_mesh.ply> --normals <stage2/>
     virda-gui --nifti <scan.nii.gz> --mesh <final_mesh.ply> \\
         --ese-mesh <stage2/ese_mesh.ply> --fiducials <fiducials.json> \\
-        --electrodes <localization/electrodes.json>
+        --electrodes <stage3/electrodes.json>
     virda-gui --nifti <scan.nii.gz> --mesh <final_mesh.ply> \\
         --electrodes <electrodes.tsv>
     virda-gui --nifti <scan.nii.gz> --mesh <final_mesh.ply> \\
@@ -55,6 +55,10 @@ millimeters; otherwise the mesh is transformed into voxel index space so that
 the overlay stays correct for rotated or flipped affines as well. A mesh shown
 on its own stays in its native (world) coordinates. Fiducial points are stored
 in world coordinates and are transformed into the scene frame accordingly.
+
+The :func:`show_viewer` function exposes the same functionality for
+programmatic use (e.g. from the tkinter application); ``main()`` only parses
+the CLI arguments and delegates to it.
 """
 
 import argparse
@@ -467,74 +471,30 @@ def _print_qc(
     print("=" * 62)
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        prog="virda-gui",
-        description="Interactive 3D viewer: scalp mesh and/or MRI volume.",
-    )
-    parser.add_argument("--nifti", help="Path to the T1-weighted NIfTI scan.")
-    parser.add_argument("--mesh", help="Path to the scalp mesh (PLY).")
-    parser.add_argument(
-        "--downsample",
-        type=int,
-        default=1,
-        help="Voxel stride for volume downsampling (1 = full resolution).",
-    )
-    parser.add_argument(
-        "--mesh-opacity", type=float, default=0.6, help="Scalp mesh opacity (0..1)."
-    )
-    parser.add_argument(
-        "--fiducials",
-        help="Path to fiducials JSON (fiducials/fiducials.json).",
-    )
-    parser.add_argument(
-        "--normals",
-        help="Path to normals file (normals.npy) for visualisation.",
-    )
-    parser.add_argument(
-        "--normals-scale",
-        type=float,
-        default=3.0,
-        help="Visual length of normal arrows in scene units (default: 3.0).",
-    )
-    parser.add_argument(
-        "--normals-density",
-        type=int,
-        default=500,
-        help="Show one normal per N vertices (default: 500).",
-    )
-    parser.add_argument(
-        "--electrodes",
-        action="append",
-        nargs="*",
-        default=[],
-        metavar="FILE [COLOR]",
-        help=(
-            "Electrodes file: Stage 3 JSON (.json) "
-            "or tabular with name/x/y/z columns (.tsv/.csv), "
-            "optionally followed by a color for the whole group, e.g. "
-            "--electrodes electrodes.tsv yellow. May be repeated to overlay "
-            "multiple groups (without a color each group gets the next "
-            "palette entry)."
-        ),
-    )
-    parser.add_argument(
-        "--electrodes-cras",
-        action="store_true",
-        help=(
-            "Force cRAS -> scanner RAS conversion of tabular electrode files "
-            "(.tsv/.csv) using the --nifti affine. Without the flag the frame "
-            "is detected automatically when a --mesh is supplied (the frame "
-            "whose points sit closer to the mesh wins). Stage 3 JSON output "
-            "is always already in scanner RAS."
-        ),
-    )
-    args = parser.parse_args()
+def show_viewer(
+    nifti_path: str | None = None,
+    mesh_path: str | None = None,
+    fiducials_path: str | None = None,
+    normals_path: str | None = None,
+    downsample_stride: int = 1,
+    mesh_opacity: float = 0.6,
+    normals_scale: float = 3.0,
+    normals_density: int = 500,
+    electrode_specs: list[tuple[str, str | None]] | None = None,
+    electrodes_cras: bool = False,
+) -> None:
+    """Launch the interactive 3D viewer window.
 
-    if not args.nifti and not args.mesh:
-        parser.error("at least one of --nifti or --mesh is required")
-    if args.electrodes_cras and not args.nifti:
-        parser.error("--electrodes-cras requires --nifti")
+    Parameters map directly to the CLI flags of ``virda-gui``.  At least one of
+    *nifti_path* or *mesh_path* must be provided.  *electrode_specs* is a list
+    of ``(path, color)`` pairs as produced by :func:`_parse_electrode_specs`;
+    pass ``electrodes_cras=True`` to force the FreeSurfer cRAS -> scanner RAS
+    conversion of tabular electrode files.
+    """
+    if not nifti_path and not mesh_path:
+        raise ValueError("at least one of nifti_path or mesh_path is required")
+    if electrodes_cras and not nifti_path:
+        raise ValueError("electrodes_cras requires nifti_path")
 
     data = None
     affine = None
@@ -542,31 +502,31 @@ def main() -> None:
     orientation = None
     hi_clim = None
     cras_offset: np.ndarray | None = None
-    if args.nifti:
-        nifti_img = nib.load(args.nifti)
+    if nifti_path:
+        nifti_img = nib.load(nifti_path)
         data = nifti_img.get_fdata(dtype=np.float32)
         if data.ndim == 4:
             data = data[..., 0]
         affine = nifti_img.affine
         orientation = aff2axcodes(affine)
         cras_offset = _cras_to_scanner_ras_offset(affine, tuple(int(d) for d in data.shape))
-        if args.downsample > 1:
-            data, affine = downsample(data, affine, args.downsample)
+        if downsample_stride > 1:
+            data, affine = downsample(data, affine, downsample_stride)
         spacing = tuple(float(zoom) for zoom in np.linalg.norm(affine[:3, :3], axis=0))
         hi_clim = percentile_clim(data)
 
-    mesh_poly = _load_mesh_poly(args.mesh) if args.mesh else None
+    mesh_poly = _load_mesh_poly(mesh_path) if mesh_path else None
     volume, scene_mesh, mm_scene = _build_scene(data, affine, mesh_poly)
     _print_qc(spacing, orientation, volume, scene_mesh, affine, mm_scene)
 
     fiducial_points = None
     fiducial_labels: list[str] = []
-    if args.fiducials:
-        fiducial_points, fiducial_labels = load_fiducial_points(args.fiducials)
+    if fiducials_path:
+        fiducial_points, fiducial_labels = load_fiducial_points(fiducials_path)
 
     normals_data = None
-    if args.normals:
-        normals_data = load_normals(args.normals)
+    if normals_path:
+        normals_data = load_normals(normals_path)
         if scene_mesh is not None and normals_data.shape[0] != scene_mesh.n_points:
             raise ValueError(
                 f"Normals count ({normals_data.shape[0]}) does not match "
@@ -579,7 +539,7 @@ def main() -> None:
     if volume is not None:
         mri_actor = plotter.add_volume(volume, cmap="bone", opacity="sigmoid", mapper="smart")
     if scene_mesh is not None:
-        mesh_actor = plotter.add_mesh(scene_mesh, color="salmon", opacity=args.mesh_opacity)
+        mesh_actor = plotter.add_mesh(scene_mesh, color="salmon", opacity=mesh_opacity)
 
     fiducial_actor = None
     fiducial_label_actor = None
@@ -609,7 +569,7 @@ def main() -> None:
             inv_rot = np.linalg.inv(affine)[:3, :3]
             scene_normals = normals_data @ inv_rot.T
         normals_poly = _create_normal_glyphs(
-            np.asarray(scene_mesh.points), scene_normals, args.normals_scale, args.normals_density
+            np.asarray(scene_mesh.points), scene_normals, normals_scale, normals_density
         )
         normals_actor = plotter.add_mesh(normals_poly, color="cyan", opacity=0.8, line_width=2)
 
@@ -621,17 +581,12 @@ def main() -> None:
         for label, point in zip(fiducial_labels, scene_fiducials, strict=True):
             fiducial_id_to_point[label.split(" (")[0]] = point
 
-    try:
-        electrode_specs = _parse_electrode_specs(args.electrodes)
-    except ValueError as exc:
-        parser.error(str(exc))
-
     electrode_groups: list[dict] = []
-    for gi, (epath, spec_color) in enumerate(electrode_specs):
+    for gi, (epath, spec_color) in enumerate(electrode_specs or []):
         points, _, flags, measured, names = _load_electrodes(epath)
         label = epath.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
         if not epath.endswith(".json") and cras_offset is not None and len(points) > 0:
-            if args.electrodes_cras:
+            if electrodes_cras:
                 points = points + cras_offset
                 print(f"{label}: cRAS conversion forced by --electrodes-cras")
             elif scene_mesh is not None:
@@ -729,7 +684,7 @@ def main() -> None:
                 mesh_actor.prop.specular_power = 40.0
                 mesh_actor.prop.ambient = 0.2
             else:
-                mesh_actor.prop.opacity = args.mesh_opacity
+                mesh_actor.prop.opacity = mesh_opacity
                 mesh_actor.prop.diffuse = 1.0
                 mesh_actor.prop.specular = 0.0
                 mesh_actor.prop.specular_power = 100.0
@@ -850,6 +805,95 @@ def main() -> None:
     plotter.add_text("Boost contrast", position=(75, y + 10), font_size=18, name="contrast_label")
     plotter.add_axes(interactive=False)
     plotter.show()
+
+
+def main() -> None:
+    """CLI entry point for ``virda-gui``."""
+    parser = argparse.ArgumentParser(
+        prog="virda-gui",
+        description="Interactive 3D viewer: scalp mesh and/or MRI volume.",
+    )
+    parser.add_argument("--nifti", help="Path to the T1-weighted NIfTI scan.")
+    parser.add_argument("--mesh", help="Path to the scalp mesh (PLY).")
+    parser.add_argument(
+        "--downsample",
+        type=int,
+        default=1,
+        help="Voxel stride for volume downsampling (1 = full resolution).",
+    )
+    parser.add_argument(
+        "--mesh-opacity", type=float, default=0.6, help="Scalp mesh opacity (0..1)."
+    )
+    parser.add_argument(
+        "--fiducials",
+        help="Path to fiducials JSON (fiducials/fiducials.json).",
+    )
+    parser.add_argument(
+        "--normals",
+        help="Path to normals file (normals.npy) for visualisation.",
+    )
+    parser.add_argument(
+        "--normals-scale",
+        type=float,
+        default=3.0,
+        help="Visual length of normal arrows in scene units (default: 3.0).",
+    )
+    parser.add_argument(
+        "--normals-density",
+        type=int,
+        default=500,
+        help="Show one normal per N vertices (default: 500).",
+    )
+    parser.add_argument(
+        "--electrodes",
+        action="append",
+        nargs="*",
+        default=[],
+        metavar="FILE [COLOR]",
+        help=(
+            "Electrodes file: Stage 3 JSON (.json) "
+            "or tabular with name/x/y/z columns (.tsv/.csv), "
+            "optionally followed by a color for the whole group, e.g. "
+            "--electrodes electrodes.tsv yellow. May be repeated to overlay "
+            "multiple groups (without a color each group gets the next "
+            "palette entry)."
+        ),
+    )
+    parser.add_argument(
+        "--electrodes-cras",
+        action="store_true",
+        help=(
+            "Force cRAS -> scanner RAS conversion of tabular electrode files "
+            "(.tsv/.csv) using the --nifti affine. Without the flag the frame "
+            "is detected automatically when a --mesh is supplied (the frame "
+            "whose points sit closer to the mesh wins). Stage 3 JSON output "
+            "is always already in scanner RAS."
+        ),
+    )
+    args = parser.parse_args()
+
+    if not args.nifti and not args.mesh:
+        parser.error("at least one of --nifti or --mesh is required")
+    if args.electrodes_cras and not args.nifti:
+        parser.error("--electrodes-cras requires --nifti")
+
+    try:
+        specs = _parse_electrode_specs(args.electrodes)
+    except ValueError as exc:
+        parser.error(str(exc))
+
+    show_viewer(
+        nifti_path=args.nifti,
+        mesh_path=args.mesh,
+        fiducials_path=args.fiducials,
+        normals_path=args.normals,
+        downsample_stride=args.downsample,
+        mesh_opacity=args.mesh_opacity,
+        normals_scale=args.normals_scale,
+        normals_density=args.normals_density,
+        electrode_specs=specs,
+        electrodes_cras=args.electrodes_cras,
+    )
 
 
 if __name__ == "__main__":
