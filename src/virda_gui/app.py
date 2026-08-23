@@ -8,7 +8,9 @@ export an HTML viewer.
 
 Electrode overlay groups (Stage 3 ``electrodes.json`` or tabular TSV/CSV
 tables) can be managed in the *Electrode Groups* section; after a run with
-measurements the localized ``localization/electrodes.json`` is added automatically.
+measurements the localized ``localization/electrodes.json`` is added
+automatically. Fiducials from an MNE ``coordsystem.json`` loaded as the
+config file are passed to the pipeline automatically.
 """
 
 import logging
@@ -28,6 +30,7 @@ from virda.io.fiducial_helpers import load_fiducials
 from virda.logging_setup import add_log_handler, remove_log_handler
 from virda.main import run
 from virda.models.config import Config
+from virda.models.coordsystem import Coordsystem
 
 from .viewer import show_viewer
 from .widgets import (
@@ -283,6 +286,7 @@ class VirdaApp:
         self._electrode_rows: list[ElectrodeGroupRow] = []
         self._palette_index = 0
         self._stage3_summary: dict[str, Any] | None = None
+        self._coordsystem: Coordsystem | None = None
 
         # Capture pipeline/library logs into the log pane (console handlers
         # set up by the pipeline itself keep working).
@@ -467,6 +471,7 @@ class VirdaApp:
     # ------------------------------------------------------------------
 
     def _on_config_file_changed(self, *_args: Any) -> None:
+        self._coordsystem = None
         path = self._config_file.get()
         if not path:
             return
@@ -493,6 +498,18 @@ class VirdaApp:
         for config_key, adv_key in _CONFIG_KEY_TO_ADVANCED.items():
             if config_key in data and not self._advanced_values.get(adv_key):
                 self._advanced_values[adv_key] = str(data[config_key])
+
+        # Keep the parsed MNE coordsystem (its fiducials feed Stage 1).
+        coordsystem = data.get("coordsystem")
+        if isinstance(coordsystem, Coordsystem):
+            self._coordsystem = coordsystem
+        else:
+            if coordsystem is not None:
+                self._log_viewer.append(
+                    "WARNING: 'coordsystem' entry in the config file was not parsed "
+                    "from a coordsystem.json file — its fiducials are ignored."
+                )
+            self._coordsystem = None
 
     def _on_fiducials_path_changed(self, *_args: Any) -> None:
         path = self._fiducials.get()
@@ -609,6 +626,7 @@ class VirdaApp:
             project_dir=project,
             fiducials_path=fiducials or None,
             auto_detect_fiducials=self._auto_detect_fid.get() == "true",
+            coordsystem=self._coordsystem,
             closing_radius=_int(adv["closing_radius"], 5, key="closing_radius"),
             otsu_scope=adv["otsu_scope"] or "all",  # type: ignore[arg-type]
             otsu_threshold_scale=_float(

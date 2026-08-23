@@ -82,14 +82,14 @@ def resolve_config_files(cli_files: list[str] | None = None) -> list[Path]:
 def load_config_file(path: str | Path) -> dict[str, Any]:
     """Load one input config file into a flat settings dict.
 
-    An MNE ``coordsystem.json`` (recognized by its ``CoordinateSystem`` or
-    ``FiducialsCoordinates`` key) contributes ``n_electrodes`` and the parsed
-    ``coordsystem`` value; any other JSON file is merged as-is.
+    An MNE ``coordsystem.json`` (detected via
+    :meth:`Coordsystem.is_coordsystem_dict`) contributes ``n_electrodes`` and
+    the parsed ``coordsystem`` value; any other JSON file is merged as-is.
     """
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise ValueError(f"config file must contain a JSON object: {path}")
-    if "CoordinateSystem" in data or "FiducialsCoordinates" in data:
+    if Coordsystem.is_coordsystem_dict(data):
         coordsystem = Coordsystem.model_validate(data)
         flat: dict[str, Any] = {}
         if coordsystem.electrode_count is not None:
