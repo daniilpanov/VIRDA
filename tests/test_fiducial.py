@@ -1,3 +1,5 @@
+import json
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
@@ -98,3 +100,40 @@ class TestFiducialHelpers:
         assert lpa is not None
         assert lpa.name == "Left pre-auricular"
         assert lpa.definition_method == "manual"
+
+    def test_round_trip_preserves_weights(self, tmp_path: Path) -> None:
+        path = tmp_path / "fiducials.json"
+        base = make_fiducials().items
+        fiducials = Fiducials(items=[replace(base[0], weight=2.5), *base[1:]])
+
+        save_fiducials(path, fiducials)
+        restored = load_fiducials(path)
+
+        nas = restored.get("NAS")
+        assert nas is not None
+        assert nas.weight == pytest.approx(2.5)
+
+    def test_load_fiducials_defaults_weight_for_legacy_files(self, tmp_path: Path) -> None:
+        path = tmp_path / "fiducials.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "fiducials": [
+                        {
+                            "fiducial_id": "NAS",
+                            "name": "Nasion",
+                            "coordinates": [0.0, 88.0, -10.0],
+                            "coordinate_system": "world",
+                            "definition_method": "manual",
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        restored = load_fiducials(path)
+
+        nas = restored.get("NAS")
+        assert nas is not None
+        assert nas.weight == 1.0

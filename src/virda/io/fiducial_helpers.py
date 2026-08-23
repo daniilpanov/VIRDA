@@ -19,6 +19,7 @@ def save_fiducials(path: Path, fiducials: Fiducials) -> None:
                 "coordinates": fiducial.coordinates.tolist(),
                 "coordinate_system": fiducial.coordinate_system,
                 "definition_method": fiducial.definition_method,
+                "weight": fiducial.weight,
             }
             for fiducial in fiducials.items
         ]
@@ -37,6 +38,7 @@ def load_fiducials(path: Path) -> Fiducials:
             coordinates=np.asarray(item["coordinates"], dtype=np.float64),
             coordinate_system=item["coordinate_system"],
             definition_method=item["definition_method"],
+            weight=float(item.get("weight", 1.0)),
         )
         for item in data["fiducials"]
     ]
