@@ -80,6 +80,7 @@ class _QueueLogHandler(logging.Handler):
         except Exception:  # pragma: no cover - logging must never raise
             self.handleError(record)
 
+
 _ELECTRODE_PALETTE = ["yellow", "lime", "magenta", "cyan", "orange", "white"]
 
 _PROJECT_ARTIFACT_DIRS = [
@@ -945,8 +946,6 @@ class VirdaApp:
         normals_path = project / "ese" / "normals.npy"
 
         nifti = self._nifti.get()
-
-        from .viewer import show_viewer
 
         kwargs: dict[str, Any] = {}
         if nifti:

@@ -1,18 +1,26 @@
 # Patient Project Format
 
-Layout and file formats of a Stage 1 **patient project** (output directory).
-The pipeline writes every artifact into a dedicated subfolder so that Stage 2
-can be reproduced exactly from the project alone.
+Layout and file formats of a **patient project** directory written by the VIRDA
+pipeline. The pipeline writes every artifact into a dedicated subfolder so that
+any stage can be reproduced exactly from the project alone:
+
+- **Stage 1** (segmentation/mesh/fiducials) always runs;
+- **Stage 2** (`ese/`) runs when an ESE config is supplied;
+- **Stage 3** (`localization/`) runs when both ESE and measurements are available.
 
 ```
 <project_dir>/
-├── input/              # source MRI NIfTI copy + pipeline configuration
+├── input/              # source MRI NIfTI copy + merged pipeline configuration
 ├── segmentation/       # head segmentation mask
 ├── mesh/               # final scalp mesh, arrays and per-step versions
 ├── fiducials/          # fiducial table
 ├── config/             # ESE configuration
+├── ese/                # Stage 2 output: electrode-skin-entrance surface
+├── localization/       # Stage 3 output: localized electrodes
 ├── quality_control/    # automatic QC report
 └── logs/               # pipeline log
+
+viewer.html             # optional: self-contained HTML viewer exported by virda-gui
 ```
 
 ## `input/`
@@ -49,9 +57,15 @@ Example `pipeline_config.json` (values follow the `Config` defaults):
   "use_weighted_pca": false,
   "pca_sigma_mm": 5.0,
   "min_neighbors": 5,
-  "coordsystem": null
+  "coordsystem": null,
+  "residual_threshold_mm": 10.0,
+  "calibrate_ese_offset": false
 }
 ```
+
+When an MNE ``coordsystem.json`` was loaded as an input config file, its parsed
+contents are embedded here under `"coordsystem"` (fiducial positions, electrode
+count / offset / reference) instead of `null`.
 
 ## `segmentation/`
 
@@ -82,11 +96,21 @@ Example `pipeline_config.json` (values follow the `Config` defaults):
       "name": "Nasion",
       "coordinates": [0.0, 88.0, -10.0],
       "coordinate_system": "world",
-      "definition_method": "manual"
+      "definition_method": "manual",
+      "weight": 1.5
     }
   ]
 }
 ```
+
+- `coordinates` are world millimeters (scanner RAS of the source NIfTI);
+  `coordinate_system` mirrors the model value (`"world"` on standard runs,
+  `"voxel"` is also valid in the schema).
+- `weight` is an optional positive float (default `1.0`) that scales the
+  fiducial's influence during Stage 3 localization; files written by earlier
+  versions without the field load with unit weight.
+- `definition_method` is one of `"manual"` (manual file), `"auto"`
+  (auto-detection) or `"imported"` (taken from an MNE `coordsystem.json`).
 
 ## `config/`
 
@@ -101,6 +125,87 @@ Example `pipeline_config.json` (values follow the `Config` defaults):
   }
 }
 ```
+
+## `ese/`
+
+Stage 2 output (electrode-skin-entrance surface offset outward from the scalp
+along local normals); written only when Stage 2 runs.
+
+| File | Description |
+|---|---|
+| `ese_mesh.ply` | The ESE surface as a trimesh PLY export. |
+| `ese_vertices.npy` | `(N, 3)` `float64` array of ESE vertex coordinates (world mm). |
+| `ese_faces.npy` | `(M, 3)` `int64` triangular faces of the ESE mesh. |
+| `normals.npy` | `(N, 3)` unit normal at each scalp vertex used for the offset. |
+| `quality.npy` | `(N,)` normal-estimation quality score per vertex. |
+| `point_pairs.json` | Scalp↔ESE correspondence dump (see below). |
+
+`point_pairs.json` maps every scalp vertex to its offset ESE vertex:
+
+```json
+{
+  "n_points": 232205,
+  "scalp_vertices": [[...], ...],
+  "ese_vertices": [[...], ...],
+  "normals": [[...], ...],
+  "quality": [...]
+}
+```
+
+The arrays are row-aligned: `ese_vertices[i]`, `normals[i]` and `quality[i]`
+belong to `scalp_vertices[i]`.
+
+## `localization/`
+
+Stage 3 output; written only when both the ESE surface and measurements are
+available.
+
+| File | Description |
+|---|---|
+| `electrodes.json` | Full localization result for every electrode (see below). |
+| `electrodes_scalp.json` | Same electrodes with only `coords` = scalp contact points (scanner RAS). |
+| `electrodes_ese.json` | Same electrodes with only `coords` = ESE body-center points (scanner RAS). |
+| `electrode_coords.csv` | Tabular copy: `electrode_id, x, y, z, residual_error, confidence, flagged`; `x/y/z` are the ESE coordinates. Empty `residual_error`/`confidence` mark non-localized electrodes. |
+| `localization_summary.json` | Aggregate statistics (see below). |
+
+`electrodes.json` — one entry per electrode:
+
+```json
+[
+  {
+    "electrode_id": "EEG 001",
+    "measured_distances": {"NAS": 62.28, "LPA": 111.68, "RPA": 158.42},
+    "ese_coords": [-35.24, 61.01, 68.10],
+    "scalp_coords": [-35.19, 60.96, 68.02],
+    "residual_error": 1.27,
+    "confidence": 0.0012,
+    "flagged": false
+  }
+]
+```
+
+- `measured_distances` are the input distances to each fiducial (mm).
+- `ese_coords` / `scalp_coords` are `null` for electrodes that could not be
+  localized (`is_localized == false`); `residual_error` and `confidence`
+  are then `null` too. All coordinates are scanner RAS millimeters.
+- `flagged` marks electrodes whose residual exceeds
+  `residual_threshold_mm`.
+
+`localization_summary.json`:
+
+```json
+{
+  "n_electrodes": 60,
+  "n_localized": 60,
+  "n_flagged": 0,
+  "median_residual_mm": 1.27,
+  "residual_threshold_mm": 10.0,
+  "calibrated_ese_offset_shift_mm": 0.0
+}
+```
+
+`calibrated_ese_offset_shift_mm` is present only when
+`calibrate_ese_offset` was enabled (`null` otherwise).
 
 ## `quality_control/`
 
@@ -122,7 +227,12 @@ Example `pipeline_config.json` (values follow the `Config` defaults):
   "fiducials": {
     "name": "fiducials_on_surface",
     "status": "ok",
-    "message": "all fiducials lie on the scalp surface"
+    "message": "all fiducials lie on the scalp surface",
+    "checks": [
+      {"fiducial_id": "NAS", "name": "Nasion", "distance_to_surface_mm": 1.4}
+    ],
+    "tolerance_mm": 3.0,
+    "warnings": []
   },
   "warnings": []
 }
@@ -131,6 +241,8 @@ Example `pipeline_config.json` (values follow the `Config` defaults):
 - `status` is one of `ok`, `warn`, `fail`; checks with status `skip` are ignored
   when aggregating the overall status (`fail` > `warn` > `ok`).
 - Each check entry is `{name, status, message, ...details}`.
+- `fiducials.checks` lists the per-fiducial distance to the nearest mesh vertex
+  for every fiducial.
 
 ### Checks
 
@@ -157,7 +269,7 @@ Example `pipeline_config.json` (values follow the `Config` defaults):
 `pipeline.log` — pipeline log (one line per event):
 
 ```
-19:14:33,120 | INFO     | virda.stage1 | ...
+21:55:25 | INFO     | virda.stage_3 | Store 'Electrodes' updated.
 ```
 
 Line format: `%(asctime)s | %(levelname)-8s | %(name)s | %(message)s`.
