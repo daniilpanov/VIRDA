@@ -21,13 +21,14 @@ import ttkbootstrap as ttkb
 from ttkbootstrap.constants import BOTH, LEFT, YES, W, X
 from ttkbootstrap.dialogs import Messagebox
 
+from virda.config import load_config_file
+from virda.io.fiducial_helpers import load_fiducials
 from virda.logging_setup import add_log_handler, remove_log_handler
 from virda.main import run
 from virda.models.config import Config
 
 from .viewer import show_viewer
 from .widgets import (
-    CollapsibleSection,
     DirectorySelector,
     FileSelector,
     LabeledField,
@@ -60,6 +61,188 @@ class _QueueLogHandler(logging.Handler):
         except Exception:  # pragma: no cover - logging must never raise
             self.handleError(record)
 
+_ADVANCED_FIELD_DEFAULTS: dict[str, str] = {
+    "otsu_scope": "all",
+    "otsu_threshold_scale": "0.6",
+    "closing_radius": "5",
+    "seal_enabled": "true",
+    "seal_radius": "4",
+    "cleaner_min_vertices": "100",
+    "cleaner_merge_digits": "7",
+    "smoother_type": "laplacian",
+    "smoother_iterations": "5",
+    "smoother_lamb": "0.5",
+    "smoother_nu": "-0.53",
+    "n_electrodes": "",
+    "ese_offset_mm": "",
+    "ese_reference": "electrode_body_center",
+    "neighborhood_radius_mm": "10.0",
+    "k_neighbors": "",
+    "pca_sigma_mm": "5.0",
+    "min_neighbors": "5",
+    "use_weighted_pca": "false",
+}
+
+_CONFIG_KEY_TO_ADVANCED: dict[str, str] = {
+    "otsu_scope": "otsu_scope",
+    "otsu_threshold_scale": "otsu_threshold_scale",
+    "closing_radius": "closing_radius",
+    "seal_enabled": "seal_enabled",
+    "seal_radius": "seal_radius",
+    "cleaner_min_vertices": "cleaner_min_vertices",
+    "cleaner_merge_digits": "cleaner_merge_digits",
+    "smoother_type": "smoother_type",
+    "smoother_iterations": "smoother_iterations",
+    "smoother_lamb": "smoother_lamb",
+    "smoother_nu": "smoother_nu",
+    "n_electrodes": "n_electrodes",
+    "ese_offset_mm": "ese_offset_mm",
+    "ese_reference": "ese_reference",
+    "neighborhood_radius_mm": "neighborhood_radius_mm",
+    "k_neighbors": "k_neighbors",
+    "pca_sigma_mm": "pca_sigma_mm",
+    "min_neighbors": "min_neighbors",
+    "use_weighted_pca": "use_weighted_pca",
+}
+
+_CONFIG_KEY_TO_INPUT: dict[str, str] = {
+    "nifti_path": "nifti_path",
+    "project_dir": "project_dir",
+    "fiducials_path": "fiducials_path",
+    "auto_detect_fiducials": "auto_detect_fiducials",
+}
+
+_ADVANCED_COMBO_FIELDS: dict[str, list[str]] = {
+    "otsu_scope": ["all", "foreground"],
+    "smoother_type": ["laplacian", "taubin"],
+    "ese_reference": ["electrode_body_center", "electrode_capsule_center"],
+}
+
+
+class AdvancedSettingsDialog(tk.Toplevel):
+    """Modal dialog for advanced pipeline parameters."""
+
+    def __init__(
+        self,
+        parent: tk.Misc,
+        values: dict[str, str],
+    ) -> None:
+        super().__init__(parent)
+        self.title("Advanced Settings")
+        self.resizable(False, False)
+        self.grab_set()
+
+        self.result_values: dict[str, str] = dict(values)
+        self.confirmed: bool = False
+
+        self._fields: dict[str, LabeledField] = {}
+
+        self._build_ui()
+        self._center_on_parent(parent)
+        self.protocol("WM_DELETE_WINDOW", self._on_cancel)
+
+    def _center_on_parent(self, parent: tk.Misc) -> None:
+        self.update_idletasks()
+        pw = parent.winfo_width()
+        ph = parent.winfo_height()
+        px = parent.winfo_rootx()
+        py = parent.winfo_rooty()
+        w = self.winfo_width()
+        h = self.winfo_height()
+        x = px + (pw - w) // 2
+        y = py + (ph - h) // 2
+        self.geometry(f"+{x}+{y}")
+
+    def _build_ui(self) -> None:
+        canvas = tk.Canvas(self, borderwidth=0, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(self, orient="vertical", command=canvas.yview)
+        self._scroll_frame = ttk.Frame(canvas)
+
+        self._scroll_frame.bind(
+            "<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        canvas.create_window((0, 0), window=self._scroll_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        self._build_segmentation_section(self._scroll_frame)
+        self._build_mesh_section(self._scroll_frame)
+        self._build_ese_section(self._scroll_frame)
+        self._build_neighborhood_section(self._scroll_frame)
+
+        btn_frame = ttk.Frame(self._scroll_frame)
+        btn_frame.pack(fill=X, padx=8, pady=8)
+
+        ttkb.Button(btn_frame, text="OK", bootstyle="success", command=self._on_ok, width=10).pack(
+            side=LEFT, padx=(0, 8)
+        )
+        ttkb.Button(
+            btn_frame, text="Cancel", bootstyle="secondary", command=self._on_cancel, width=10
+        ).pack(side=LEFT)
+
+    def _build_segmentation_section(self, parent: tk.Misc) -> None:
+        frame = ttk.LabelFrame(parent, text="  Stage 1: Segmentation  ")
+        frame.pack(fill=X, padx=8, pady=4)
+
+        self._add_field(frame, "otsu_scope", "Otsu scope", "combo")
+        self._add_field(frame, "otsu_threshold_scale", "Threshold scale", "entry")
+        self._add_field(frame, "closing_radius", "Closing radius", "entry")
+
+    def _build_mesh_section(self, parent: tk.Misc) -> None:
+        frame = ttk.LabelFrame(parent, text="  Stage 1: Mesh Processing  ")
+        frame.pack(fill=X, padx=8, pady=4)
+
+        self._add_field(frame, "seal_enabled", "Seal mask gaps", "check")
+        self._add_field(frame, "seal_radius", "Seal radius", "entry")
+        self._add_field(frame, "cleaner_min_vertices", "Min component vertices", "entry")
+        self._add_field(frame, "cleaner_merge_digits", "Merge digits", "entry")
+        self._add_field(frame, "smoother_type", "Smoother type", "combo")
+        self._add_field(frame, "smoother_iterations", "Iterations", "entry")
+        self._add_field(frame, "smoother_lamb", "Lambda", "entry")
+        self._add_field(frame, "smoother_nu", "Nu (Taubin)", "entry")
+
+    def _build_ese_section(self, parent: tk.Misc) -> None:
+        frame = ttk.LabelFrame(parent, text="  Stage 2: ESE Parameters  ")
+        frame.pack(fill=X, padx=8, pady=4)
+
+        self._add_field(frame, "n_electrodes", "Number of electrodes", "entry")
+        self._add_field(frame, "ese_offset_mm", "Offset (mm)", "entry")
+        self._add_field(frame, "ese_reference", "Reference", "combo")
+
+    def _build_neighborhood_section(self, parent: tk.Misc) -> None:
+        frame = ttk.LabelFrame(parent, text="  Stage 2: Neighborhood  ")
+        frame.pack(fill=X, padx=8, pady=4)
+
+        self._add_field(frame, "neighborhood_radius_mm", "Radius (mm)", "entry")
+        self._add_field(frame, "k_neighbors", "K neighbors", "entry")
+        self._add_field(frame, "pca_sigma_mm", "PCA sigma (mm)", "entry")
+        self._add_field(frame, "min_neighbors", "Min neighbors", "entry")
+        self._add_field(frame, "use_weighted_pca", "Weighted PCA", "check")
+
+    def _add_field(self, parent: tk.Misc, key: str, label: str, widget_type: str) -> None:
+        values = _ADVANCED_COMBO_FIELDS.get(key) if widget_type == "combo" else None
+        field = LabeledField(
+            parent,
+            label=label,
+            widget_type=widget_type,  # type: ignore[arg-type]
+            values=values,
+            default=self.result_values.get(key, _ADVANCED_FIELD_DEFAULTS.get(key, "")),
+        )
+        field.pack(fill=X, padx=4, pady=2)
+        self._fields[key] = field
+
+    def _on_ok(self) -> None:
+        for key, field in self._fields.items():
+            self.result_values[key] = field.get()
+        self.confirmed = True
+        self.destroy()
+
+    def _on_cancel(self) -> None:
+        self.confirmed = False
+        self.destroy()
+
 
 class VirdaApp:
     """Main application window."""
@@ -68,7 +251,7 @@ class VirdaApp:
         self._root = ttkb.Window(
             title="VIRDA — Electrode Localization System",
             themename="cosmo",
-            size=(820, 760),
+            size=(820, 600),
             resizable=(True, True),
         )
 
@@ -79,6 +262,7 @@ class VirdaApp:
         self._viewer_btn: ttkb.Button | None = None
         self._export_btn: ttkb.Button | None = None
         self._last_project_dir: str | None = None
+        self._advanced_values: dict[str, str] = dict(_ADVANCED_FIELD_DEFAULTS)
 
         # Capture pipeline/library logs into the log pane (console handlers
         # set up by the pipeline itself keep working).
@@ -113,6 +297,14 @@ class VirdaApp:
         input_frame = ttk.LabelFrame(parent, text="  Input Files  ")
         input_frame.pack(fill=X, padx=8, pady=(8, 4))
 
+        self._config_file = FileSelector(
+            input_frame,
+            label="Config file",
+            filetypes=[("JSON", "*.json"), ("All files", "*.*")],
+        )
+        self._config_file.pack(fill=X, padx=6, pady=4)
+        self._config_file._var.trace_add("write", self._on_config_file_changed)
+
         self._nifti = FileSelector(
             input_frame,
             label="NIfTI scan",
@@ -128,16 +320,28 @@ class VirdaApp:
             label="Fiducials",
             filetypes=[("JSON", "*.json"), ("All files", "*.*")],
         )
-        self._fiducials.pack(fill=X, padx=6, pady=(4, 6))
+        self._fiducials.pack(fill=X, padx=6, pady=4)
+        self._fiducials._var.trace_add("write", self._on_fiducials_path_changed)
 
-        self._seg = self._build_segmentation_section(parent)
-        self._mesh = self._build_mesh_section(parent)
-        self._ese = self._build_ese_section(parent)
-        self._nhood = self._build_neighborhood_section(parent)
-        self._stage3_placeholder = self._build_stage3_placeholder(parent)
+        self._auto_detect_fid = LabeledField(
+            input_frame,
+            label="Auto detect fiducials",
+            widget_type="check",
+            default="false",
+        )
+        self._auto_detect_fid.pack(fill=X, padx=6, pady=(4, 6))
 
         btn_frame = ttk.Frame(parent)
         btn_frame.pack(fill=X, padx=8, pady=(4, 2))
+
+        self._advanced_btn = ttkb.Button(
+            btn_frame,
+            text="Advanced Settings",
+            bootstyle="secondary-outline",
+            command=self._on_show_advanced,
+            width=18,
+        )
+        self._advanced_btn.pack(side=LEFT, padx=(0, 8))
 
         self._run_btn = ttkb.Button(
             btn_frame,
@@ -170,127 +374,6 @@ class VirdaApp:
 
         self._log_viewer = LogViewer(parent)
         self._log_viewer.pack(fill=BOTH, expand=YES, padx=8, pady=(2, 8))
-
-    def _build_segmentation_section(self, parent: tk.Misc) -> CollapsibleSection:
-        sec = CollapsibleSection(parent, title="Stage 1: Segmentation")
-        sec.pack(fill=X, padx=8, pady=2)
-        sec.collapse()
-
-        self._otsu_scope = LabeledField(
-            sec.body,
-            label="Otsu scope",
-            widget_type="combo",
-            values=["all", "foreground"],
-            default="all",
-        )
-        self._otsu_scope.pack(fill=X, padx=4, pady=2)
-
-        self._otsu_threshold = LabeledField(
-            sec.body, label="Threshold scale", widget_type="entry", default="0.6"
-        )
-        self._otsu_threshold.pack(fill=X, padx=4, pady=2)
-
-        self._closing_radius = LabeledField(
-            sec.body, label="Closing radius", widget_type="entry", default="5"
-        )
-        self._closing_radius.pack(fill=X, padx=4, pady=2)
-
-        return sec
-
-    def _build_mesh_section(self, parent: tk.Misc) -> CollapsibleSection:
-        sec = CollapsibleSection(parent, title="Stage 1: Mesh Processing")
-        sec.pack(fill=X, padx=8, pady=2)
-        sec.collapse()
-
-        self._seal_enabled = LabeledField(
-            sec.body, label="Seal mask gaps", widget_type="check", default="true"
-        )
-        self._seal_enabled.pack(fill=X, padx=4, pady=2)
-
-        self._seal_radius = LabeledField(sec.body, label="Seal radius", default="4")
-        self._seal_radius.pack(fill=X, padx=4, pady=2)
-
-        self._cleaner_min = LabeledField(sec.body, label="Min component vertices", default="100")
-        self._cleaner_min.pack(fill=X, padx=4, pady=2)
-
-        self._cleaner_digits = LabeledField(sec.body, label="Merge digits", default="7")
-        self._cleaner_digits.pack(fill=X, padx=4, pady=2)
-
-        self._smoother_type = LabeledField(
-            sec.body,
-            label="Smoother type",
-            widget_type="combo",
-            values=["laplacian", "taubin"],
-            default="laplacian",
-        )
-        self._smoother_type.pack(fill=X, padx=4, pady=2)
-
-        self._smoother_iters = LabeledField(sec.body, label="Iterations", default="5")
-        self._smoother_iters.pack(fill=X, padx=4, pady=2)
-
-        self._smoother_lamb = LabeledField(sec.body, label="Lambda", default="0.5")
-        self._smoother_lamb.pack(fill=X, padx=4, pady=2)
-
-        self._smoother_nu = LabeledField(sec.body, label="Nu (Taubin)", default="-0.53")
-        self._smoother_nu.pack(fill=X, padx=4, pady=2)
-
-        return sec
-
-    def _build_ese_section(self, parent: tk.Misc) -> CollapsibleSection:
-        sec = CollapsibleSection(parent, title="Stage 2: ESE Parameters")
-        sec.pack(fill=X, padx=8, pady=2)
-        sec.collapse()
-
-        self._n_electrodes = LabeledField(sec.body, label="Number of electrodes", default="")
-        self._n_electrodes.pack(fill=X, padx=4, pady=2)
-
-        self._ese_offset = LabeledField(sec.body, label="Offset (mm)", default="")
-        self._ese_offset.pack(fill=X, padx=4, pady=2)
-
-        self._ese_reference = LabeledField(
-            sec.body,
-            label="Reference",
-            widget_type="combo",
-            values=["average", "vertex"],
-            default="average",
-        )
-        self._ese_reference.pack(fill=X, padx=4, pady=2)
-
-        return sec
-
-    def _build_neighborhood_section(self, parent: tk.Misc) -> CollapsibleSection:
-        sec = CollapsibleSection(parent, title="Stage 2: Neighborhood")
-        sec.pack(fill=X, padx=8, pady=2)
-        sec.collapse()
-
-        self._nhood_radius = LabeledField(sec.body, label="Radius (mm)", default="10.0")
-        self._nhood_radius.pack(fill=X, padx=4, pady=2)
-
-        self._k_neighbors = LabeledField(sec.body, label="K neighbors", default="")
-        self._k_neighbors.pack(fill=X, padx=4, pady=2)
-
-        self._pca_sigma = LabeledField(sec.body, label="PCA sigma (mm)", default="5.0")
-        self._pca_sigma.pack(fill=X, padx=4, pady=2)
-
-        self._min_neighbors = LabeledField(sec.body, label="Min neighbors", default="5")
-        self._min_neighbors.pack(fill=X, padx=4, pady=2)
-
-        self._weighted_pca = LabeledField(
-            sec.body, label="Weighted PCA", widget_type="check", default="false"
-        )
-        self._weighted_pca.pack(fill=X, padx=4, pady=2)
-
-        return sec
-
-    def _build_stage3_placeholder(self, parent: tk.Misc) -> CollapsibleSection:
-        sec = CollapsibleSection(parent, title="Stage 3: Real Electrode Locations (coming soon)")
-        sec.pack(fill=X, padx=8, pady=2)
-        sec.collapse()
-
-        lbl = ttk.Label(sec.body, text="Stage 3 is under development.", foreground="gray")
-        lbl.pack(padx=4, pady=8)
-
-        return sec
 
     # ---- Results tab ----
 
@@ -327,6 +410,59 @@ class VirdaApp:
         self._results_export_btn = export_btn
 
     # ------------------------------------------------------------------
+    # Config file handling
+    # ------------------------------------------------------------------
+
+    def _on_config_file_changed(self, *_args: Any) -> None:
+        path = self._config_file.get()
+        if not path:
+            return
+        try:
+            data = load_config_file(path)
+        except Exception as exc:
+            Messagebox.show_error(
+                f"Invalid config file:\n{exc}", title="Config error", parent=self._root
+            )
+            self._config_file.set("")
+            return
+        self._populate_from_config(data)
+
+    def _populate_from_config(self, data: dict[str, Any]) -> None:
+        for config_key, attr_name in _CONFIG_KEY_TO_INPUT.items():
+            if config_key in data:
+                widget = getattr(self, f"_{attr_name}", None)
+                if widget is not None and not widget.get():
+                    widget.set(str(data[config_key]))
+
+        for config_key, adv_key in _CONFIG_KEY_TO_ADVANCED.items():
+            if config_key in data and not self._advanced_values.get(adv_key):
+                self._advanced_values[adv_key] = str(data[config_key])
+
+    def _on_fiducials_path_changed(self, *_args: Any) -> None:
+        path = self._fiducials.get()
+        if not path:
+            return
+        try:
+            load_fiducials(Path(path))
+        except Exception as exc:
+            Messagebox.show_error(
+                f"Invalid fiducials file:\n{exc}",
+                title="Fiducials error",
+                parent=self._root,
+            )
+            self._fiducials.set("")
+
+    # ------------------------------------------------------------------
+    # Advanced settings
+    # ------------------------------------------------------------------
+
+    def _on_show_advanced(self) -> None:
+        dialog = AdvancedSettingsDialog(self._root, self._advanced_values)
+        self._root.wait_window(dialog)
+        if dialog.confirmed:
+            self._advanced_values = dialog.result_values
+
+    # ------------------------------------------------------------------
     # Config collection
     # ------------------------------------------------------------------
 
@@ -340,38 +476,54 @@ class VirdaApp:
         if not project:
             raise ValueError("Project directory is required.")
 
-        def _int(val: str, default: int | None = None) -> int | None:
-            val = val.strip()
-            return int(val) if val else default
+        adv = self._advanced_values
 
-        def _float(val: str, default: float | None = None) -> float | None:
+        def _int(val: str, default: int | None = None, *, key: str = "value") -> int | None:
             val = val.strip()
-            return float(val) if val else default
+            if not val:
+                return default
+            try:
+                return int(val)
+            except ValueError:
+                raise ValueError(f"{key}: expected an integer, got {val!r}") from None
+
+        def _float(val: str, default: float | None = None, *, key: str = "value") -> float | None:
+            val = val.strip()
+            if not val:
+                return default
+            try:
+                return float(val)
+            except ValueError:
+                raise ValueError(f"{key}: expected a number, got {val!r}") from None
 
         return Config(
             nifti_path=nifti,
             project_dir=project,
-            fiducials_path=fiducials,
-            auto_detect_fiducials=False,
-            closing_radius=_int(self._closing_radius.get(), 5),
-            otsu_scope=self._otsu_scope.get() or "all",  # type: ignore[arg-type]
-            otsu_threshold_scale=_float(self._otsu_threshold.get(), 0.6),
-            seal_enabled=self._seal_enabled.get() == "true",
-            seal_radius=_int(self._seal_radius.get(), 4),
-            cleaner_min_vertices=_int(self._cleaner_min.get(), 100),
-            cleaner_merge_digits=_int(self._cleaner_digits.get(), 7),
-            smoother_type=self._smoother_type.get() or "laplacian",
-            smoother_iterations=_int(self._smoother_iters.get(), 5),
-            smoother_lamb=_float(self._smoother_lamb.get(), 0.5),
-            smoother_nu=_float(self._smoother_nu.get(), -0.53),
-            n_electrodes=_int(self._n_electrodes.get()),
-            ese_offset_mm=_float(self._ese_offset.get()),
-            ese_reference=self._ese_reference.get() or None,
-            neighborhood_radius_mm=_float(self._nhood_radius.get(), 10.0),
-            k_neighbors=_int(self._k_neighbors.get()),
-            use_weighted_pca=self._weighted_pca.get() == "true",
-            pca_sigma_mm=_float(self._pca_sigma.get(), 5.0),
-            min_neighbors=_int(self._min_neighbors.get(), 5),
+            fiducials_path=fiducials or None,
+            auto_detect_fiducials=self._auto_detect_fid.get() == "true",
+            closing_radius=_int(adv["closing_radius"], 5, key="closing_radius"),
+            otsu_scope=adv["otsu_scope"] or "all",  # type: ignore[arg-type]
+            otsu_threshold_scale=_float(
+                adv["otsu_threshold_scale"], 0.6, key="otsu_threshold_scale"
+            ),
+            seal_enabled=adv["seal_enabled"] == "true",
+            seal_radius=_int(adv["seal_radius"], 4, key="seal_radius"),
+            cleaner_min_vertices=_int(adv["cleaner_min_vertices"], 100, key="cleaner_min_vertices"),
+            cleaner_merge_digits=_int(adv["cleaner_merge_digits"], 7, key="cleaner_merge_digits"),
+            smoother_type=adv["smoother_type"] or "laplacian",
+            smoother_iterations=_int(adv["smoother_iterations"], 5, key="smoother_iterations"),
+            smoother_lamb=_float(adv["smoother_lamb"], 0.5, key="smoother_lamb"),
+            smoother_nu=_float(adv["smoother_nu"], -0.53, key="smoother_nu"),
+            n_electrodes=_int(adv["n_electrodes"], key="n_electrodes"),
+            ese_offset_mm=_float(adv["ese_offset_mm"], key="ese_offset_mm"),
+            ese_reference=adv["ese_reference"] or None,
+            neighborhood_radius_mm=_float(
+                adv["neighborhood_radius_mm"], 10.0, key="neighborhood_radius_mm"
+            ),
+            k_neighbors=_int(adv["k_neighbors"], key="k_neighbors"),
+            use_weighted_pca=adv["use_weighted_pca"] == "true",
+            pca_sigma_mm=_float(adv["pca_sigma_mm"], 5.0, key="pca_sigma_mm"),
+            min_neighbors=_int(adv["min_neighbors"], 5, key="min_neighbors"),
         )
 
     # ------------------------------------------------------------------
