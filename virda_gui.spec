@@ -585,6 +585,26 @@ a = Analysis(
     optimize=0,
 )
 
+# ==========================================================
+# Don't bundle the system C++ runtime
+#
+# PyInstaller copies libstdc++.so.6 / libgcc_s.so.1 from the build machine
+# into the bundle, and the bootloader prepends _MEIPASS to LD_LIBRARY_PATH,
+# so that copy shadows the target system's. A CI build (ubuntu-22.04) then
+# ships an older libstdc++ than the user's distro, and the Mesa/GPU drivers
+# loaded by the system libGL fail to dlopen inside the frozen process
+# ("Could not find a decent config" -> EGL/OSMesa fallback -> segfault in
+# the 3D viewer). Both libraries exist in any desktop Linux base system,
+# so rely on the target's own runtime instead.
+# ==========================================================
+
+SYSTEM_RUNTIME_LIBS = {"libstdc++.so.6", "libgcc_s.so.1"}
+a.binaries = [
+    entry
+    for entry in a.binaries
+    if os.path.basename(entry[0]) not in SYSTEM_RUNTIME_LIBS
+]
+
 pyz = PYZ(a.pure)
 
 # ==========================================================
