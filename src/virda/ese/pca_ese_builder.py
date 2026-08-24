@@ -2,7 +2,6 @@ import logging
 
 import numpy as np
 from scipy.spatial import cKDTree
-from tqdm import tqdm
 
 from virda.ese.contracts import ESEBuilder
 from virda.models.ese_mesh import ESEMesh
@@ -106,7 +105,7 @@ class PCAESEBuilder(ESEBuilder):
         quality = np.zeros(vertices.shape[0], dtype=np.float64)
         tree = cKDTree(vertices)
 
-        for i in tqdm(range(vertices.shape[0]), desc="Radius neighborhood"):
+        for i in range(vertices.shape[0]):
             neighbor_indices = tree.query_ball_point(vertices[i], radius)
             if len(neighbor_indices) < min_neighbors:
                 fallback_k = min(_FALLBACK_K_NEIGHBORS, vertices.shape[0] - 1)
