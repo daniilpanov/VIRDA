@@ -1,12 +1,16 @@
 """Helpers for persisting and restoring the :class:`Fiducials` model."""
 
 import json
+import logging
 from pathlib import Path
 from typing import Any, cast
 
 import numpy as np
 
+from virda.models.coordsystem import _SURFACE_RAS_FRAMES, Coordsystem
 from virda.models.fiducial import Fiducial, Fiducials
+
+logger = logging.getLogger(__name__)
 
 
 def save_fiducials(path: Path, fiducials: Fiducials) -> None:
@@ -19,6 +23,7 @@ def save_fiducials(path: Path, fiducials: Fiducials) -> None:
                 "coordinates": fiducial.coordinates.tolist(),
                 "coordinate_system": fiducial.coordinate_system,
                 "definition_method": fiducial.definition_method,
+                "weight": fiducial.weight,
             }
             for fiducial in fiducials.items
         ]
@@ -28,8 +33,27 @@ def save_fiducials(path: Path, fiducials: Fiducials) -> None:
 
 
 def load_fiducials(path: Path) -> Fiducials:
-    """Read a JSON file written by :func:`save_fiducials` into a :class:`Fiducials` model."""
+    """Read a JSON file into a :class:`Fiducials` model.
+
+    Accepts both the format written by :func:`save_fiducials` and MNE-style
+    ``coordsystem.json`` files (detected via
+    :meth:`Coordsystem.is_coordsystem_dict`); the latter are converted via
+    :meth:`Coordsystem.to_fiducials`.
+    """
     data = cast(dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
+    if Coordsystem.is_coordsystem_dict(data):
+        coordsystem = Coordsystem.model_validate(data)
+        units = (coordsystem.coordinate_units or coordsystem.eeg_coordinate_units or "m").strip()
+        scale = coordsystem.mri_unit_scale_mm()
+        if units.lower() != "mm":
+            logger.debug("coordsystem units %r converted to mm (x%s)", units, scale)
+        frame = coordsystem.coordinate_system or coordsystem.eeg_coordinate_system
+        if frame and frame.strip().lower() not in _SURFACE_RAS_FRAMES:
+            logger.debug(
+                "coordsystem frame %r is not surface RAS; assuming FreeSurfer surface RAS anyway",
+                frame,
+            )
+        return coordsystem.to_fiducials()
     items = [
         Fiducial(
             fiducial_id=item["fiducial_id"],
@@ -37,6 +61,7 @@ def load_fiducials(path: Path) -> Fiducials:
             coordinates=np.asarray(item["coordinates"], dtype=np.float64),
             coordinate_system=item["coordinate_system"],
             definition_method=item["definition_method"],
+            weight=float(item.get("weight", 1.0)),
         )
         for item in data["fiducials"]
     ]

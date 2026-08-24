@@ -14,7 +14,6 @@ dependencies = [
     "scikit-image>=0.24",  # core package
     "trimesh>=5.0.0",  # for mesh generation
     "rtree>=1.0",  # for trimesh ray queries
-    "tqdm>=4.66",  # for progress visualization
     "pydantic>=2.9",  # core package
     "pydantic-settings>=2.15.0",
     "pyyaml>=6.0",  # for YAML settings source
@@ -32,7 +31,6 @@ dev = [
     "ruff>=0.16.1",
     "pre-commit>=3.8",
     "scipy-stubs>=1.14",  # for strict mypy
-    "types-tqdm>=4.70.0.20260805",  # for strict mypy
 ]
 research = [
     "matplotlib>=3.11.1",

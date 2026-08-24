@@ -5,19 +5,25 @@ build-backend = "hatchling.build"
 [project]
 name = "virda-gui"
 version = "0.1.0"
-description = "Interactive 3D viewers for VIRDA (mesh over MRI)"
+description = "Interactive GUI and viewers for VIRDA electrode localization"
 requires-python = ">=3.14"
 dependencies = [
     "nibabel>=5.0",
     "numpy>=2.5.2",
     "pyvista>=0.44",
     "trimesh>=5.0.0",
+    "ttkbootstrap>=1.10",
     "virda",
 ]
 
 [project.scripts]
-virda-gui = "virda_gui.viewer:main"
+virda-gui = "virda_gui.app:main"
+virda-gui-viewer = "virda_gui.viewer:main"
 virda-gui-html = "virda_gui.html_export:main"
+
+[dependency-groups]
+# Used only to build the frozen executables (see .github/workflows/build-exe.yml).
+build = ["pyinstaller==6.22.2"]
 
 [tool.uv.sources]
 virda = { workspace = true }

@@ -1,6 +1,6 @@
 """Pydantic model for MNE-style ``coordsystem.json`` input config files."""
 
-from typing import Final
+from typing import Any, Final
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
@@ -12,6 +12,12 @@ FIDUCIAL_ID_MAP: Final[dict[str, str]] = {
     "LPA": "LPA",
     "RPA": "RPA",
 }
+
+#: Conversion factors to millimetres for supported ``*CoordinateUnits`` values.
+_MM_PER_UNIT: Final[dict[str, float]] = {"mm": 1.0, "m": 1000.0}
+
+#: Coordinate frames whose MRI coordinates are FreeSurfer surface-RAS.
+_SURFACE_RAS_FRAMES: Final[set[str]] = {"ras", "surface ras", "fsnative"}
 
 
 class FiducialCoordinate(BaseModel):
@@ -48,17 +54,38 @@ class Coordsystem(BaseModel):
     electrode_reference: str | None = Field(default=None, alias="ElectrodeReference")
     source: str | None = Field(default=None, alias="Source")
 
+    @classmethod
+    def is_coordsystem_dict(cls, data: dict[str, Any]) -> bool:
+        """Return True if *data* looks like an MNE ``coordsystem.json`` mapping.
+
+        Files written by MNE-BIDS always carry ``FiducialsCoordinates`` when
+        fiducials are present, but ``CoordinateSystem``-only files (no
+        digitized fiducials) are also valid coordsystem documents.
+        """
+        return "FiducialsCoordinates" in data or "CoordinateSystem" in data
+
+    def mri_unit_scale_mm(self) -> float:
+        """Return the factor that converts MRI coordinates to millimetres."""
+        units = self.coordinate_units or self.eeg_coordinate_units or "m"
+        scale = _MM_PER_UNIT.get(units.strip().lower())
+        if scale is None:
+            raise ValueError(f"Unsupported coordinate units {units!r}: expected 'mm' or 'm'")
+        return scale
+
     def to_fiducials(self) -> Fiducials:
         """Build :class:`Fiducials` from the MRI fiducial coordinates.
 
-        Fiducials are recorded in MRI surface-RAS (mm), which is the world
-        space the scalp mesh is extracted in, so they are marked as ``world``.
+        Fiducials are recorded in MRI surface-RAS converted to millimetres,
+        which is the world space the scalp mesh is extracted in, so they are
+        marked as ``world``.  Coordinates given in metres (the BIDS default)
+        are scaled automatically; any other unit is rejected.
         """
+        unit_scale = self.mri_unit_scale_mm()
         items = [
             Fiducial(
                 fiducial_id=FIDUCIAL_ID_MAP.get(label, label),
                 name=label,
-                coordinates=np.asarray(coordinate.mri, dtype=np.float64),
+                coordinates=np.asarray(coordinate.mri, dtype=np.float64) * unit_scale,
                 coordinate_system="world",
                 definition_method="imported",
             )
