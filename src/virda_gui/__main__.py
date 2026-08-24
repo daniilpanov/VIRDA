@@ -8,6 +8,16 @@ if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
         sys.path.insert(0, sys._MEIPASS)
 
 if __name__ == "__main__":
+    from multiprocessing import freeze_support
+
+    # In a 'PyInstaller' one-file build a multiprocessing child process
+    # (e.g. the resource_tracker) is launched by re-executing the frozen executable,
+    # which re-enters this module and would run 'main()' a second time -> a duplicate
+    # "main window" and a racy re-extraction of '_MEIPASS' (random ModuleNotFoundError).
+    # 'freeze_support()' makes such child processes exit
+    # immediately instead of re-running the application.
+    freeze_support()
+
     from virda_gui.app import main
 
     # In a windowed (console=False) frozen build stderr is lost, so a
