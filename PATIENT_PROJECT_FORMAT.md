@@ -266,10 +266,7 @@ available.
 
 ## `logs/`
 
-`pipeline.log` — pipeline log (one line per event):
+`stageN.log` (`stage1.log`, `stage2.log` and `stage3.log`) — pipeline logs:
 
-```
-21:55:25 | INFO     | virda.stage_3 | Store 'Electrodes' updated.
-```
-
-Line format: `%(asctime)s | %(levelname)-8s | %(name)s | %(message)s`.
+Line format: `%(asctime)s | %(levelname)-8s | %(name)s | %(message)s`,
+where `%(name)s` like 'virda.stage<number>'
