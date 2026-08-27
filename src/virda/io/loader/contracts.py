@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from logging import Logger
 
 from virda.models.electrode import Electrodes
 from virda.models.fiducial import ManualFiducials
@@ -17,7 +18,11 @@ class MRILoader(ABC):
 
 
 class FiducialsLoader(ABC):
+    def __init__(self) -> None:
+        self._logger: Logger | None = None
+
     def run(self, context: PipelineContext) -> ManualFiducials:
+        self._logger = context.get_logger()
         return self._process(context.get_store_notnull(FiducialsPath))
 
     @abstractmethod

@@ -1,3 +1,4 @@
+import logging
 from collections import defaultdict
 from typing import Any, Protocol, TypeVar
 
@@ -13,14 +14,19 @@ class Step(Protocol[StepOutputStore]):
 
 
 class Provider(Protocol[StoreOfProvider]):
-    def provide(self, store: StoreOfProvider | None) -> None: ...
+    def provide(self, store: StoreOfProvider | None, context: PipelineContext) -> None: ...
 
 
 class PipelineController:
-    def __init__(self) -> None:
+    def __init__(self, logger: logging.Logger | None = None) -> None:
         self._steps: list[Step[Any]] = []
         self._context: PipelineContext = PipelineContext({})
+        self._context.logger = logger
         self._providers: dict[type[Any], list[Provider[Any]]] = defaultdict(list)
+
+    def set_logger(self, logger: logging.Logger | None) -> None:
+        """Attach the stage logger so steps/providers can read it from context."""
+        self._context.logger = logger
 
     def register_step(self, step: Step[Any]) -> None:
         self._steps.append(step)
@@ -40,6 +46,6 @@ class PipelineController:
 
             if new_store_type in self._providers:
                 for provider in self._providers[new_store_type]:
-                    provider.provide(new_store)
+                    provider.provide(new_store, self._context)
 
         return self._context

@@ -47,6 +47,7 @@ class OtsuHeadSegmenter(HeadSegmenter):
         self._closing_radius: int = closing_radius
         self._otsu_scope: OtsuScope = otsu_scope
         self._threshold_scale: float = threshold_scale
+        super().__init__()
 
     def _process(self, volume: MRIVolume) -> SegmentationMask:
         base_threshold = self._compute_base_threshold(volume.data)

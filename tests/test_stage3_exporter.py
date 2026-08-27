@@ -10,6 +10,7 @@ from virda.io.providers.stage3_exporter import Stage3Exporter
 from virda.localization.brute_force_localizer import BruteForceLocalizer
 from virda.models.electrode import Electrode, Electrodes
 from virda.models.stage3_config import Stage3Config
+from virda.pipeline_context import PipelineContext
 
 
 def _localize(electrodes: Electrodes, threshold_mm: float = 10.0) -> Electrodes:
@@ -33,7 +34,7 @@ class TestStage3Exporter:
         fiducials = make_fiducials()
         result = _localize(make_electrodes(ese.vertices[[0, 42]], fiducials))
         exporter = Stage3Exporter(project_dir=tmp_path, stage3_config=Stage3Config())
-        exporter.provide(result)
+        exporter.provide(result, PipelineContext({}))
 
         data = json.loads((tmp_path / "localization" / "electrodes.json").read_text())
         assert len(data) == 2
@@ -51,7 +52,7 @@ class TestStage3Exporter:
         fiducials = make_fiducials()
         result = _localize(make_electrodes(ese.vertices[[0, 42]], fiducials))
         exporter = Stage3Exporter(project_dir=tmp_path, stage3_config=Stage3Config())
-        exporter.provide(result)
+        exporter.provide(result, PipelineContext({}))
 
         data = json.loads((tmp_path / "localization" / "electrodes_scalp.json").read_text())
         assert len(data) == 2
@@ -67,7 +68,7 @@ class TestStage3Exporter:
         fiducials = make_fiducials()
         result = _localize(make_electrodes(ese.vertices[[0, 42]], fiducials))
         exporter = Stage3Exporter(project_dir=tmp_path, stage3_config=Stage3Config())
-        exporter.provide(result)
+        exporter.provide(result, PipelineContext({}))
 
         data = json.loads((tmp_path / "localization" / "electrodes_ese.json").read_text())
         assert len(data) == 2
@@ -83,7 +84,7 @@ class TestStage3Exporter:
         fiducials = make_fiducials()
         result = _localize(make_electrodes(ese.vertices[[0, 42]], fiducials))
         exporter = Stage3Exporter(project_dir=tmp_path, stage3_config=Stage3Config())
-        exporter.provide(result)
+        exporter.provide(result, PipelineContext({}))
 
         with (tmp_path / "localization" / "electrode_coords.csv").open() as f:
             rows = list(csv.DictReader(f))
@@ -100,7 +101,7 @@ class TestStage3Exporter:
         fiducials = make_fiducials()
         result = _localize(make_electrodes(ese.vertices[[0, 42]], fiducials))
         exporter = Stage3Exporter(project_dir=tmp_path, stage3_config=Stage3Config())
-        exporter.provide(result)
+        exporter.provide(result, PipelineContext({}))
 
         summary = json.loads((tmp_path / "localization" / "localization_summary.json").read_text())
         assert summary["n_electrodes"] == 2
@@ -120,7 +121,7 @@ class TestStage3Exporter:
             threshold_mm=10.0,
         )
         exporter = Stage3Exporter(project_dir=tmp_path, stage3_config=Stage3Config())
-        exporter.provide(result)
+        exporter.provide(result, PipelineContext({}))
 
         summary = json.loads((tmp_path / "localization" / "localization_summary.json").read_text())
         assert summary["n_electrodes"] == 1
@@ -131,4 +132,4 @@ class TestStage3Exporter:
     def test_raises_without_result(self, tmp_path) -> None:
         exporter = Stage3Exporter(project_dir=tmp_path, stage3_config=Stage3Config())
         with pytest.raises(ValueError, match="no result of Stage#3"):
-            exporter.provide(None)
+            exporter.provide(None, PipelineContext({}))

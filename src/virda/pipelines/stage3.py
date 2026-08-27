@@ -40,23 +40,21 @@ class Stage3PipelineBuilder:
         self._logger = logger
 
     def build(self) -> PipelineController:
-        controller = PipelineController()
+        controller = PipelineController(logger=self._logger)
 
         controller.register_store(ESEMesh, self._ese_mesh)
         controller.register_store(Electrodes, self._electrodes)
         controller.register_store(Fiducials, self._fiducials)
         controller.register_step(Stage3LocalizerStep(self._localizer))
 
-        if self._logger:
-            log_provider = StoreLoggingProvider(self._logger)
-            for store_type in (ESEMesh, Fiducials, Electrodes):
-                controller.register_provider(log_provider, on_store=store_type)
+        log_provider = StoreLoggingProvider()
+        for store_type in (ESEMesh, Fiducials, Electrodes):
+            controller.register_provider(log_provider, on_store=store_type)
 
         controller.register_provider(
             Stage3Exporter(
                 project_dir=self._project_dir,
                 stage3_config=self._stage3_config,
-                logger=self._logger,
             ),
             on_store=Electrodes,
         )
