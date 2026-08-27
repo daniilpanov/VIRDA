@@ -139,16 +139,11 @@ jobs:
           name: virda-gui-windows-x64
           path: artifacts/windows
 
-      - name: Create archives
+      - name: Upload executables to GitHub Release
         run: |
-          cd artifacts/linux && tar czf ../../virda-gui-linux-x64.tar.gz . && cd ../..
-          cd artifacts/windows && 7z a ../../virda-gui-windows-x64.zip . && cd ../..
-
-      - name: Upload assets to GitHub Release
-        run: >
-          gh release upload --clobber "$RELEASE_TAG"
-          virda-gui-linux-x64.tar.gz
-          virda-gui-windows-x64.zip
+          mv artifacts/linux/virda virda-linux-x64
+          mv artifacts/windows/virda.exe virda-windows-x64.exe
+          gh release upload --clobber "$RELEASE_TAG" virda-linux-x64 virda-windows-x64.exe
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
