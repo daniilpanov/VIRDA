@@ -1,5 +1,4 @@
 import json
-from logging import Logger
 from pathlib import Path
 
 import numpy as np
@@ -7,21 +6,17 @@ import trimesh
 
 from virda.models.ese_mesh import ESEMesh
 from virda.pipeline import Provider
+from virda.pipeline_context import PipelineContext
 
 
 class Stage2Exporter(Provider[ESEMesh]):
     """Export Stage 2 (ESE) artifacts: mesh, arrays, point pairs."""
 
-    def __init__(
-        self,
-        project_dir: Path,
-        logger: Logger | None = None,
-    ) -> None:
+    def __init__(self, project_dir: Path) -> None:
         self.project = Path(project_dir)
         (self.project / "ese").mkdir(parents=True, exist_ok=True)
-        self._logger = logger
 
-    def provide(self, result: ESEMesh | None) -> None:
+    def provide(self, result: ESEMesh | None, context: PipelineContext) -> None:
         if not result:
             raise ValueError("There is no result of Stage#2")
 

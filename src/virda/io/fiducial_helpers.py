@@ -1,7 +1,7 @@
 """Helpers for persisting and restoring the :class:`Fiducials` model."""
 
 import json
-import logging
+from logging import Logger
 from pathlib import Path
 from typing import Any, cast
 
@@ -9,8 +9,6 @@ import numpy as np
 
 from virda.models.coordsystem import _SURFACE_RAS_FRAMES, Coordsystem
 from virda.models.fiducial import Fiducial, Fiducials
-
-logger = logging.getLogger(__name__)
 
 
 def save_fiducials(path: Path, fiducials: Fiducials) -> None:
@@ -32,7 +30,7 @@ def save_fiducials(path: Path, fiducials: Fiducials) -> None:
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
-def load_fiducials(path: Path) -> Fiducials:
+def load_fiducials(path: Path, logger: Logger | None = None) -> Fiducials:
     """Read a JSON file into a :class:`Fiducials` model.
 
     Accepts both the format written by :func:`save_fiducials` and MNE-style
@@ -45,10 +43,10 @@ def load_fiducials(path: Path) -> Fiducials:
         coordsystem = Coordsystem.model_validate(data)
         units = (coordsystem.coordinate_units or coordsystem.eeg_coordinate_units or "m").strip()
         scale = coordsystem.mri_unit_scale_mm()
-        if units.lower() != "mm":
+        if units.lower() != "mm" and logger is not None:
             logger.debug("coordsystem units %r converted to mm (x%s)", units, scale)
         frame = coordsystem.coordinate_system or coordsystem.eeg_coordinate_system
-        if frame and frame.strip().lower() not in _SURFACE_RAS_FRAMES:
+        if frame and frame.strip().lower() not in _SURFACE_RAS_FRAMES and logger is not None:
             logger.debug(
                 "coordsystem frame %r is not surface RAS; assuming FreeSurfer surface RAS anyway",
                 frame,

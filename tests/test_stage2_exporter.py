@@ -9,6 +9,7 @@ from virda.ese.pca_ese_builder import PCAESEBuilder
 from virda.io.providers.stage2_exporter import Stage2Exporter
 from virda.models.ese_mesh import ESEMesh
 from virda.models.stage2_config import Stage2Config
+from virda.pipeline_context import PipelineContext
 
 ESE_OFFSET_MM = 2.0
 
@@ -23,7 +24,7 @@ class TestStage2Exporter:
         config = Stage2Config(k_neighbors=30)
         result = build_ese_mesh(config)
         exporter = Stage2Exporter(project_dir=tmp_path)
-        exporter.provide(result)
+        exporter.provide(result, PipelineContext({}))
 
         ese_dir = tmp_path / "ese"
         assert (ese_dir / "ese_mesh.ply").exists()
@@ -36,7 +37,7 @@ class TestStage2Exporter:
         config = Stage2Config(k_neighbors=30)
         result = build_ese_mesh(config)
         exporter = Stage2Exporter(project_dir=tmp_path)
-        exporter.provide(result)
+        exporter.provide(result, PipelineContext({}))
 
         pairs = json.loads((tmp_path / "ese" / "point_pairs.json").read_text())
         assert pairs["n_points"] == result.vertices.shape[0]
@@ -54,4 +55,4 @@ class TestStage2Exporter:
     def test_raises_without_result(self, tmp_path) -> None:
         exporter = Stage2Exporter(project_dir=tmp_path)
         with pytest.raises(ValueError, match="no result of Stage#2"):
-            exporter.provide(None)
+            exporter.provide(None, PipelineContext({}))

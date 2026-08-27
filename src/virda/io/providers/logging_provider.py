@@ -1,16 +1,14 @@
-import logging
 from typing import Any
 
 from virda.pipeline import Provider
+from virda.pipeline_context import PipelineContext
 
 
 class StoreLoggingProvider(Provider[Any]):
-    """Provider that logs every store update via a structured logger."""
+    """Provider that logs every store update via the stage logger."""
 
-    def __init__(self, logger: logging.Logger) -> None:
-        self.logger = logger
-
-    def provide(self, store: Any) -> None:
+    def provide(self, store: Any, context: PipelineContext) -> None:
+        logger = context.get_logger()
         name = type(store).__name__
         extra = ""
         if hasattr(store, "shape"):
@@ -19,4 +17,4 @@ class StoreLoggingProvider(Provider[Any]):
             extra = f" vertices={len(store.vertices)}"
         elif hasattr(store, "locations"):
             extra = f" locations={len(store.locations)}"
-        self.logger.info(f"Store '{name}' updated.{extra}")
+        logger.info(f"Store '{name}' updated.{extra}")

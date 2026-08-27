@@ -1,6 +1,5 @@
 import csv
 import json
-from logging import Logger
 from pathlib import Path
 
 import numpy as np
@@ -8,6 +7,7 @@ import numpy as np
 from virda.models.electrode import Electrodes
 from virda.models.stage3_config import Stage3Config
 from virda.pipeline import Provider
+from virda.pipeline_context import PipelineContext
 
 
 class Stage3Exporter(Provider[Electrodes]):
@@ -17,14 +17,12 @@ class Stage3Exporter(Provider[Electrodes]):
         self,
         project_dir: Path,
         stage3_config: Stage3Config,
-        logger: Logger | None = None,
     ) -> None:
         self.project = Path(project_dir)
         (self.project / "localization").mkdir(parents=True, exist_ok=True)
         self._stage3_config = stage3_config
-        self._logger = logger
 
-    def provide(self, result: Electrodes | None) -> None:
+    def provide(self, result: Electrodes | None, context: PipelineContext) -> None:
         if not result:
             raise ValueError("There is no result of Stage#3")
 

@@ -1,28 +1,34 @@
 import logging
 from pathlib import Path
 
-# Avoid re-registering logger handlers
-# Don't use loggers inside the other processes!
-initialized_loggers: dict[str, tuple[logging.Logger, logging.Handler, logging.Handler]] = {}
+# One canonical logger per (stage, project) so re-running a stage reuses the
+# same logger/handler instead of duplicating them. Don't use loggers inside
+# the other processes!
+_stage_loggers: dict[tuple[str, Path], logging.Logger] = {}
 
 
-def setup_pipeline_logging(project_dir: Path, stage_id: str) -> logging.Logger:
-    log_dir = project_dir / "logs"
+def get_stage_logger(project_dir: Path, stage_id: str) -> logging.Logger:
+    """Return the canonical logger for ``stage_id`` under ``project_dir``.
+
+    Each stage writes to its own file (``<project>/logs/<stage>.log``, e.g.
+    ``stage1.log``) with ``mode="w"``, so stage logs never overwrite each
+    other.  The logger propagates to the parent ``virda`` logger, so handlers
+    attached there (e.g. the GUI) keep receiving every record.
+    """
+    key = (stage_id, Path(project_dir))
+    cached = _stage_loggers.get(key)
+    if cached is not None:
+        return cached
+
+    logger = logging.getLogger(f"virda.{stage_id}")
+    logger.setLevel(logging.INFO)
+    logger.propagate = True
+
+    log_dir = Path(project_dir) / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / f"{stage_id.replace('_', '')}.log"
 
-    logger_name = f"virda.{stage_id}"
-    logger_config = initialized_loggers.get(logger_name)
-    if logger_config:
-        logger, fh, ch = logger_config
-        fh.close()
-        logger.removeHandler(fh)
-        ch.close()
-        logger.removeHandler(ch)
-    else:
-        logger = logging.getLogger(logger_name)
-        logger.setLevel(logging.INFO)
-
-    fh = logging.FileHandler(log_dir / "pipeline.log", mode="w")
+    fh = logging.FileHandler(log_file, mode="w")
     fh.setLevel(logging.INFO)
     ch = logging.StreamHandler()
     ch.setLevel(logging.INFO)
@@ -36,6 +42,5 @@ def setup_pipeline_logging(project_dir: Path, stage_id: str) -> logging.Logger:
     logger.addHandler(fh)
     logger.addHandler(ch)
 
-    initialized_loggers[logger_name] = (logger, fh, ch)
-
+    _stage_loggers[key] = logger
     return logger
