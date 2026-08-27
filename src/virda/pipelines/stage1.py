@@ -34,11 +34,10 @@ from .helpers import get_stage_logger
 
 def _build_mask_postprocessors(
     config: Config,
-    logger: Logger | None = None,
 ) -> list[SegmentationMaskPostprocessor]:
     if not config.seal_enabled:
         return []
-    return [MaskSealer(radius=config.seal_radius, logger=logger)]
+    return [MaskSealer(radius=config.seal_radius)]
 
 
 class FiducialsRegistrationStep:
@@ -161,7 +160,7 @@ class Stage1PipelineBuilder:
                 ese_config=config.to_ese_config(),
                 config=config,
             )
-            .setup_mask_postprocessors(_build_mask_postprocessors(config, logger))
+            .setup_mask_postprocessors(_build_mask_postprocessors(config))
             .setup_mesh_postprocessors(
                 [
                     TrimeshCleaner(
@@ -219,10 +218,9 @@ class Stage1PipelineBuilder:
         controller.register_store(Config, self._config)
 
         # -- Providers --
-        if self._logger:
-            log_provider = StoreLoggingProvider(self._logger)
-            for store_type in (MRIVolume, SegmentationMask, ScalpMesh, Stage1Result):
-                controller.register_provider(log_provider, on_store=store_type)
+        log_provider = StoreLoggingProvider()
+        for store_type in (MRIVolume, SegmentationMask, ScalpMesh, Stage1Result):
+            controller.register_provider(log_provider, on_store=store_type)
 
         if self._project_dir:
             controller.register_provider(
@@ -231,7 +229,6 @@ class Stage1PipelineBuilder:
                     ese_config=self._ese_config,
                     config=self._config,
                     nifti_path=self._nifti_path,
-                    logger=self._logger,
                 ),
                 Stage1Result,
             )
@@ -246,7 +243,6 @@ class Stage1PipelineBuilder:
                 Stage1QualityControlStep(
                     project_dir=self._project_dir,
                     ese_config=self._ese_config,
-                    logger=self._logger,
                 )
             )
 

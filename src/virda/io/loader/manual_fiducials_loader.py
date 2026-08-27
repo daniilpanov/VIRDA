@@ -6,4 +6,4 @@ from virda.models.path import FiducialsPath
 
 class ManualFiducialsLoader(FiducialsLoader):
     def _process(self, path: FiducialsPath) -> ManualFiducials:
-        return ManualFiducials(fiducials=load_fiducials(path.fiducials_path))
+        return ManualFiducials(fiducials=load_fiducials(path.fiducials_path, self._logger))

@@ -78,15 +78,13 @@ class Stage2PipelineBuilder:
         controller.register_store(ScalpMesh, self._scalp_mesh)
         controller.register_step(Stage2OutputGenerator(self._ese_builder))
 
-        if self._logger:
-            log_provider = StoreLoggingProvider(self._logger)
-            for store_type in (ScalpMesh, ESEMesh):
-                controller.register_provider(log_provider, on_store=store_type)
+        log_provider = StoreLoggingProvider()
+        for store_type in (ScalpMesh, ESEMesh):
+            controller.register_provider(log_provider, on_store=store_type)
 
         controller.register_provider(
             Stage2Exporter(
                 project_dir=self._project_dir,
-                logger=self._logger,
             ),
             on_store=ESEMesh,
         )

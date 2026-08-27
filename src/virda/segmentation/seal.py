@@ -15,7 +15,7 @@ The output is trimmed to the most voluminous connected component (the head),
 so stray fragments are dropped instead of surviving alongside the head.
 """
 
-import logging
+from logging import Logger
 from typing import cast
 
 import numpy as np
@@ -28,7 +28,7 @@ from virda.segmentation.contracts import SegmentationMaskPostprocessor
 
 def _keep_largest_component(
     mask: np.ndarray,
-    logger: logging.Logger | None = None,
+    logger: Logger | None = None,
 ) -> np.ndarray:
     labels, component_count = ndi.label(mask)
     if component_count < 1:
@@ -38,9 +38,7 @@ def _keep_largest_component(
     largest_label = int(np.argmax(sizes))
     if component_count > 1:
         second_largest = int(np.delete(sizes, largest_label).max())
-        if second_largest >= max(100, sizes[largest_label] * 0.01):
-            if not logger:
-                logger = logging.getLogger(__name__)
+        if second_largest >= max(100, sizes[largest_label] * 0.01) and logger is not None:
             logger.warning(
                 "Sealing found %d connected components; keeping the largest (%d voxels) "
                 "and dropping %d other(s) (%d voxels in total)",
@@ -57,14 +55,13 @@ class MaskSealer(SegmentationMaskPostprocessor):
         self,
         radius: int = 4,
         keep_largest: bool = True,
-        logger: logging.Logger | None = None,
     ) -> None:
         if radius < 0:
             raise ValueError(f"radius must be non-negative, got {radius}")
 
         self._radius = radius
         self._keep_largest = keep_largest
-        self._logger = logger
+        super().__init__()
 
     def _process(self, mask: SegmentationMask) -> SegmentationMask:
         return SegmentationMask(mask=self._seal_mask(mask.mask))

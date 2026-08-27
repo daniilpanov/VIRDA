@@ -1,10 +1,8 @@
 """Automatic quality-control checks for a Stage 1 result (spec §13.1, §16)."""
 
 import json
-import logging
 from collections import defaultdict
 from itertools import product
-from logging import Logger
 from pathlib import Path
 from typing import Any, Literal
 
@@ -429,11 +427,9 @@ class Stage1QualityControlStep:
         self,
         project_dir: Path,
         ese_config: ESEConfig | None = None,
-        logger: Logger | None = None,
     ) -> None:
         self._project_dir = project_dir
         self._ese_config = ese_config
-        self._logger = logger
 
     def run(self, context: PipelineContext) -> QualityControlReport:
         result = context.get_store_notnull(Stage1Result)
@@ -447,8 +443,7 @@ class Stage1QualityControlStep:
         (qc_dir / "report.json").write_text(json.dumps(report, indent=2))
 
         if report["status"] != "ok":
-            logger = self._logger or logging.getLogger(__name__)
-            logger.warning(
+            context.get_logger().warning(
                 f"Quality control {report['status'].upper()}: " + "; ".join(report["warnings"])
             )
 
