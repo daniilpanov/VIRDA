@@ -12,7 +12,7 @@ from virda.models.scalp_mesh import ScalpMesh
 from virda.pipeline import PipelineController
 from virda.pipeline_context import PipelineContext
 
-from .helpers import setup_pipeline_logging
+from .helpers import get_stage_logger
 
 
 class Stage2OutputGenerator:
@@ -58,7 +58,7 @@ class Stage2PipelineBuilder:
         project_dir_path = Path(resolved_project_dir)
 
         stage2_config = config.to_stage2_config()
-        logger = setup_pipeline_logging(project_dir_path, "stage_2")
+        logger = get_stage_logger(project_dir_path, "stage_2")
 
         ese_builder = PCAESEBuilder(
             config=stage2_config,
@@ -73,7 +73,7 @@ class Stage2PipelineBuilder:
         )
 
     def build(self) -> PipelineController:
-        controller = PipelineController()
+        controller = PipelineController(logger=self._logger)
 
         controller.register_store(ScalpMesh, self._scalp_mesh)
         controller.register_step(Stage2OutputGenerator(self._ese_builder))
