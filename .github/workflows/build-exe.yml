@@ -151,4 +151,5 @@ jobs:
           virda-gui-windows-x64.zip
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
