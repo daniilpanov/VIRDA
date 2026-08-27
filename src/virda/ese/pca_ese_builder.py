@@ -1,5 +1,3 @@
-import logging
-
 import numpy as np
 from scipy.spatial import cKDTree
 
@@ -7,8 +5,6 @@ from virda.ese.contracts import ESEBuilder
 from virda.models.ese_mesh import ESEMesh
 from virda.models.scalp_mesh import ScalpMesh
 from virda.models.stage2_config import Stage2Config
-
-logger = logging.getLogger(__name__)
 
 _FALLBACK_K_NEIGHBORS = 20
 
@@ -52,6 +48,7 @@ class PCAESEBuilder(ESEBuilder):
     def __init__(self, config: Stage2Config, ese_offset_mm: float) -> None:
         self._config = config
         self._ese_offset_mm = ese_offset_mm
+        super().__init__()
 
     def _process(self, scalp_mesh: ScalpMesh) -> ESEMesh:
         vertices = scalp_mesh.vertices
@@ -71,12 +68,13 @@ class PCAESEBuilder(ESEBuilder):
         normals = _orient_outward(normals, vertices)
         ese_vertices = vertices + self._ese_offset_mm * normals
 
-        logger.info(
-            "ESE estimated: %d vertices, %s, median quality=%.4f",
-            vertices.shape[0],
-            mode,
-            float(np.median(quality)),
-        )
+        if self._logger:
+            self._logger.info(
+                "ESE estimated: %d vertices, %s, median quality=%.4f",
+                vertices.shape[0],
+                mode,
+                float(np.median(quality)),
+            )
 
         return ESEMesh(
             vertices=ese_vertices,

@@ -1,4 +1,3 @@
-import logging
 from dataclasses import replace
 
 import numpy as np
@@ -9,8 +8,6 @@ from virda.models.electrode import Electrode, Electrodes
 from virda.models.ese_mesh import ESEMesh
 from virda.models.fiducial import Fiducial, Fiducials
 from virda.models.stage3_config import Stage3Config
-
-logger = logging.getLogger(__name__)
 
 _OFFSET_SEARCH_MIN_MM = -30.0
 _OFFSET_SEARCH_MAX_MM = 30.0
@@ -93,6 +90,7 @@ class BruteForceLocalizer(ElectrodeLocalizer):
 
     def __init__(self, config: Stage3Config) -> None:
         self._config = config
+        super().__init__()
 
     def _process(
         self,
@@ -134,16 +132,17 @@ class BruteForceLocalizer(ElectrodeLocalizer):
             for electrode in localized
             if electrode.residual_error is not None
         ]
-        if residuals:
-            logger.info(
-                "Localized %d/%d electrodes, median residual=%.4f mm, flagged=%d",
-                localized_count,
-                len(localized),
-                float(np.median(residuals)),
-                sum(1 for electrode in localized if electrode.flagged),
-            )
-        else:
-            logger.info("No electrodes localized (%d provided)", len(localized))
+        if self._logger:
+            if residuals:
+                self._logger.info(
+                    "Localized %d/%d electrodes, median residual=%.4f mm, flagged=%d",
+                    localized_count,
+                    len(localized),
+                    float(np.median(residuals)),
+                    sum(1 for electrode in localized if electrode.flagged),
+                )
+            else:
+                self._logger.info("No electrodes localized (%d provided)", len(localized))
         return Electrodes(
             items=localized,
             calibrated_offset_shift_mm=(
@@ -167,10 +166,11 @@ class BruteForceLocalizer(ElectrodeLocalizer):
             if fiducial.fiducial_id in electrode.measured_distances
         ]
         if not present:
-            logger.warning(
-                "Electrode %s has no measured distances to any known fiducial; skipped",
-                electrode.electrode_id,
-            )
+            if self._logger:
+                self._logger.warning(
+                    "Electrode %s has no measured distances to any known fiducial; skipped",
+                    electrode.electrode_id,
+                )
             return electrode
 
         measured = np.asarray(
@@ -242,7 +242,10 @@ class BruteForceLocalizer(ElectrodeLocalizer):
             )
         ]
         if not localizable:
-            logger.warning("Offset calibration skipped: no electrodes with known fiducials")
+            if self._logger:
+                self._logger.warning(
+                    "Offset calibration skipped: no electrodes with known fiducials"
+                )
             return 0.0
 
         best_shift = 0.0
@@ -267,13 +270,14 @@ class BruteForceLocalizer(ElectrodeLocalizer):
                 best_score = score
                 best_shift = float(shift)
 
-        logger.info(
-            "Offset calibration: best shift=%+.1f mm (median residual %.2f mm)",
-            best_shift,
-            best_score,
-        )
-        if abs(best_shift) > _OFFSET_SHIFT_WARN_MM:
-            logger.warning(
+        if self._logger:
+            self._logger.info(
+                "Offset calibration: best shift=%+.1f mm (median residual %.2f mm)",
+                best_shift,
+                best_score,
+            )
+        if abs(best_shift) > _OFFSET_SHIFT_WARN_MM and self._logger:
+            self._logger.warning(
                 "Measured distances fit best with the ESE shifted by %+.1f mm "
                 "from the configured offset; check ese_offset_mm/ese_reference "
                 "or the measurement reference point.",

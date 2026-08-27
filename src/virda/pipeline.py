@@ -14,7 +14,7 @@ class Step(Protocol[StepOutputStore]):
 
 
 class Provider(Protocol[StoreOfProvider]):
-    def provide(self, store: StoreOfProvider | None) -> None: ...
+    def provide(self, store: StoreOfProvider | None, context: PipelineContext) -> None: ...
 
 
 class PipelineController:
@@ -46,6 +46,6 @@ class PipelineController:
 
             if new_store_type in self._providers:
                 for provider in self._providers[new_store_type]:
-                    provider.provide(new_store)
+                    provider.provide(new_store, self._context)
 
         return self._context

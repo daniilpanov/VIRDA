@@ -40,7 +40,7 @@ class RecordingProvider:
     def __init__(self) -> None:
         self.received: list[object] = []
 
-    def provide(self, store: object) -> None:
+    def provide(self, store: object, context: PipelineContext) -> None:
         self.received.append(store)
 
 

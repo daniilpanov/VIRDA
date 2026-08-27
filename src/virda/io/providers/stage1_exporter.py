@@ -1,8 +1,6 @@
 import json
-import logging
 import shutil
 from dataclasses import asdict
-from logging import Logger
 from pathlib import Path
 
 import nibabel as nib
@@ -13,6 +11,7 @@ from virda.io.fiducial_helpers import save_fiducials
 from virda.models.config import Config
 from virda.models.ese_config import ESEConfig
 from virda.models.stage1_result import Stage1Result
+from virda.pipeline_context import PipelineContext
 
 
 class Stage1Exporter:
@@ -31,7 +30,6 @@ class Stage1Exporter:
         ese_config: ESEConfig | None = None,
         config: Config | None = None,
         nifti_path: Path | None = None,
-        logger: Logger | None = None,
     ) -> None:
         self.project = Path(project_dir)
         for subdir in ("input", "mesh", "segmentation", "fiducials", "config"):
@@ -40,9 +38,8 @@ class Stage1Exporter:
         self._ese_config = ese_config
         self._config = config
         self._nifti_path = Path(nifti_path) if nifti_path else None
-        self._logger = logger
 
-    def provide(self, result: Stage1Result | None) -> None:
+    def provide(self, result: Stage1Result | None, context: PipelineContext) -> None:
         if not result:
             raise ValueError("There is no result of Stage#1")
 
@@ -83,8 +80,7 @@ class Stage1Exporter:
             try:
                 shutil.copy2(self._nifti_path, target_path)
             except OSError:
-                logger = self._logger or logging.getLogger(__name__)
-                logger.warning(
+                context.get_logger().warning(
                     f"Failed to copy source NIfTI ('{self._nifti_path}')"
                     f" into patient project ('{target_path}')",
                     exc_info=True,

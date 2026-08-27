@@ -4,6 +4,7 @@ import trimesh
 
 from virda.models.scalp_mesh import ScalpMesh
 from virda.pipeline import Provider
+from virda.pipeline_context import PipelineContext
 
 
 class ScalpMeshVersioningProvider(Provider[ScalpMesh]):
@@ -14,7 +15,7 @@ class ScalpMeshVersioningProvider(Provider[ScalpMesh]):
         self.versions_dir.mkdir(parents=True, exist_ok=True)
         self._counter = 0
 
-    def provide(self, store: ScalpMesh | None) -> None:
+    def provide(self, store: ScalpMesh | None, context: PipelineContext) -> None:
         if not store:
             return
 
