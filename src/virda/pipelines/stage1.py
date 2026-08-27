@@ -29,7 +29,7 @@ from virda.segmentation import HeadSegmenter, SegmentationMaskPostprocessor
 from virda.segmentation.head_segmenter import OtsuHeadSegmenter
 from virda.segmentation.seal import MaskSealer
 
-from .helpers import setup_pipeline_logging
+from .helpers import get_stage_logger
 
 
 def _build_mask_postprocessors(
@@ -142,7 +142,7 @@ class Stage1PipelineBuilder:
                 lamb=config.smoother_lamb,
             )
 
-        logger = setup_pipeline_logging(project_dir_path_inst, "stage_1")
+        logger = get_stage_logger(project_dir_path_inst, "stage_1")
 
         return (
             cls(
@@ -186,7 +186,7 @@ class Stage1PipelineBuilder:
         return self
 
     def build(self) -> PipelineController:
-        controller = PipelineController()
+        controller = PipelineController(logger=self._logger)
 
         # -- Steps --
         controller.register_step(self._loader)

@@ -40,7 +40,7 @@ class Stage3PipelineBuilder:
         self._logger = logger
 
     def build(self) -> PipelineController:
-        controller = PipelineController()
+        controller = PipelineController(logger=self._logger)
 
         controller.register_store(ESEMesh, self._ese_mesh)
         controller.register_store(Electrodes, self._electrodes)

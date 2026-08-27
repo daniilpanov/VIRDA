@@ -215,7 +215,7 @@ def run_stage3(
     from virda.models.fiducial import Fiducials
     from virda.models.path import MeasurementsPath
     from virda.pipeline_context import PipelineContext
-    from virda.pipelines.helpers import setup_pipeline_logging
+    from virda.pipelines.helpers import get_stage_logger
     from virda.pipelines.stage3 import Stage3PipelineBuilder
 
     if ese_mesh is None:
@@ -248,7 +248,7 @@ def run_stage3(
         electrodes=electrodes,
         fiducials=fiducials,
         project_dir=project,
-        logger=setup_pipeline_logging(project, "stage_3"),
+        logger=get_stage_logger(project, "stage_3"),
     ).build()
     context = stage3_pipeline.run()
     return context.get_store_notnull(Electrodes)
