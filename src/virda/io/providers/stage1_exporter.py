@@ -1,6 +1,5 @@
 import json
 import shutil
-from dataclasses import asdict
 from pathlib import Path
 
 import nibabel as nib
@@ -32,7 +31,7 @@ class Stage1Exporter:
         nifti_path: Path | None = None,
     ) -> None:
         self.project = Path(project_dir)
-        for subdir in ("input", "mesh", "segmentation", "fiducials", "config"):
+        for subdir in ("input", "mesh", "segmentation", "fiducials"):
             (self.project / subdir).mkdir(parents=True, exist_ok=True)
 
         self._ese_config = ese_config
@@ -60,18 +59,13 @@ class Stage1Exporter:
         # 3. Fiducials as JSON
         save_fiducials(self.project / "fiducials" / "fiducials.json", result.fiducials)
 
-        # 4. Processing ESE config as JSON
-        if self._ese_config is not None:
-            pipeline_config = {"ese": asdict(self._ese_config)}
-            (self.project / "config" / "ese.json").write_text(json.dumps(pipeline_config, indent=2))
-
-        # 5. Processing config as JSON
+        # 4. Processing config as JSON
         if self._config is not None:
             (self.project / "input" / "pipeline_config.json").write_text(
                 json.dumps(self._config.model_dump(mode="json"), indent=2)
             )
 
-        # 6. Source NIfTI copy
+        # 5. Source NIfTI copy
         if self._nifti_path is not None:
             target_path = self.project / "input" / self._nifti_path.name
             try:

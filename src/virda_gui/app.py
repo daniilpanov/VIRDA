@@ -88,7 +88,6 @@ _PROJECT_ARTIFACT_DIRS = [
     "segmentation",
     "mesh",
     "fiducials",
-    "config",
     "ese",
     "localization",
     "logs",

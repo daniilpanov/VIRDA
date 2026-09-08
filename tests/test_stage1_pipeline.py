@@ -189,35 +189,6 @@ class TestStage1Pipeline:
         restored = load_fiducials(exported_path)
         assert restored.ids == result.fiducials.ids
 
-    def test_run_exports_ese_config(
-        self, synthetic_nifti_path: Path, tmp_path: Path, fiducials_file: Path
-    ) -> None:
-        ese_config = ESEConfig(ese_offset_mm=2.5)
-        pipeline = build_pipeline(
-            synthetic_nifti_path,
-            project_dir=tmp_path,
-            fiducials_path=fiducials_file,
-            ese_config=ese_config,
-        )
-
-        pipeline.run().get_store_notnull(Stage1Result)
-
-        config = json.loads((tmp_path / "config" / "ese.json").read_text())
-        assert config == {"ese": {"ese_offset_mm": 2.5}}
-
-    def test_run_without_ese_config_skips_pipeline_config(
-        self, synthetic_nifti_path: Path, tmp_path: Path, fiducials_file: Path
-    ) -> None:
-        pipeline = build_pipeline(
-            synthetic_nifti_path,
-            project_dir=tmp_path,
-            fiducials_path=fiducials_file,
-        )
-
-        pipeline.run().get_store_notnull(Stage1Result)
-
-        assert not (tmp_path / "config" / "ese.json").exists()
-
     def test_run_exports_config(
         self, synthetic_nifti_path: Path, tmp_path: Path, fiducials_file: Path
     ) -> None:

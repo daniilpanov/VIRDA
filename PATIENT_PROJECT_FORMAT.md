@@ -14,7 +14,6 @@ any stage can be reproduced exactly from the project alone:
 ├── segmentation/       # head segmentation mask
 ├── mesh/               # final scalp mesh, arrays and per-step versions
 ├── fiducials/          # fiducial table
-├── config/             # ESE configuration
 ├── ese/                # Stage 2 output: electrode-skin-entrance surface
 ├── localization/       # Stage 3 output: localized electrodes
 └── logs/               # pipeline log
@@ -107,18 +106,6 @@ count / offset / reference) instead of `null`.
   versions without the field load with unit weight.
 - `definition_method` is one of `"manual"` (manual file), `"auto"`
   (auto-detection) or `"imported"` (taken from an MNE `coordsystem.json`).
-
-## `config/`
-
-`ese.json` — ESE configuration; written only when an ESE config is supplied:
-
-```json
-{
-  "ese": {
-    "ese_offset_mm": 2.5
-  }
-}
-```
 
 ## `ese/`
 
