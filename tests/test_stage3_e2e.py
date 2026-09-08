@@ -236,7 +236,6 @@ def test_stage3_full_pipeline_with_mne_sample(tmp_path: Path, k_neighbors: int |
     stage3_dir = tmp_path / "localization"
     assert (stage3_dir / "electrodes.json").exists()
     assert (stage3_dir / "electrode_coords.csv").exists()
-    assert (stage3_dir / "localization_summary.json").exists()
 
     # Per-electrode pair checks: no catastrophic outlier on any single ID.
     per_pair = _per_electrode_errors(electrodes, electrode_positions)
@@ -327,9 +326,6 @@ def test_stage3_offset_calibration_with_scalp_level_measurements(
         f"  Max error    : {errors.max():.2f} mm\n"
         f"  Within 10 mm : {pct_10mm:.1f}%"
     )
-
-    summary = json.loads((tmp_path / "localization" / "localization_summary.json").read_text())
-    assert summary["calibrated_ese_offset_shift_mm"] == pytest.approx(shift)
 
     assert median_err < 6.0
     assert mean_err < 9.0

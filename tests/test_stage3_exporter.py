@@ -8,7 +8,7 @@ from tests.helpers.measurements import make_electrodes, make_ese, make_fiducials
 from tests.helpers.pipelines import build_context
 from virda.io.providers.stage3_exporter import Stage3Exporter
 from virda.localization.brute_force_localizer import BruteForceLocalizer
-from virda.models.electrode import Electrode, Electrodes
+from virda.models.electrode import Electrodes
 from virda.models.stage3_config import Stage3Config
 from virda.pipeline_context import PipelineContext
 
@@ -95,37 +95,6 @@ class TestStage3Exporter:
         assert float(rows[0]["y"]) == pytest.approx(result.items[0].ese_coords[1])
         assert float(rows[0]["z"]) == pytest.approx(result.items[0].ese_coords[2])
         assert float(rows[0]["confidence"]) == pytest.approx(result.items[0].confidence)
-
-    def test_exports_summary(self, tmp_path) -> None:
-        ese = make_ese()
-        fiducials = make_fiducials()
-        result = _localize(make_electrodes(ese.vertices[[0, 42]], fiducials))
-        exporter = Stage3Exporter(project_dir=tmp_path, stage3_config=Stage3Config())
-        exporter.provide(result, PipelineContext({}))
-
-        summary = json.loads((tmp_path / "localization" / "localization_summary.json").read_text())
-        assert summary["n_localized"] == 2
-        assert summary["n_flagged"] == 0
-        assert summary["residual_threshold_mm"] == 10.0
-        assert summary["median_residual_mm"] < 1e-6
-
-    def test_summary_counts_flagged(self, tmp_path) -> None:
-        ese = make_ese()
-        fiducials = make_fiducials()
-        point = ese.vertices[0]
-        distances = _exact_distances(point, fiducials)
-        distances["LPA"] += 100.0
-        result = _localize(
-            Electrodes(items=[Electrode(electrode_id="E0", measured_distances=distances)]),
-            threshold_mm=10.0,
-        )
-        exporter = Stage3Exporter(project_dir=tmp_path, stage3_config=Stage3Config())
-        exporter.provide(result, PipelineContext({}))
-
-        summary = json.loads((tmp_path / "localization" / "localization_summary.json").read_text())
-        assert summary["n_localized"] == 1
-        assert summary["n_flagged"] == 1
-        assert summary["median_residual_mm"] > 10.0
 
     def test_raises_without_result(self, tmp_path) -> None:
         exporter = Stage3Exporter(project_dir=tmp_path, stage3_config=Stage3Config())

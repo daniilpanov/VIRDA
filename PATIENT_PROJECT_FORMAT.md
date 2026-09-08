@@ -161,7 +161,6 @@ available.
 | `electrodes_scalp.json` | Same electrodes with only `coords` = scalp contact points (scanner RAS). |
 | `electrodes_ese.json` | Same electrodes with only `coords` = ESE body-center points (scanner RAS). |
 | `electrode_coords.csv` | Tabular copy: `electrode_id, x, y, z, residual_error, confidence, flagged`; `x/y/z` are the ESE coordinates. Empty `residual_error`/`confidence` mark non-localized electrodes. |
-| `localization_summary.json` | Aggregate statistics (see below). |
 
 `electrodes.json` — one entry per electrode:
 
@@ -185,18 +184,6 @@ available.
   are then `null` too. All coordinates are scanner RAS millimeters.
 - `flagged` marks electrodes whose residual exceeds
   `residual_threshold_mm`.
-
-`localization_summary.json`:
-
-```json
-{
-  "n_localized": 60,
-  "n_flagged": 0,
-  "median_residual_mm": 1.27,
-  "residual_threshold_mm": 10.0,
-  "calibrated_ese_offset_shift_mm": 0.0
-}
-```
 
 `calibrated_ese_offset_shift_mm` is present only when
 `calibrate_ese_offset` was enabled (`null` otherwise).
