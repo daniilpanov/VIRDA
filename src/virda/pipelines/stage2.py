@@ -44,9 +44,7 @@ class Stage2PipelineBuilder:
         """
         ese_config = config.to_ese_config()
         if ese_config is None:
-            raise ValueError(
-                "ESE is not configured. Provide n_electrodes, ese_offset_mm, and ese_reference."
-            )
+            raise ValueError("ESE is not configured. Provide ese_offset_mm and ese_reference.")
 
         resolved_project_dir = config.project_dir
         if resolved_project_dir is None:

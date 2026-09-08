@@ -145,7 +145,6 @@ class TestStage1Pipeline:
                         "LPA": {"Head": [-71.4, 0.0, 0.0], "MRI": [-75.0, -1.0, -14.0]},
                         "RPA": {"Head": [75.3, 0.0, 0.0], "MRI": [75.0, -1.0, -14.0]},
                     },
-                    "ElectrodeCount": 60,
                 }
             )
         )
@@ -166,7 +165,6 @@ class TestStage1Pipeline:
                     "FiducialsCoordinates": {
                         "NASION": {"Head": [0.0, 102.6, 0.0], "MRI": [0.0, 88.0, -10.0]},
                     },
-                    "ElectrodeCount": 60,
                 }
             )
         )
@@ -200,9 +198,7 @@ class TestStage1Pipeline:
     def test_run_exports_ese_config(
         self, synthetic_nifti_path: Path, tmp_path: Path, fiducials_file: Path
     ) -> None:
-        ese_config = ESEConfig(
-            n_electrodes=32, ese_offset_mm=2.5, ese_reference="electrode_body_center"
-        )
+        ese_config = ESEConfig(ese_offset_mm=2.5, ese_reference="electrode_body_center")
         pipeline = build_pipeline(
             synthetic_nifti_path,
             project_dir=tmp_path,
@@ -215,7 +211,6 @@ class TestStage1Pipeline:
         config = json.loads((tmp_path / "config" / "ese.json").read_text())
         assert config == {
             "ese": {
-                "n_electrodes": 32,
                 "ese_offset_mm": 2.5,
                 "ese_reference": "electrode_body_center",
             }
@@ -238,7 +233,6 @@ class TestStage1Pipeline:
         self, synthetic_nifti_path: Path, tmp_path: Path, fiducials_file: Path
     ) -> None:
         config = Config(
-            n_electrodes=32,
             ese_offset_mm=2.5,
             ese_reference="electrode_body_center",
         )
@@ -252,7 +246,6 @@ class TestStage1Pipeline:
         pipeline.run().get_store_notnull(Stage1Result)
 
         written = json.loads((tmp_path / "input" / "pipeline_config.json").read_text())
-        assert written["n_electrodes"] == 32
         assert written["ese_offset_mm"] == 2.5
         assert written["ese_reference"] == "electrode_body_center"
         assert written["auto_detect_fiducials"] is False

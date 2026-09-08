@@ -118,7 +118,6 @@ def check_ese_config(ese_config: ESEConfig | None) -> dict[str, Any]:
             else f"ESE offset must be positive, got {ese_config.ese_offset_mm} mm"
         ),
         ese_offset_mm=ese_config.ese_offset_mm,
-        n_electrodes=ese_config.n_electrodes,
         ese_reference=ese_config.ese_reference,
     )
 

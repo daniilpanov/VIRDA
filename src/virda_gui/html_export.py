@@ -619,7 +619,6 @@ const eseCfg = payload.ese_config;
 if (eseCfg && eseCfg.ese) {
   const e = eseCfg.ese;
   const lines = [];
-  if (e.n_electrodes != null) lines.push('Electrodes: ' + e.n_electrodes);
   if (e.ese_offset_mm != null) lines.push('Offset: ' + e.ese_offset_mm + ' mm');
   if (e.ese_reference) lines.push('Reference: ' + e.ese_reference);
   if (lines.length) {

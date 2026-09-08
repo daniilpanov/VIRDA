@@ -104,7 +104,6 @@ class TestStage3Exporter:
         exporter.provide(result, PipelineContext({}))
 
         summary = json.loads((tmp_path / "localization" / "localization_summary.json").read_text())
-        assert summary["n_electrodes"] == 2
         assert summary["n_localized"] == 2
         assert summary["n_flagged"] == 0
         assert summary["residual_threshold_mm"] == 10.0
@@ -124,7 +123,6 @@ class TestStage3Exporter:
         exporter.provide(result, PipelineContext({}))
 
         summary = json.loads((tmp_path / "localization" / "localization_summary.json").read_text())
-        assert summary["n_electrodes"] == 1
         assert summary["n_localized"] == 1
         assert summary["n_flagged"] == 1
         assert summary["median_residual_mm"] > 10.0

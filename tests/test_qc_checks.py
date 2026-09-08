@@ -132,7 +132,6 @@ class TestCheckESEConfig:
 
     def test_valid_config_passes(self) -> None:
         config = ESEConfig(
-            n_electrodes=64,
             ese_offset_mm=15.0,
             ese_reference="electrode_capsule_center",
         )
@@ -142,7 +141,6 @@ class TestCheckESEConfig:
 
     def test_non_positive_offset_fails(self) -> None:
         config = SimpleNamespace(
-            n_electrodes=64,
             ese_offset_mm=-1.0,
             ese_reference="electrode_capsule_center",
         )
@@ -314,7 +312,6 @@ class TestRunChecks:
         result = _result(_triangle_mesh(), mask)
         mask_path = _save_mask(tmp_path / "m.nii.gz", mask)
         ese_config = ESEConfig(
-            n_electrodes=64,
             ese_offset_mm=15.0,
             ese_reference="electrode_capsule_center",
         )

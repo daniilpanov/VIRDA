@@ -54,7 +54,6 @@ class TestStage3Pipeline:
         assert (stage3_dir / "localization_summary.json").exists()
 
         summary = json.loads((stage3_dir / "localization_summary.json").read_text())
-        assert summary["n_electrodes"] == 3
         assert summary["n_localized"] == 3
         assert summary["n_flagged"] == 0
         assert summary["residual_threshold_mm"] == 10.0
@@ -89,6 +88,5 @@ class TestStage3Pipeline:
         context, _ = _run_stage3(tmp_path, electrodes)
 
         summary = json.loads((tmp_path / "localization" / "localization_summary.json").read_text())
-        assert summary["n_electrodes"] == 1
         assert summary["n_localized"] == 0
         assert context.get_store_notnull(Electrodes).items[0].is_localized is False

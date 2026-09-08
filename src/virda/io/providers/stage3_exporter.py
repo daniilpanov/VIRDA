@@ -101,7 +101,6 @@ class Stage3Exporter(Provider[Electrodes]):
         (stage3_dir / "localization_summary.json").write_text(
             json.dumps(
                 {
-                    "n_electrodes": len(electrodes),
                     "n_localized": sum(1 for electrode in electrodes if electrode.is_localized),
                     "n_flagged": sum(1 for electrode in electrodes if electrode.flagged),
                     "median_residual_mm": float(np.median(residuals)) if residuals else None,

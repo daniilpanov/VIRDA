@@ -49,7 +49,6 @@ Example `pipeline_config.json` (values follow the `Config` defaults):
   "smoother_iterations": 5,
   "smoother_lamb": 0.5,
   "smoother_nu": -0.53,
-  "n_electrodes": null,
   "ese_offset_mm": null,
   "ese_reference": null,
   "neighborhood_radius_mm": 10.0,
@@ -119,7 +118,6 @@ count / offset / reference) instead of `null`.
 ```json
 {
   "ese": {
-    "n_electrodes": 32,
     "ese_offset_mm": 2.5,
     "ese_reference": "electrode_body_center"
   }
@@ -195,7 +193,6 @@ available.
 
 ```json
 {
-  "n_electrodes": 60,
   "n_localized": 60,
   "n_flagged": 0,
   "median_residual_mm": 1.27,

@@ -278,36 +278,6 @@ class TestBuildPayload:
         assert "normals" in payload
         assert payload["normals"]["count"] > 0
 
-    def test_auto_detect_ese_config(self, tmp_path: Path) -> None:
-        import json as _json
-
-        project = _make_axis_aligned_project(tmp_path)
-        ese_dir = project / "config"
-        ese_dir.mkdir()
-        (ese_dir / "ese.json").write_text(
-            _json.dumps({"ese": {"n_electrodes": 64, "ese_offset_mm": 5.0}}),
-            encoding="utf-8",
-        )
-
-        payload = build_payload(project)
-        assert payload["ese_config"]["ese"]["n_electrodes"] == 64
-
-    def test_ese_info_in_html(self, tmp_path: Path) -> None:
-        import json as _json
-
-        project = _make_axis_aligned_project(tmp_path)
-        ese_dir = project / "config"
-        ese_dir.mkdir()
-        (ese_dir / "ese.json").write_text(
-            _json.dumps({"ese": {"n_electrodes": 64, "ese_offset_mm": 5.0}}),
-            encoding="utf-8",
-        )
-
-        payload = build_payload(project)
-        html = render_html(payload)
-        assert "ESE config" in html
-        assert "64" in html
-
     def test_normals_checkbox_in_html(self, tmp_path: Path) -> None:
         project = _make_axis_aligned_project(tmp_path)
         normals = np.ones((8, 3), dtype=np.float64)

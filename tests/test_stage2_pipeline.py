@@ -62,7 +62,6 @@ class TestStage2Pipeline:
         config = Config(
             nifti_path="/dev/null",
             project_dir=str(tmp_path),
-            n_electrodes=32,
             ese_offset_mm=ESE_OFFSET_MM,
             ese_reference="electrode_body_center",
             k_neighbors=30,
@@ -86,7 +85,6 @@ class TestStage2Pipeline:
 
     def test_from_config_raises_without_project_dir(self, tmp_path) -> None:
         config = Config(
-            n_electrodes=32,
             ese_offset_mm=ESE_OFFSET_MM,
             ese_reference="electrode_body_center",
             k_neighbors=30,
@@ -133,7 +131,6 @@ class TestMainRunIntegration:
             fiducials_path=str(fiducials_file),
             closing_radius=0,
             seal_enabled=False,
-            n_electrodes=32,
             ese_offset_mm=2.5,
             ese_reference="electrode_body_center",
             k_neighbors=10,
