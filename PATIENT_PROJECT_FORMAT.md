@@ -79,7 +79,6 @@ count / offset / reference) instead of `null`.
 | `scalp_vertices.npy` | `(N, 3)` `float64` array of vertex coordinates in world millimeters. |
 | `scalp_faces.npy` | `(M, 3)` `int64` array of triangular faces referencing vertices. |
 | `scalp_face_adjacency.npy` | `(E, 2)` `int64` array of face-index pairs sharing an edge. |
-| `n_adjacency_edges.json` | `{"n_adjacency_edges": <E>}`. |
 | `versions/mesh-<n>.ply` | One PLY per `ScalpMesh` update produced during the pipeline (extraction, cleaning, smoothing, ...); `n` counts from 1. |
 
 ## `fiducials/`
