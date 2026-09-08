@@ -17,18 +17,15 @@ def _ns(**kwargs: object) -> argparse.Namespace:
 
 class TestValidateRequiredGroup:
     def test_all_provided(self) -> None:
-        args = _ns(ese_offset_mm=2.5, ese_reference="electrode_body_center")
+        args = _ns(ese_offset_mm=2.5)
         _validate_required_group(args, "ESE", _ESE_PARAMS)
 
     def test_none_provided(self) -> None:
-        args = _ns(ese_offset_mm=None, ese_reference=None)
+        args = _ns(ese_offset_mm=None)
         _validate_required_group(args, "ESE", _ESE_PARAMS)
 
     def test_config_all_provided(self) -> None:
-        config = Config(
-            ese_offset_mm=2.5,
-            ese_reference="electrode_body_center",
-        )
+        config = Config(ese_offset_mm=2.5)
         _validate_required_group(config, "ESE", _ESE_PARAMS)
 
 
@@ -41,7 +38,6 @@ class TestWarnPartialNeighborhood:
             min_neighbors=None,
             use_weighted_pca=None,
             ese_offset_mm=None,
-            ese_reference=None,
         )
         config = Config()
         _warn_partial_neighborhood(args, config)
@@ -58,12 +54,8 @@ class TestWarnPartialNeighborhood:
             min_neighbors=None,
             use_weighted_pca=None,
             ese_offset_mm=2.5,
-            ese_reference="electrode_body_center",
         )
-        config = Config(
-            ese_offset_mm=2.5,
-            ese_reference="electrode_body_center",
-        )
+        config = Config(ese_offset_mm=2.5)
         _warn_partial_neighborhood(args, config)
         captured = capsys.readouterr()
         assert captured.err == ""
@@ -76,7 +68,6 @@ class TestWarnPartialNeighborhood:
             min_neighbors=None,
             use_weighted_pca=None,
             ese_offset_mm=None,
-            ese_reference=None,
         )
         config = Config()
         _warn_partial_neighborhood(args, config)

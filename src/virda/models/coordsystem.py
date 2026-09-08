@@ -50,7 +50,6 @@ class Coordsystem(BaseModel):
         default_factory=dict, alias="FiducialsCoordinates"
     )
     electrode_offset_mm: float | None = Field(default=None, alias="ElectrodeOffset")
-    electrode_reference: str | None = Field(default=None, alias="ElectrodeReference")
     source: str | None = Field(default=None, alias="Source")
 
     @classmethod

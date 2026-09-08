@@ -620,7 +620,6 @@ if (eseCfg && eseCfg.ese) {
   const e = eseCfg.ese;
   const lines = [];
   if (e.ese_offset_mm != null) lines.push('Offset: ' + e.ese_offset_mm + ' mm');
-  if (e.ese_reference) lines.push('Reference: ' + e.ese_reference);
   if (lines.length) {
     eseInfo.innerHTML = '<b>ESE config</b><br>' + lines.join('<br>');
     eseInfo.style.display = 'block';

@@ -43,7 +43,6 @@ class VirdaSettings(BaseSettings):
     smoother_nu: float = -0.53
 
     ese_offset_mm: float | None = None
-    ese_reference: str | None = None
 
     neighborhood_radius_mm: float = Field(default=10.0, gt=0)
     k_neighbors: int | None = None
@@ -93,8 +92,6 @@ def load_config_file(path: str | Path) -> dict[str, Any]:
         flat: dict[str, Any] = {}
         if coordsystem.electrode_offset_mm is not None:
             flat["ese_offset_mm"] = coordsystem.electrode_offset_mm
-        if coordsystem.electrode_reference is not None:
-            flat["ese_reference"] = coordsystem.electrode_reference
         flat["coordsystem"] = coordsystem
         return flat
     return data

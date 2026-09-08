@@ -50,7 +50,6 @@ Example `pipeline_config.json` (values follow the `Config` defaults):
   "smoother_lamb": 0.5,
   "smoother_nu": -0.53,
   "ese_offset_mm": null,
-  "ese_reference": null,
   "neighborhood_radius_mm": 10.0,
   "k_neighbors": null,
   "use_weighted_pca": false,
@@ -118,8 +117,7 @@ count / offset / reference) instead of `null`.
 ```json
 {
   "ese": {
-    "ese_offset_mm": 2.5,
-    "ese_reference": "electrode_body_center"
+    "ese_offset_mm": 2.5
   }
 }
 ```

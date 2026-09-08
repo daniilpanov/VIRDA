@@ -63,7 +63,6 @@ class TestStage2Pipeline:
             nifti_path="/dev/null",
             project_dir=str(tmp_path),
             ese_offset_mm=ESE_OFFSET_MM,
-            ese_reference="electrode_body_center",
             k_neighbors=30,
         )
         scalp_mesh = make_sphere()
@@ -86,7 +85,6 @@ class TestStage2Pipeline:
     def test_from_config_raises_without_project_dir(self, tmp_path) -> None:
         config = Config(
             ese_offset_mm=ESE_OFFSET_MM,
-            ese_reference="electrode_body_center",
             k_neighbors=30,
         )
         scalp_mesh = make_sphere()
@@ -132,7 +130,6 @@ class TestMainRunIntegration:
             closing_radius=0,
             seal_enabled=False,
             ese_offset_mm=2.5,
-            ese_reference="electrode_body_center",
             k_neighbors=10,
         )
 
