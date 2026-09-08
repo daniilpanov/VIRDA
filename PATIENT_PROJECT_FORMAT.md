@@ -17,7 +17,6 @@ any stage can be reproduced exactly from the project alone:
 ├── config/             # ESE configuration
 ├── ese/                # Stage 2 output: electrode-skin-entrance surface
 ├── localization/       # Stage 3 output: localized electrodes
-├── quality_control/    # automatic QC report
 └── logs/               # pipeline log
 
 viewer.html             # optional: self-contained HTML viewer exported by virda-gui
@@ -187,37 +186,6 @@ available.
 
 `calibrated_ese_offset_shift_mm` is present only when
 `calibrate_ese_offset` was enabled (`null` otherwise).
-
-## `quality_control/`
-
-`report.json` — automatic QC report written by the final Stage 1 step:
-
-```json
-{
-  "status": "warn",
-  "checks": [
-    {
-      "name": "mri_metadata",
-      "status": "ok",
-      "message": "affine, spacing and orientation are valid",
-      "affine_shape": [4, 4],
-      "spacing": [1.0, 1.0, 1.0],
-      "orientation": ["R", "A", "S"]
-    }
-  ],
-  "fiducials": {
-    "name": "fiducials_on_surface",
-    "status": "ok",
-    "message": "all fiducials lie on the scalp surface",
-    "checks": [
-      {"fiducial_id": "NAS", "name": "Nasion", "distance_to_surface_mm": 1.4}
-    ],
-    "tolerance_mm": 3.0,
-    "warnings": []
-  },
-  "warnings": []
-}
-```
 
 - `status` is one of `ok`, `warn`, `fail`; checks with status `skip` are ignored
   when aggregating the overall status (`fail` > `warn` > `ok`).

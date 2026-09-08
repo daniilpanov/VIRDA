@@ -91,7 +91,6 @@ _PROJECT_ARTIFACT_DIRS = [
     "config",
     "ese",
     "localization",
-    "quality_control",
     "logs",
 ]
 

@@ -1,4 +1,4 @@
-"""Automatic quality-control checks for a Stage 1 result (spec §13.1, §16)."""
+"""Automatic quality-control checks for a Stage 1 result (temporary disabled)"""
 
 import json
 from collections import defaultdict
