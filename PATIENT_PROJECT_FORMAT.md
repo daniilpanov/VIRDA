@@ -10,10 +10,9 @@ any stage can be reproduced exactly from the project alone:
 
 ```
 <project_dir>/
-├── input/              # source MRI NIfTI copy + merged pipeline configuration
+├── input/              # source MRI NIfTI copy + merged pipeline configuration + fiducials
 ├── segmentation/       # head segmentation mask
 ├── mesh/               # final scalp mesh, arrays and per-step versions
-├── fiducials/          # fiducial table
 ├── ese/                # Stage 2 output: electrode-skin-entrance surface
 ├── localization/       # Stage 3 output: localized electrodes
 └── logs/               # pipeline log
@@ -23,10 +22,11 @@ viewer.html             # optional: self-contained HTML viewer exported by virda
 
 ## `input/`
 
-| File | Description |
-|---|---|
-| `<source_mri>.nii.gz` | Byte-for-byte copy of the source MRI NIfTI. |
+| File                   | Description                                                                  |
+|------------------------|------------------------------------------------------------------------------|
+| `<source_mri>.nii.gz`  | Byte-for-byte copy of the source MRI NIfTI.                                  |
 | `pipeline_config.json` | Full merged `Config` dump (`model_dump(mode="json")`); written on every run. |
+| `fiducials.json`       | List of fiducial coordinates.                                                |
 
 Example `pipeline_config.json` (values follow the `Config` defaults):
 
@@ -59,29 +59,7 @@ Example `pipeline_config.json` (values follow the `Config` defaults):
 }
 ```
 
-When an MNE ``coordsystem.json`` was loaded as an input config file, its parsed
-contents are embedded here under `"coordsystem"` (fiducial positions, electrode
-count / offset / reference) instead of `null`.
-
-## `segmentation/`
-
-| File | Description |
-|---|---|
-| `head_mask.nii.gz` | Binary head segmentation mask as a uint8 NIfTI written with the MRI affine, so voxel coordinates map 1:1 to the source MRI. |
-
-## `mesh/`
-
-| File | Description |
-|---|---|
-| `final_mesh.ply` | Final scalp mesh (trimesh PLY export). |
-| `scalp_vertices.npy` | `(N, 3)` `float64` array of vertex coordinates in world millimeters. |
-| `scalp_faces.npy` | `(M, 3)` `int64` array of triangular faces referencing vertices. |
-| `scalp_face_adjacency.npy` | `(E, 2)` `int64` array of face-index pairs sharing an edge. |
-| `versions/mesh-<n>.ply` | One PLY per `ScalpMesh` update produced during the pipeline (extraction, cleaning, smoothing, ...); `n` counts from 1. |
-
-## `fiducials/`
-
-`fiducials.json` — fiducial table:
+Example `fiducials.json` — fiducial table:
 
 ```json
 {
@@ -106,6 +84,27 @@ count / offset / reference) instead of `null`.
   versions without the field load with unit weight.
 - `definition_method` is one of `"manual"` (manual file), `"auto"`
   (auto-detection) or `"imported"` (taken from an MNE `coordsystem.json`).
+
+When an MNE ``coordsystem.json`` was loaded as an input config file, its parsed
+contents are embedded here under `"coordsystem"` (fiducial positions, electrode
+count / offset / reference) instead of `null`.
+
+## `segmentation/`
+
+| File | Description |
+|---|---|
+| `head_mask.nii.gz` | Binary head segmentation mask as a uint8 NIfTI written with the MRI affine, so voxel coordinates map 1:1 to the source MRI. |
+
+## `mesh/`
+
+| File | Description |
+|---|---|
+| `final_mesh.ply` | Final scalp mesh (trimesh PLY export). |
+| `scalp_vertices.npy` | `(N, 3)` `float64` array of vertex coordinates in world millimeters. |
+| `scalp_faces.npy` | `(M, 3)` `int64` array of triangular faces referencing vertices. |
+| `scalp_face_adjacency.npy` | `(E, 2)` `int64` array of face-index pairs sharing an edge. |
+| `versions/mesh-<n>.ply` | One PLY per `ScalpMesh` update produced during the pipeline (extraction, cleaning, smoothing, ...); `n` counts from 1. |
+
 
 ## `ese/`
 

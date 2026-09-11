@@ -751,7 +751,7 @@ def build_payload(
         }
 
     # --- Fiducials -----------------------------------------------------------
-    fiducials_path = project / "fiducials" / "fiducials.json"
+    fiducials_path = project / "input" / "fiducials.json"
     if fiducials_path.is_file():
         points, labels = load_fiducial_points(fiducials_path)
         if points.size:

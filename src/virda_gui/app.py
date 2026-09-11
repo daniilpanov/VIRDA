@@ -931,7 +931,7 @@ class VirdaApp:
 
     def _open_viewer(self, project: Path) -> None:
         mesh_path = project / "mesh" / "final_mesh.ply"
-        fiducials_path = project / "fiducials" / "fiducials.json"
+        fiducials_path = project / "input" / "fiducials.json"
         normals_path = project / "ese" / "normals.npy"
 
         nifti = self._nifti.get()

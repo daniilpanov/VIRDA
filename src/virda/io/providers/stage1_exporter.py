@@ -31,7 +31,7 @@ class Stage1Exporter:
         nifti_path: Path | None = None,
     ) -> None:
         self.project = Path(project_dir)
-        for subdir in ("input", "mesh", "segmentation", "fiducials"):
+        for subdir in ("input", "mesh", "segmentation"):
             (self.project / subdir).mkdir(parents=True, exist_ok=True)
 
         self._ese_config = ese_config
@@ -57,7 +57,7 @@ class Stage1Exporter:
         nib.save(seg_nii, str(self.project / "segmentation" / "head_mask.nii.gz"))
 
         # 3. Fiducials as JSON
-        save_fiducials(self.project / "fiducials" / "fiducials.json", result.fiducials)
+        save_fiducials(self.project / "input" / "fiducials.json", result.fiducials)
 
         # 4. Processing config as JSON
         if self._config is not None:

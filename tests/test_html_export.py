@@ -58,9 +58,7 @@ def _make_axis_aligned_project(tmp_path: Path) -> Path:
     np.save(mesh_dir / "scalp_vertices.npy", vertices)
     np.save(mesh_dir / "scalp_faces.npy", faces)
 
-    fid_dir = tmp_path / "fiducials"
-    fid_dir.mkdir()
-    (fid_dir / "fiducials.json").write_text(
+    (tmp_path / "input" / "fiducials.json").write_text(
         json.dumps(
             {
                 "fiducials": [
@@ -248,7 +246,7 @@ class TestBuildPayload:
 
     def test_fiducials_are_optional(self, tmp_path: Path) -> None:
         project = _make_axis_aligned_project(tmp_path)
-        (project / "fiducials" / "fiducials.json").unlink()
+        (project / "input" / "fiducials.json").unlink()
         payload = build_payload(project)
         assert "fiducials" not in payload
 

@@ -184,7 +184,7 @@ class TestStage1Pipeline:
 
         result = pipeline.run().get_store_notnull(Stage1Result)
 
-        exported_path = tmp_path / "fiducials" / "fiducials.json"
+        exported_path = tmp_path / "input" / "fiducials.json"
         assert exported_path.exists()
         restored = load_fiducials(exported_path)
         assert restored.ids == result.fiducials.ids
