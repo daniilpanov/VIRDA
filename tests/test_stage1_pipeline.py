@@ -15,7 +15,6 @@ from virda.mesh.taubin_smoother import TaubinSmoother
 from virda.models.config import Config
 from virda.models.coordsystem import Coordsystem
 from virda.models.ese_config import ESEConfig
-from virda.models.quality_control_report import QualityControlReport
 from virda.models.stage1_result import Stage1Result
 from virda.pipelines.stage1 import Stage1PipelineBuilder
 from virda.segmentation.head_segmenter import OtsuHeadSegmenter
@@ -119,11 +118,6 @@ class TestStage1Pipeline:
         assert np.array_equal(face_adjacency, result.mesh.face_adjacency)
         assert (tmp_path / "mesh" / "final_mesh.ply").exists()
 
-        n_adjacency_edges = (tmp_path / "mesh" / "n_adjacency_edges.json").read_text()
-        assert (
-            n_adjacency_edges == f'{{"n_adjacency_edges": {result.mesh.face_adjacency.shape[0]}}}'
-        )
-
     def test_run_populates_fiducials(
         self, synthetic_nifti_path: Path, fiducials_file: Path
     ) -> None:
@@ -145,7 +139,6 @@ class TestStage1Pipeline:
                         "LPA": {"Head": [-71.4, 0.0, 0.0], "MRI": [-75.0, -1.0, -14.0]},
                         "RPA": {"Head": [75.3, 0.0, 0.0], "MRI": [75.0, -1.0, -14.0]},
                     },
-                    "ElectrodeCount": 60,
                 }
             )
         )
@@ -166,7 +159,6 @@ class TestStage1Pipeline:
                     "FiducialsCoordinates": {
                         "NASION": {"Head": [0.0, 102.6, 0.0], "MRI": [0.0, 88.0, -10.0]},
                     },
-                    "ElectrodeCount": 60,
                 }
             )
         )
@@ -192,56 +184,15 @@ class TestStage1Pipeline:
 
         result = pipeline.run().get_store_notnull(Stage1Result)
 
-        exported_path = tmp_path / "fiducials" / "fiducials.json"
+        exported_path = tmp_path / "input" / "fiducials.json"
         assert exported_path.exists()
         restored = load_fiducials(exported_path)
         assert restored.ids == result.fiducials.ids
 
-    def test_run_exports_ese_config(
-        self, synthetic_nifti_path: Path, tmp_path: Path, fiducials_file: Path
-    ) -> None:
-        ese_config = ESEConfig(
-            n_electrodes=32, ese_offset_mm=2.5, ese_reference="electrode_body_center"
-        )
-        pipeline = build_pipeline(
-            synthetic_nifti_path,
-            project_dir=tmp_path,
-            fiducials_path=fiducials_file,
-            ese_config=ese_config,
-        )
-
-        pipeline.run().get_store_notnull(Stage1Result)
-
-        config = json.loads((tmp_path / "config" / "ese.json").read_text())
-        assert config == {
-            "ese": {
-                "n_electrodes": 32,
-                "ese_offset_mm": 2.5,
-                "ese_reference": "electrode_body_center",
-            }
-        }
-
-    def test_run_without_ese_config_skips_pipeline_config(
-        self, synthetic_nifti_path: Path, tmp_path: Path, fiducials_file: Path
-    ) -> None:
-        pipeline = build_pipeline(
-            synthetic_nifti_path,
-            project_dir=tmp_path,
-            fiducials_path=fiducials_file,
-        )
-
-        pipeline.run().get_store_notnull(Stage1Result)
-
-        assert not (tmp_path / "config" / "ese.json").exists()
-
     def test_run_exports_config(
         self, synthetic_nifti_path: Path, tmp_path: Path, fiducials_file: Path
     ) -> None:
-        config = Config(
-            n_electrodes=32,
-            ese_offset_mm=2.5,
-            ese_reference="electrode_body_center",
-        )
+        config = Config(ese_offset_mm=2.5)
         pipeline = build_pipeline(
             synthetic_nifti_path,
             project_dir=tmp_path,
@@ -252,9 +203,7 @@ class TestStage1Pipeline:
         pipeline.run().get_store_notnull(Stage1Result)
 
         written = json.loads((tmp_path / "input" / "pipeline_config.json").read_text())
-        assert written["n_electrodes"] == 32
         assert written["ese_offset_mm"] == 2.5
-        assert written["ese_reference"] == "electrode_body_center"
         assert written["auto_detect_fiducials"] is False
 
     def test_run_exports_default_config(
@@ -337,29 +286,6 @@ class TestStage1Pipeline:
 
         assert set(result.fiducials.ids) == {"NAS", "LPA", "RPA", "INI"}
         assert all(fiducial.definition_method == "auto" for fiducial in result.fiducials.items)
-
-    def test_run_writes_quality_control_report(
-        self, synthetic_nifti_path: Path, tmp_path: Path, fiducials_file: Path
-    ) -> None:
-        pipeline = build_pipeline(
-            synthetic_nifti_path,
-            project_dir=tmp_path,
-            fiducials_path=fiducials_file,
-        )
-
-        context = pipeline.run()
-        context.get_store_notnull(Stage1Result)
-
-        report_store = context.get_store_notnull(QualityControlReport)
-        assert report_store.report["status"] in {"ok", "warn", "fail"}
-        assert any(
-            check["name"] == "nifti_mask" and check["status"] == "ok"
-            for check in report_store.report["checks"]
-        )
-
-        report_file = tmp_path / "quality_control" / "report.json"
-        assert report_file.exists()
-        assert json.loads(report_file.read_text())["status"] == report_store.report["status"]
 
     def test_run_raises_without_fiducial_source(self, synthetic_nifti_path: Path) -> None:
         pipeline = build_pipeline(synthetic_nifti_path)

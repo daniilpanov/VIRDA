@@ -279,7 +279,7 @@ class BruteForceLocalizer(ElectrodeLocalizer):
         if abs(best_shift) > _OFFSET_SHIFT_WARN_MM and self._logger:
             self._logger.warning(
                 "Measured distances fit best with the ESE shifted by %+.1f mm "
-                "from the configured offset; check ese_offset_mm/ese_reference "
+                "from the configured offset; check ese_offset_mm "
                 "or the measurement reference point.",
                 best_shift,
             )

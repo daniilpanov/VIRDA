@@ -72,9 +72,7 @@ def _parse_cli_args() -> argparse.Namespace:
         "smoother_iterations",
         "smoother_lamb",
         "smoother_nu",
-        "n_electrodes",
         "ese_offset_mm",
-        "ese_reference",
         "neighborhood_radius_mm",
         "k_neighbors",
         "pca_sigma_mm",
@@ -89,7 +87,6 @@ def _parse_cli_args() -> argparse.Namespace:
                 "cleaner_min_vertices",
                 "cleaner_merge_digits",
                 "smoother_iterations",
-                "n_electrodes",
                 "k_neighbors",
                 "min_neighbors",
             }
@@ -119,7 +116,7 @@ def _cli_overrides(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
-_ESE_PARAMS = ("n_electrodes", "ese_offset_mm", "ese_reference")
+_ESE_PARAMS = ("ese_offset_mm",)
 
 _NEIGHBORHOOD_PARAMS = (
     "neighborhood_radius_mm",

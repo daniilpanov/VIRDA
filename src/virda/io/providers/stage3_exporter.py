@@ -93,25 +93,6 @@ class Stage3Exporter(Provider[Electrodes]):
                     }
                 )
 
-        residuals = [
-            electrode.residual_error
-            for electrode in electrodes
-            if electrode.residual_error is not None
-        ]
-        (stage3_dir / "localization_summary.json").write_text(
-            json.dumps(
-                {
-                    "n_electrodes": len(electrodes),
-                    "n_localized": sum(1 for electrode in electrodes if electrode.is_localized),
-                    "n_flagged": sum(1 for electrode in electrodes if electrode.flagged),
-                    "median_residual_mm": float(np.median(residuals)) if residuals else None,
-                    "residual_threshold_mm": self._stage3_config.residual_threshold_mm,
-                    "calibrated_ese_offset_shift_mm": result.calibrated_offset_shift_mm,
-                },
-                indent=2,
-            )
-        )
-
 
 def _to_list(coords: np.ndarray | None) -> list[float] | None:
     if coords is None:

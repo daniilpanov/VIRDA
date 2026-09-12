@@ -619,9 +619,7 @@ const eseCfg = payload.ese_config;
 if (eseCfg && eseCfg.ese) {
   const e = eseCfg.ese;
   const lines = [];
-  if (e.n_electrodes != null) lines.push('Electrodes: ' + e.n_electrodes);
   if (e.ese_offset_mm != null) lines.push('Offset: ' + e.ese_offset_mm + ' mm');
-  if (e.ese_reference) lines.push('Reference: ' + e.ese_reference);
   if (lines.length) {
     eseInfo.innerHTML = '<b>ESE config</b><br>' + lines.join('<br>');
     eseInfo.style.display = 'block';
@@ -711,8 +709,7 @@ def build_payload(
     """Read a patient project and return the embedded-viewer payload dict.
 
     When a ``ese/`` directory exists with ESE mesh and normals, they are
-    loaded automatically.  The ESE config is read from ``config/ese.json``
-    when present.
+    loaded automatically.
     """
     project = Path(project_dir)
 
@@ -735,10 +732,12 @@ def build_payload(
         "dataset": project.name,
     }
 
-    # --- ESE config ----------------------------------------------------------
-    ese_config_path = project / "config" / "ese.json"
-    if ese_config_path.is_file():
-        payload["ese_config"] = json.loads(ese_config_path.read_text(encoding="utf-8"))
+    # --- ESE offset from pipeline config -------------------------------------
+    config_path = project / "input" / "pipeline_config.json"
+    if config_path.is_file():
+        pipeline_config = json.loads(config_path.read_text(encoding="utf-8"))
+        if pipeline_config.get("ese_offset_mm"):
+            payload["ese_config"] = {"ese": {"ese_offset_mm": pipeline_config["ese_offset_mm"]}}
 
     # --- Mesh ----------------------------------------------------------------
     vertices_path = project / "mesh" / "scalp_vertices.npy"
@@ -752,7 +751,7 @@ def build_payload(
         }
 
     # --- Fiducials -----------------------------------------------------------
-    fiducials_path = project / "fiducials" / "fiducials.json"
+    fiducials_path = project / "input" / "fiducials.json"
     if fiducials_path.is_file():
         points, labels = load_fiducial_points(fiducials_path)
         if points.size:

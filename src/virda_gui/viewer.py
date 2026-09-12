@@ -17,7 +17,7 @@ Usage
     virda-gui --mesh <final_mesh.ply>
     virda-gui --nifti <scan.nii.gz> --mesh <final_mesh.ply>
     virda-gui --nifti <scan.nii.gz> --mesh <final_mesh.ply> \\
-        --fiducials <fiducials/fiducials.json>
+        --fiducials <input/fiducials.json>
     virda-gui --mesh <ese_mesh.ply> --normals <normals.npy>
     virda-gui --nifti <scan.nii.gz> --mesh <final_mesh.ply> \\
         --ese-mesh <stage2/ese_mesh.ply> --normals <stage2/>
@@ -832,7 +832,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--fiducials",
-        help="Path to fiducials JSON (fiducials/fiducials.json).",
+        help="Path to fiducials JSON (input/fiducials.json).",
     )
     parser.add_argument(
         "--normals",

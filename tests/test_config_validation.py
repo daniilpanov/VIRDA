@@ -17,48 +17,16 @@ def _ns(**kwargs: object) -> argparse.Namespace:
 
 class TestValidateRequiredGroup:
     def test_all_provided(self) -> None:
-        args = _ns(n_electrodes=32, ese_offset_mm=2.5, ese_reference="electrode_body_center")
+        args = _ns(ese_offset_mm=2.5)
         _validate_required_group(args, "ESE", _ESE_PARAMS)
 
     def test_none_provided(self) -> None:
-        args = _ns(n_electrodes=None, ese_offset_mm=None, ese_reference=None)
+        args = _ns(ese_offset_mm=None)
         _validate_required_group(args, "ESE", _ESE_PARAMS)
 
-    def test_partial_raises(self) -> None:
-        args = _ns(n_electrodes=None, ese_offset_mm=2.5, ese_reference="electrode_body_center")
-        with pytest.raises(SystemExit, match="--ese-offset-mm, --ese-reference"):
-            _validate_required_group(args, "ESE", _ESE_PARAMS)
-
-    def test_single_param_raises(self) -> None:
-        args = _ns(n_electrodes=32, ese_offset_mm=None, ese_reference=None)
-        with pytest.raises(SystemExit, match="--n-electrodes"):
-            _validate_required_group(args, "ESE", _ESE_PARAMS)
-
-    def test_two_of_three_raises(self) -> None:
-        args = _ns(n_electrodes=32, ese_offset_mm=2.5, ese_reference=None)
-        with pytest.raises(SystemExit, match="--ese-reference"):
-            _validate_required_group(args, "ESE", _ESE_PARAMS)
-
     def test_config_all_provided(self) -> None:
-        config = Config(
-            n_electrodes=32,
-            ese_offset_mm=2.5,
-            ese_reference="electrode_body_center",
-        )
+        config = Config(ese_offset_mm=2.5)
         _validate_required_group(config, "ESE", _ESE_PARAMS)
-
-    def test_config_coordsystem_n_electrodes(self) -> None:
-        config = Config(
-            n_electrodes=60,
-            ese_offset_mm=5.0,
-            ese_reference="electrode_body_center",
-        )
-        _validate_required_group(config, "ESE", _ESE_PARAMS)
-
-    def test_config_partial_raises(self) -> None:
-        config = Config(ese_offset_mm=2.5, ese_reference="electrode_body_center")
-        with pytest.raises(SystemExit, match="--ese-offset-mm, --ese-reference"):
-            _validate_required_group(config, "ESE", _ESE_PARAMS)
 
 
 class TestWarnPartialNeighborhood:
@@ -69,9 +37,7 @@ class TestWarnPartialNeighborhood:
             pca_sigma_mm=None,
             min_neighbors=None,
             use_weighted_pca=None,
-            n_electrodes=None,
             ese_offset_mm=None,
-            ese_reference=None,
         )
         config = Config()
         _warn_partial_neighborhood(args, config)
@@ -87,15 +53,9 @@ class TestWarnPartialNeighborhood:
             pca_sigma_mm=None,
             min_neighbors=None,
             use_weighted_pca=None,
-            n_electrodes=32,
             ese_offset_mm=2.5,
-            ese_reference="electrode_body_center",
         )
-        config = Config(
-            n_electrodes=32,
-            ese_offset_mm=2.5,
-            ese_reference="electrode_body_center",
-        )
+        config = Config(ese_offset_mm=2.5)
         _warn_partial_neighborhood(args, config)
         captured = capsys.readouterr()
         assert captured.err == ""
@@ -107,29 +67,9 @@ class TestWarnPartialNeighborhood:
             pca_sigma_mm=None,
             min_neighbors=None,
             use_weighted_pca=None,
-            n_electrodes=None,
             ese_offset_mm=None,
-            ese_reference=None,
         )
         config = Config()
         _warn_partial_neighborhood(args, config)
         captured = capsys.readouterr()
         assert captured.err == ""
-
-    def test_lists_only_missing_ese_params(self, capsys: pytest.CaptureFixture[str]) -> None:
-        args = _ns(
-            k_neighbors=30,
-            neighborhood_radius_mm=None,
-            pca_sigma_mm=None,
-            min_neighbors=None,
-            use_weighted_pca=None,
-            n_electrodes=32,
-            ese_offset_mm=None,
-            ese_reference=None,
-        )
-        config = Config(n_electrodes=32)
-        _warn_partial_neighborhood(args, config)
-        captured = capsys.readouterr()
-        assert "--ese-offset-mm" in captured.err
-        assert "--ese-reference" in captured.err
-        assert "--n-electrodes" not in captured.err

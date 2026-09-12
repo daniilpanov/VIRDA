@@ -10,14 +10,11 @@ any stage can be reproduced exactly from the project alone:
 
 ```
 <project_dir>/
-├── input/              # source MRI NIfTI copy + merged pipeline configuration
+├── input/              # source MRI NIfTI copy + merged pipeline configuration + fiducials
 ├── segmentation/       # head segmentation mask
 ├── mesh/               # final scalp mesh, arrays and per-step versions
-├── fiducials/          # fiducial table
-├── config/             # ESE configuration
 ├── ese/                # Stage 2 output: electrode-skin-entrance surface
 ├── localization/       # Stage 3 output: localized electrodes
-├── quality_control/    # automatic QC report
 └── logs/               # pipeline log
 
 viewer.html             # optional: self-contained HTML viewer exported by virda-gui
@@ -25,10 +22,11 @@ viewer.html             # optional: self-contained HTML viewer exported by virda
 
 ## `input/`
 
-| File | Description |
-|---|---|
-| `<source_mri>.nii.gz` | Byte-for-byte copy of the source MRI NIfTI. |
+| File                   | Description                                                                  |
+|------------------------|------------------------------------------------------------------------------|
+| `<source_mri>.nii.gz`  | Byte-for-byte copy of the source MRI NIfTI.                                  |
 | `pipeline_config.json` | Full merged `Config` dump (`model_dump(mode="json")`); written on every run. |
+| `fiducials.json`       | List of fiducial coordinates.                                                |
 
 Example `pipeline_config.json` (values follow the `Config` defaults):
 
@@ -49,9 +47,7 @@ Example `pipeline_config.json` (values follow the `Config` defaults):
   "smoother_iterations": 5,
   "smoother_lamb": 0.5,
   "smoother_nu": -0.53,
-  "n_electrodes": null,
   "ese_offset_mm": null,
-  "ese_reference": null,
   "neighborhood_radius_mm": 10.0,
   "k_neighbors": null,
   "use_weighted_pca": false,
@@ -63,30 +59,7 @@ Example `pipeline_config.json` (values follow the `Config` defaults):
 }
 ```
 
-When an MNE ``coordsystem.json`` was loaded as an input config file, its parsed
-contents are embedded here under `"coordsystem"` (fiducial positions, electrode
-count / offset / reference) instead of `null`.
-
-## `segmentation/`
-
-| File | Description |
-|---|---|
-| `head_mask.nii.gz` | Binary head segmentation mask as a uint8 NIfTI written with the MRI affine, so voxel coordinates map 1:1 to the source MRI. |
-
-## `mesh/`
-
-| File | Description |
-|---|---|
-| `final_mesh.ply` | Final scalp mesh (trimesh PLY export). |
-| `scalp_vertices.npy` | `(N, 3)` `float64` array of vertex coordinates in world millimeters. |
-| `scalp_faces.npy` | `(M, 3)` `int64` array of triangular faces referencing vertices. |
-| `scalp_face_adjacency.npy` | `(E, 2)` `int64` array of face-index pairs sharing an edge. |
-| `n_adjacency_edges.json` | `{"n_adjacency_edges": <E>}`. |
-| `versions/mesh-<n>.ply` | One PLY per `ScalpMesh` update produced during the pipeline (extraction, cleaning, smoothing, ...); `n` counts from 1. |
-
-## `fiducials/`
-
-`fiducials.json` — fiducial table:
+Example `fiducials.json` — fiducial table:
 
 ```json
 {
@@ -112,19 +85,26 @@ count / offset / reference) instead of `null`.
 - `definition_method` is one of `"manual"` (manual file), `"auto"`
   (auto-detection) or `"imported"` (taken from an MNE `coordsystem.json`).
 
-## `config/`
+When an MNE ``coordsystem.json`` was loaded as an input config file, its parsed
+contents are embedded here under `"coordsystem"` (fiducial positions, electrode
+count / offset / reference) instead of `null`.
 
-`ese.json` — ESE configuration; written only when an ESE config is supplied:
+## `segmentation/`
 
-```json
-{
-  "ese": {
-    "n_electrodes": 32,
-    "ese_offset_mm": 2.5,
-    "ese_reference": "electrode_body_center"
-  }
-}
-```
+| File | Description |
+|---|---|
+| `head_mask.nii.gz` | Binary head segmentation mask as a uint8 NIfTI written with the MRI affine, so voxel coordinates map 1:1 to the source MRI. |
+
+## `mesh/`
+
+| File | Description |
+|---|---|
+| `final_mesh.ply` | Final scalp mesh (trimesh PLY export). |
+| `scalp_vertices.npy` | `(N, 3)` `float64` array of vertex coordinates in world millimeters. |
+| `scalp_faces.npy` | `(M, 3)` `int64` array of triangular faces referencing vertices. |
+| `scalp_face_adjacency.npy` | `(E, 2)` `int64` array of face-index pairs sharing an edge. |
+| `versions/mesh-<n>.ply` | One PLY per `ScalpMesh` update produced during the pipeline (extraction, cleaning, smoothing, ...); `n` counts from 1. |
+
 
 ## `ese/`
 
@@ -166,7 +146,6 @@ available.
 | `electrodes_scalp.json` | Same electrodes with only `coords` = scalp contact points (scanner RAS). |
 | `electrodes_ese.json` | Same electrodes with only `coords` = ESE body-center points (scanner RAS). |
 | `electrode_coords.csv` | Tabular copy: `electrode_id, x, y, z, residual_error, confidence, flagged`; `x/y/z` are the ESE coordinates. Empty `residual_error`/`confidence` mark non-localized electrodes. |
-| `localization_summary.json` | Aggregate statistics (see below). |
 
 `electrodes.json` — one entry per electrode:
 
@@ -191,52 +170,8 @@ available.
 - `flagged` marks electrodes whose residual exceeds
   `residual_threshold_mm`.
 
-`localization_summary.json`:
-
-```json
-{
-  "n_electrodes": 60,
-  "n_localized": 60,
-  "n_flagged": 0,
-  "median_residual_mm": 1.27,
-  "residual_threshold_mm": 10.0,
-  "calibrated_ese_offset_shift_mm": 0.0
-}
-```
-
 `calibrated_ese_offset_shift_mm` is present only when
 `calibrate_ese_offset` was enabled (`null` otherwise).
-
-## `quality_control/`
-
-`report.json` — automatic QC report written by the final Stage 1 step:
-
-```json
-{
-  "status": "warn",
-  "checks": [
-    {
-      "name": "mri_metadata",
-      "status": "ok",
-      "message": "affine, spacing and orientation are valid",
-      "affine_shape": [4, 4],
-      "spacing": [1.0, 1.0, 1.0],
-      "orientation": ["R", "A", "S"]
-    }
-  ],
-  "fiducials": {
-    "name": "fiducials_on_surface",
-    "status": "ok",
-    "message": "all fiducials lie on the scalp surface",
-    "checks": [
-      {"fiducial_id": "NAS", "name": "Nasion", "distance_to_surface_mm": 1.4}
-    ],
-    "tolerance_mm": 3.0,
-    "warnings": []
-  },
-  "warnings": []
-}
-```
 
 - `status` is one of `ok`, `warn`, `fail`; checks with status `skip` are ignored
   when aggregating the overall status (`fail` > `warn` > `ok`).

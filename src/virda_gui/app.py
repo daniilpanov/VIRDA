@@ -88,10 +88,8 @@ _PROJECT_ARTIFACT_DIRS = [
     "segmentation",
     "mesh",
     "fiducials",
-    "config",
     "ese",
     "localization",
-    "quality_control",
     "logs",
 ]
 
@@ -110,9 +108,7 @@ _ADVANCED_FIELD_DEFAULTS: dict[str, str] = {
     "smoother_iterations": "5",
     "smoother_lamb": "0.5",
     "smoother_nu": "-0.53",
-    "n_electrodes": "",
     "ese_offset_mm": "",
-    "ese_reference": "electrode_body_center",
     "neighborhood_radius_mm": "10.0",
     "k_neighbors": "",
     "pca_sigma_mm": "5.0",
@@ -134,9 +130,7 @@ _CONFIG_KEY_TO_ADVANCED: dict[str, str] = {
     "smoother_iterations": "smoother_iterations",
     "smoother_lamb": "smoother_lamb",
     "smoother_nu": "smoother_nu",
-    "n_electrodes": "n_electrodes",
     "ese_offset_mm": "ese_offset_mm",
-    "ese_reference": "ese_reference",
     "neighborhood_radius_mm": "neighborhood_radius_mm",
     "k_neighbors": "k_neighbors",
     "pca_sigma_mm": "pca_sigma_mm",
@@ -156,7 +150,6 @@ _CONFIG_KEY_TO_INPUT: dict[str, str] = {
 _ADVANCED_COMBO_FIELDS: dict[str, list[str]] = {
     "otsu_scope": ["all", "foreground"],
     "smoother_type": ["laplacian", "taubin"],
-    "ese_reference": ["electrode_body_center", "electrode_capsule_center"],
 }
 
 
@@ -249,9 +242,7 @@ class AdvancedSettingsDialog(tk.Toplevel):
         frame = ttk.LabelFrame(parent, text="  Stage 2: ESE Parameters  ")
         frame.pack(fill=X, padx=8, pady=4)
 
-        self._add_field(frame, "n_electrodes", "Number of electrodes", "entry")
         self._add_field(frame, "ese_offset_mm", "Offset (mm)", "entry")
-        self._add_field(frame, "ese_reference", "Reference", "combo")
 
     def _build_neighborhood_section(self, parent: tk.Misc) -> None:
         frame = ttk.LabelFrame(parent, text="  Stage 2: Neighborhood  ")
@@ -752,9 +743,7 @@ class VirdaApp:
             smoother_iterations=_int(adv["smoother_iterations"], 5, key="smoother_iterations"),
             smoother_lamb=_float(adv["smoother_lamb"], 0.5, key="smoother_lamb"),
             smoother_nu=_float(adv["smoother_nu"], -0.53, key="smoother_nu"),
-            n_electrodes=_int(adv["n_electrodes"], key="n_electrodes"),
             ese_offset_mm=_float(adv["ese_offset_mm"], key="ese_offset_mm"),
-            ese_reference=adv["ese_reference"] or None,
             neighborhood_radius_mm=_float(
                 adv["neighborhood_radius_mm"], 10.0, key="neighborhood_radius_mm"
             ),
@@ -942,7 +931,7 @@ class VirdaApp:
 
     def _open_viewer(self, project: Path) -> None:
         mesh_path = project / "mesh" / "final_mesh.ply"
-        fiducials_path = project / "fiducials" / "fiducials.json"
+        fiducials_path = project / "input" / "fiducials.json"
         normals_path = project / "ese" / "normals.npy"
 
         nifti = self._nifti.get()

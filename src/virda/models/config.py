@@ -37,9 +37,7 @@ class Config(BaseModel):
     smoother_lamb: float = 0.5
     smoother_nu: float = -0.53
 
-    n_electrodes: int | None = None
     ese_offset_mm: float | None = None
-    ese_reference: str | None = None
 
     neighborhood_radius_mm: float = Field(default=10.0, gt=0)
     k_neighbors: int | None = None
@@ -54,13 +52,7 @@ class Config(BaseModel):
 
     def to_ese_config(self) -> ESEConfig | None:
         """Build the ESE config when fully configured, otherwise return None."""
-        if self.n_electrodes is None or self.ese_offset_mm is None or self.ese_reference is None:
-            return None
-        return ESEConfig(
-            n_electrodes=self.n_electrodes,
-            ese_offset_mm=self.ese_offset_mm,
-            ese_reference=self.ese_reference,
-        )
+        return None if self.ese_offset_mm is None else ESEConfig(ese_offset_mm=self.ese_offset_mm)
 
     def to_stage2_config(self) -> Stage2Config:
         """Build the stage 2 (ESE) neighborhood config."""

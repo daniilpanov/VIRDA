@@ -58,9 +58,7 @@ def _make_axis_aligned_project(tmp_path: Path) -> Path:
     np.save(mesh_dir / "scalp_vertices.npy", vertices)
     np.save(mesh_dir / "scalp_faces.npy", faces)
 
-    fid_dir = tmp_path / "fiducials"
-    fid_dir.mkdir()
-    (fid_dir / "fiducials.json").write_text(
+    (tmp_path / "input" / "fiducials.json").write_text(
         json.dumps(
             {
                 "fiducials": [
@@ -248,7 +246,7 @@ class TestBuildPayload:
 
     def test_fiducials_are_optional(self, tmp_path: Path) -> None:
         project = _make_axis_aligned_project(tmp_path)
-        (project / "fiducials" / "fiducials.json").unlink()
+        (project / "input" / "fiducials.json").unlink()
         payload = build_payload(project)
         assert "fiducials" not in payload
 
@@ -277,36 +275,6 @@ class TestBuildPayload:
         payload = build_payload(project)
         assert "normals" in payload
         assert payload["normals"]["count"] > 0
-
-    def test_auto_detect_ese_config(self, tmp_path: Path) -> None:
-        import json as _json
-
-        project = _make_axis_aligned_project(tmp_path)
-        ese_dir = project / "config"
-        ese_dir.mkdir()
-        (ese_dir / "ese.json").write_text(
-            _json.dumps({"ese": {"n_electrodes": 64, "ese_offset_mm": 5.0}}),
-            encoding="utf-8",
-        )
-
-        payload = build_payload(project)
-        assert payload["ese_config"]["ese"]["n_electrodes"] == 64
-
-    def test_ese_info_in_html(self, tmp_path: Path) -> None:
-        import json as _json
-
-        project = _make_axis_aligned_project(tmp_path)
-        ese_dir = project / "config"
-        ese_dir.mkdir()
-        (ese_dir / "ese.json").write_text(
-            _json.dumps({"ese": {"n_electrodes": 64, "ese_offset_mm": 5.0}}),
-            encoding="utf-8",
-        )
-
-        payload = build_payload(project)
-        html = render_html(payload)
-        assert "ESE config" in html
-        assert "64" in html
 
     def test_normals_checkbox_in_html(self, tmp_path: Path) -> None:
         project = _make_axis_aligned_project(tmp_path)

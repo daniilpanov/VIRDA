@@ -1,4 +1,4 @@
-"""Automatic quality-control checks for a Stage 1 result (spec §13.1, §16)."""
+"""Automatic quality-control checks for a Stage 1 result (temporary disabled)"""
 
 import json
 from collections import defaultdict
@@ -118,8 +118,6 @@ def check_ese_config(ese_config: ESEConfig | None) -> dict[str, Any]:
             else f"ESE offset must be positive, got {ese_config.ese_offset_mm} mm"
         ),
         ese_offset_mm=ese_config.ese_offset_mm,
-        n_electrodes=ese_config.n_electrodes,
-        ese_reference=ese_config.ese_reference,
     )
 
 

@@ -42,9 +42,7 @@ class VirdaSettings(BaseSettings):
     smoother_lamb: float = 0.5
     smoother_nu: float = -0.53
 
-    n_electrodes: int | None = None
     ese_offset_mm: float | None = None
-    ese_reference: str | None = None
 
     neighborhood_radius_mm: float = Field(default=10.0, gt=0)
     k_neighbors: int | None = None
@@ -83,7 +81,7 @@ def load_config_file(path: str | Path) -> dict[str, Any]:
     """Load one input config file into a flat settings dict.
 
     An MNE ``coordsystem.json`` (detected via
-    :meth:`Coordsystem.is_coordsystem_dict`) contributes ``n_electrodes`` and
+    :meth:`Coordsystem.is_coordsystem_dict`) contributes
     the parsed ``coordsystem`` value; any other JSON file is merged as-is.
     """
     data = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -92,12 +90,8 @@ def load_config_file(path: str | Path) -> dict[str, Any]:
     if Coordsystem.is_coordsystem_dict(data):
         coordsystem = Coordsystem.model_validate(data)
         flat: dict[str, Any] = {}
-        if coordsystem.electrode_count is not None:
-            flat["n_electrodes"] = coordsystem.electrode_count
         if coordsystem.electrode_offset_mm is not None:
             flat["ese_offset_mm"] = coordsystem.electrode_offset_mm
-        if coordsystem.electrode_reference is not None:
-            flat["ese_reference"] = coordsystem.electrode_reference
         flat["coordsystem"] = coordsystem
         return flat
     return data
