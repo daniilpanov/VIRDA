@@ -92,6 +92,42 @@ class TestStage2Pipeline:
         with pytest.raises(ValueError, match="Project directory"):
             Stage2PipelineBuilder.from_config(config=config, scalp_mesh=scalp_mesh)
 
+    def test_from_config_matches_manual_assembly(self, tmp_path) -> None:
+        config = Config(
+            nifti_path="/dev/null",
+            project_dir=str(tmp_path),
+            ese_offset_mm=ESE_OFFSET_MM,
+            k_neighbors=30,
+        )
+        scalp_mesh = make_sphere()
+        stage2_config = config.to_stage2_config()
+
+        from_config_result = (
+            Stage2PipelineBuilder.from_config(config=config, scalp_mesh=scalp_mesh)
+            .build()
+            .run()
+            .get_store_notnull(ESEMesh)
+        )
+
+        expected_result = (
+            Stage2PipelineBuilder(
+                ese_builder=PCAESEBuilder(
+                    config=stage2_config,
+                    ese_offset_mm=ESE_OFFSET_MM,
+                ),
+                scalp_mesh=scalp_mesh,
+                project_dir=tmp_path / "expected",
+            )
+            .build()
+            .run()
+            .get_store_notnull(ESEMesh)
+        )
+
+        assert np.array_equal(from_config_result.vertices, expected_result.vertices)
+        assert np.array_equal(from_config_result.faces, expected_result.faces)
+        assert np.array_equal(from_config_result.normals, expected_result.normals)
+        assert np.array_equal(from_config_result.quality, expected_result.quality)
+
 
 @pytest.fixture
 def synthetic_nifti_path(tmp_path: Path) -> Path:
