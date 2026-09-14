@@ -74,6 +74,25 @@ except Exception as exc:
 hiddenimports += ["PySide6"]
 
 # ==========================================================
+# pyvistaqt / QtPy
+# ==========================================================
+
+try:
+    vtq_data, vtq_binaries, vtq_hidden = collect_all("pyvistaqt")
+    datas += vtq_data
+    binaries += vtq_binaries
+    hiddenimports += vtq_hidden
+except Exception as exc:
+    warnings.warn(f"collect_all('pyvistaqt') failed: {exc}", stacklevel=1)
+
+try:
+    datas += copy_metadata("pyvistaqt")
+except Exception as exc:
+    warnings.warn(f"copy_metadata('pyvistaqt') failed: {exc}", stacklevel=1)
+
+hiddenimports += collect_submodules("pyvistaqt")
+
+# ==========================================================
 # Don't bundle the system C++ runtime
 #
 # PyInstaller copies libstdc++.so.6 / libgcc_s.so.1 from the build machine
