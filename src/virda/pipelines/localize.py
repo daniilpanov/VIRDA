@@ -19,6 +19,7 @@ import numpy as np
 from pydantic import ConfigDict, Field
 
 from virda.localization.brute_force_localizer import BruteForceLocalizer
+from virda.localization.contracts import ElectrodeLocalizer
 from virda.models.electrode import Electrodes
 from virda.models.ese_mesh import ESEMesh
 from virda.models.fiducial import Fiducials
@@ -27,9 +28,16 @@ from virda.models.stage3_config import Stage3Config
 from virda.pipeline import PipelineController
 from virda.pipeline_context import PipelineContext
 from virda.pipelines.contracts import PipelineContract
-from virda.pipelines.stage3 import Stage3LocalizerStep
 
 from .atomic import AtomicPipeline, Stage1Function
+
+
+class Stage3LocalizerStep:
+    def __init__(self, localizer: ElectrodeLocalizer) -> None:
+        self._localizer = localizer
+
+    def run(self, context: PipelineContext) -> Electrodes:
+        return self._localizer.run(context)
 
 
 class LocalizationPipelineContract(PipelineContract):
