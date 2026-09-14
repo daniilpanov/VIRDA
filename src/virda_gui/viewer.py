@@ -57,7 +57,7 @@ on its own stays in its native (world) coordinates. Fiducial points are stored
 in world coordinates and are transformed into the scene frame accordingly.
 
 The :func:`show_viewer` function exposes the same functionality for
-programmatic use (e.g. from the tkinter application); ``main()`` only parses
+programmatic use (e.g. from the PySide6 application); ``main()`` only parses
 the CLI arguments and delegates to it.
 """
 
