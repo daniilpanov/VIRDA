@@ -60,7 +60,7 @@ from virda.main import run
 from virda.models.config import Config
 from virda.models.coordsystem import Coordsystem
 
-from .viewer import show_viewer
+from .viewer import ViewerWidget
 from .widgets import (
     DirectorySelector,
     ElectrodeGroupRow,
@@ -73,7 +73,6 @@ _DONE_SENTINEL = "__DONE__"
 _ERROR_SENTINEL = "__ERROR__"
 _EXPORT_DONE_SENTINEL = "__EXPORT_DONE__"
 _EXPORT_ERROR_SENTINEL = "__EXPORT_ERROR__"
-_VIEWER_DONE_SENTINEL = "__VIEWER_DONE__"
 
 
 class _QueueLogHandler(logging.Handler):
@@ -311,7 +310,7 @@ class VirdaApp:
 
         self._log_queue: queue.Queue[str | None] = queue.Queue()
         self._pipeline_thread: threading.Thread | None = None
-        self._viewer_thread: threading.Thread | None = None
+        self._viewer_loading = False
         self._run_btn: QPushButton | None = None
         self._viewer_btn: QPushButton | None = None
         self._export_btn: QPushButton | None = None
@@ -353,6 +352,10 @@ class VirdaApp:
         self._build_config_tab()
         self._build_results_tab()
         self._build_saved_results_tab()
+
+        self._viewer_frame = QWidget()
+        self._viewer_tab_index = self._notebook.addTab(self._viewer_frame, "  3D Viewer  ")
+        self._build_viewer_tab()
 
     # ---- Configuration tab ----
 
@@ -573,6 +576,18 @@ class VirdaApp:
         actions_layout.addWidget(self._results_summary_label)
 
         outer.addWidget(actions)
+
+    # ---- 3D Viewer tab ----
+
+    def _build_viewer_tab(self) -> None:
+        parent = self._viewer_frame
+        outer = QVBoxLayout(parent)
+        outer.setContentsMargins(0, 0, 0, 0)
+
+        self._viewer_widget = ViewerWidget(parent, log=self._log_queue.put)
+        self._viewer_widget.sceneLoaded.connect(self._on_viewer_scene_loaded)
+        self._viewer_widget.sceneFailed.connect(self._on_viewer_scene_failed)
+        outer.addWidget(self._viewer_widget)
 
     # ------------------------------------------------------------------
     # Config file handling
@@ -852,11 +867,6 @@ class VirdaApp:
                 if msg == _EXPORT_ERROR_SENTINEL:
                     self._log_viewer.append("HTML export failed — see log above.")
                     break
-                if msg == _VIEWER_DONE_SENTINEL:
-                    self._log_viewer.append("3D viewer closed.")
-                    self._viewer_btn.setEnabled(True)
-                    self._results_viewer_btn.setEnabled(True)
-                    break
                 self._log_viewer.append(msg)
         except queue.Empty:
             pass
@@ -962,34 +972,34 @@ class VirdaApp:
             )
             return
 
-        if self._viewer_thread is not None and self._viewer_thread.is_alive():
+        if self._viewer_loading:
             QMessageBox.warning(
                 self._root,
-                "Viewer already open",
-                "The 3D viewer is already open. Close it before opening another one.",
+                "Viewer still loading",
+                "The 3D viewer is still loading a scene. Wait for it to finish.",
             )
             return
 
         self._log_viewer.append("Opening 3D viewer...")
-        self._viewer_btn.setEnabled(False)
-        self._results_viewer_btn.setEnabled(False)
-        self._viewer_thread = threading.Thread(
-            target=self._run_viewer_thread, kwargs=kwargs, daemon=True
-        )
-        self._viewer_thread.start()
+        self._set_viewer_buttons_enabled(False)
+        self._viewer_loading = True
+        self._viewer_widget.load(**kwargs)
 
-    def _run_viewer_thread(self, **kwargs: Any) -> None:
-        """Background thread body: run show_viewer, route failures to the log.
+    # ---- 3D viewer callbacks ----
 
-        The VTK window is created off the main thread, which some platforms
-        tolerate only partially; any failure must reach the log pane instead
-        of silently killing this daemon thread.
-        """
-        try:
-            show_viewer(log=self._log_queue.put, **kwargs)
-        except Exception as exc:
-            self._log_queue.put(f"ERROR: 3D viewer failed: {exc}")
-        self._log_queue.put(_VIEWER_DONE_SENTINEL)
+    def _set_viewer_buttons_enabled(self, enabled: bool) -> None:
+        self._viewer_btn.setEnabled(enabled)
+        self._results_viewer_btn.setEnabled(enabled)
+
+    def _on_viewer_scene_loaded(self, _scene: Any) -> None:
+        self._viewer_loading = False
+        self._log_viewer.append("3D viewer scene loaded.")
+        self._set_viewer_buttons_enabled(True)
+        self._notebook.setCurrentIndex(self._viewer_tab_index)  # switch to 3D Viewer tab
+
+    def _on_viewer_scene_failed(self, _message: str) -> None:
+        self._viewer_loading = False
+        self._set_viewer_buttons_enabled(True)
 
     def _on_export_html(self) -> None:
         resolved = self._last_project_dir or self._project_dir.get().strip()
