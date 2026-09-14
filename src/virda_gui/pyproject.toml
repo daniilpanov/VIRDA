@@ -11,8 +11,8 @@ dependencies = [
     "nibabel>=5.0",
     "numpy>=2.5.2",
     "pyvista>=0.44",
+    "PySide6>=6.6",
     "trimesh>=5.0.0",
-    "ttkbootstrap>=1.10",
     "virda",
 ]
 

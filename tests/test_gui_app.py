@@ -1,7 +1,7 @@
-"""Unit tests for the tkinter application logic that does not need a display.
+"""Unit tests for the PySide6 application logic that does not need a display.
 
 These tests exercise the pure helper logic of :mod:`virda_gui.app` by calling
-the methods unbound against lightweight stubs, so no ``Tk`` root window is
+the methods unbound against lightweight stubs, so no ``QApplication`` is
 created (CI runners have no display).
 """
 
