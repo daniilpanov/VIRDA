@@ -1,7 +1,7 @@
-"""Unit tests for the tkinter application logic that does not need a display.
+"""Unit tests for the PySide6 application logic that does not need a display.
 
 These tests exercise the pure helper logic of :mod:`virda_gui.app` by calling
-the methods unbound against lightweight stubs, so no ``Tk`` root window is
+the methods unbound against lightweight stubs, so no ``QApplication`` is
 created (CI runners have no display).
 """
 
@@ -75,9 +75,9 @@ def test_ensure_stage3_group_already_present(tmp_path) -> None:
     assert VirdaApp._ensure_stage3_electrodes_group(cast("VirdaApp", stub)) is None
 
 
-def test_viewer_thread_module_imports_show_viewer() -> None:
-    """``_run_viewer_thread`` calls ``show_viewer`` — it must be importable."""
+def test_viewer_widget_importable_from_app() -> None:
+    """The 3D viewer tab embeds ``ViewerWidget`` from ``virda_gui.viewer``."""
     import virda_gui.app as app_module
-    from virda_gui.viewer import show_viewer
+    from virda_gui.viewer import ViewerWidget
 
-    assert vars(app_module)["show_viewer"] is show_viewer
+    assert vars(app_module)["ViewerWidget"] is ViewerWidget

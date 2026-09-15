@@ -3,7 +3,7 @@
 ``virda-gui`` is the interactive visualisation tool of the ``virda_gui``
 package. It renders the scalp mesh on top of a semi-transparent MRI volume and
 places both objects in the same coordinate frame using the NIfTI affine, so the
-mesh overlays the actual scalp in all three views. On-screen checkboxes toggle
+mesh overlays the actual scalp in all three views. Qt checkboxes toggle
 the visibility of the mesh, the MRI and the fiducial points (with labels), and
 a "Boost contrast" checkbox sharpens the MRI (opaque skin surface) and the mesh
 (bright solid surface that makes holes visible).
@@ -56,15 +56,16 @@ the overlay stays correct for rotated or flipped affines as well. A mesh shown
 on its own stays in its native (world) coordinates. Fiducial points are stored
 in world coordinates and are transformed into the scene frame accordingly.
 
-The :func:`show_viewer` function exposes the same functionality for
-programmatic use (e.g. from the tkinter application); ``main()`` only parses
-the CLI arguments and delegates to it.
+The :class:`ViewerWidget` wraps the same scene in an embeddable Qt widget,
+:func:`show_viewer` provides the standalone blocking variant for ``main()``
+and the ``virda-gui-viewer`` CLI.
 """
 
 import argparse
 import colorsys
 import json
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Any
 
 import nibabel as nib
@@ -72,6 +73,17 @@ import numpy as np
 import pyvista as pv
 import trimesh
 from nibabel import aff2axcodes
+from PySide6.QtCore import QObject, QThread, Signal
+from PySide6.QtWidgets import (
+    QApplication,
+    QCheckBox,
+    QGroupBox,
+    QHBoxLayout,
+    QMainWindow,
+    QVBoxLayout,
+    QWidget,
+)
+from pyvistaqt import QtInteractor
 from scipy.spatial import cKDTree
 
 from virda_gui.scene import (
@@ -473,7 +485,29 @@ def _report_qc(
     log("=" * 62)
 
 
-def show_viewer(
+@dataclass
+class SceneData:
+    """Fully resolved scene data, ready to be rendered.
+
+    Produced off the GUI thread by :func:`collect_scene_data` and consumed on
+    the GUI thread by :meth:`ViewerWidget.set_scene`.  Contains only data
+    objects (NumPy arrays and PyVista meshes), never actors or windows, so the
+    collection step is testable without a display.
+    """
+
+    volume: pv.ImageData | None = None
+    scene_mesh: pv.PolyData | None = None
+    mm_scene: bool = True
+    mesh_opacity: float = 0.6
+    hi_clim: tuple[float, float] | None = None
+    fiducial_points: np.ndarray | None = None
+    fiducial_labels: list[str] = field(default_factory=list)
+    fiducial_id_to_point: dict[str, np.ndarray] = field(default_factory=dict)
+    normals_poly: pv.PolyData | None = None
+    electrode_groups: list[dict[str, Any]] = field(default_factory=list)
+
+
+def collect_scene_data(
     nifti_path: str | None = None,
     mesh_path: str | None = None,
     fiducials_path: str | None = None,
@@ -485,17 +519,13 @@ def show_viewer(
     electrode_specs: list[tuple[str, str | None]] | None = None,
     electrodes_cras: bool = False,
     log: Callable[[str], None] = print,
-) -> None:
-    """Launch the interactive 3D viewer window.
+) -> SceneData:
+    """Load a full viewer scene without touching any display.
 
-    Parameters map directly to the CLI flags of ``virda-gui``.  At least one of
-    *nifti_path* or *mesh_path* must be provided.  *electrode_specs* is a list
-    of ``(path, color)`` pairs as produced by :func:`_parse_electrode_specs`;
-    pass ``electrodes_cras=True`` to force the FreeSurfer cRAS -> scanner RAS
-    conversion of tabular electrode files.  *log* receives progress and QC
-    messages (defaults to :func:`print`; embedders such as the GUI pass a
-    callback that routes lines into their own log pane).  The call blocks until
-    the viewer window is closed.
+    Runs on a worker thread: nibabel reading, volume downsampling, mesh
+    loading, scene placement, fiducials, normals glyphs, electrode loading with
+    cRAS frame detection, and QC reporting.  Parameters and validation mirror
+    :func:`show_viewer`; all returned points are already in the scene frame.
     """
     if not nifti_path and not mesh_path:
         raise ValueError("at least one of nifti_path or mesh_path is required")
@@ -506,7 +536,7 @@ def show_viewer(
     affine = None
     spacing = None
     orientation = None
-    hi_clim = None
+    hi_clim: tuple[float, float] | None = None
     cras_offset: np.ndarray | None = None
     if nifti_path:
         nifti_img = nib.load(nifti_path)
@@ -539,36 +569,7 @@ def show_viewer(
                 f"mesh vertex count ({scene_mesh.n_points})"
             )
 
-    plotter = pv.Plotter(title="VIRDA — scalp mesh and/or MRI volume")
-    mri_actor = None
-    mesh_actor = None
-    if volume is not None:
-        mri_actor = plotter.add_volume(volume, cmap="bone", opacity="sigmoid", mapper="smart")
-    if scene_mesh is not None:
-        mesh_actor = plotter.add_mesh(scene_mesh, color="salmon", opacity=mesh_opacity)
-
-    fiducial_actor = None
-    fiducial_label_actor = None
-    if fiducial_points is not None and len(fiducial_points) > 0:
-        scene_points = fiducial_points
-        if not mm_scene:
-            scene_points = transform_points(fiducial_points, np.linalg.inv(affine))
-        fiducial_actor = plotter.add_points(
-            scene_points, color="red", point_size=10, render_points_as_spheres=True
-        )
-        fiducial_label_actor = plotter.add_point_labels(
-            scene_points,
-            fiducial_labels,
-            font_size=12,
-            text_color="white",
-            show_points=False,
-            shape="rounded_rect",
-            shape_color="black",
-            shape_opacity=0.65,
-            always_visible=True,
-        )
-
-    normals_actor = None
+    normals_poly = None
     if normals_data is not None and scene_mesh is not None:
         scene_normals = normals_data
         if not mm_scene:
@@ -577,8 +578,8 @@ def show_viewer(
         normals_poly = _create_normal_glyphs(
             np.asarray(scene_mesh.points), scene_normals, normals_scale, normals_density
         )
-        normals_actor = plotter.add_mesh(normals_poly, color="cyan", opacity=0.8, line_width=2)
 
+    scene_fiducials = None
     fiducial_id_to_point: dict[str, np.ndarray] = {}
     if fiducial_points is not None:
         scene_fiducials = fiducial_points
@@ -587,7 +588,7 @@ def show_viewer(
         for label, point in zip(fiducial_labels, scene_fiducials, strict=True):
             fiducial_id_to_point[label.split(" (")[0]] = point
 
-    electrode_groups: list[dict] = []
+    electrode_groups: list[dict[str, Any]] = []
     for gi, (epath, spec_color) in enumerate(electrode_specs or []):
         points, _, flags, measured, names = _load_electrodes(epath)
         label = epath.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
@@ -615,202 +616,452 @@ def show_viewer(
             }
         )
 
-    electrode_actors_per_group: list[list] = []
-    flagged_actors_per_group: list[list] = []
-    link_actors_per_group: list[list] = []
-    label_actors_per_group: list[list[Any]] = []
-    for group in electrode_groups:
-        pts = group["points"]
-        flg = group["flags"]
-        meas = group["measured"]
-        color = group["color"]
-        e_actors: list = []
-        f_actors: list = []
-        l_actors: list = []
-        n_actors: list[Any] = []
-        if pts is not None and len(pts) > 0:
-            healthy = ~flg
-            if healthy.any():
-                e_actors.append(
-                    plotter.add_points(
-                        pts[healthy],
-                        color=color,
-                        point_size=12,
-                        render_points_as_spheres=True,
-                    )
-                )
-            if (~healthy).any():
-                f_actors.append(
-                    plotter.add_points(
-                        pts[~healthy],
-                        color=_intensify_color(color),
-                        point_size=17,
-                        render_points_as_spheres=True,
-                    )
-                )
-            links = _build_electrode_links(pts, meas, fiducial_id_to_point)
-            if len(links) > 0:
-                flat = links.reshape(-1, 3)
-                l_actors.append(plotter.add_lines(flat, color=color, width=1))
-            n_actors.append(
-                plotter.add_point_labels(
-                    pts,
-                    group["names"],
-                    font_size=12,
-                    text_color="white",
-                    show_points=False,
-                    shape="rounded_rect",
-                    shape_color="black",
-                    shape_opacity=0.65,
-                    always_visible=True,
-                )
+    return SceneData(
+        volume=volume,
+        scene_mesh=scene_mesh,
+        mm_scene=mm_scene,
+        mesh_opacity=mesh_opacity,
+        hi_clim=hi_clim,
+        fiducial_points=scene_fiducials,
+        fiducial_labels=fiducial_labels,
+        fiducial_id_to_point=fiducial_id_to_point,
+        normals_poly=normals_poly,
+        electrode_groups=electrode_groups,
+    )
+
+
+class _SceneLoader(QObject):
+    """Collect scene data off the GUI thread.
+
+    Lives on a dedicated :class:`QThread`; ``loaded``/``failed`` are delivered
+    back to the main thread because the widget (the receiver) lives there.
+    """
+
+    loaded = Signal(int, object)
+    failed = Signal(int, str)
+
+    def __init__(
+        self,
+        log: Callable[[str], None],
+        kwargs: dict[str, Any],
+        seq: int,
+    ) -> None:
+        super().__init__()
+        self._log = log
+        self._kwargs = kwargs
+        self._seq = seq
+
+    def run(self) -> None:
+        try:
+            scene = collect_scene_data(log=self._log, **self._kwargs)
+        except Exception as exc:
+            self.failed.emit(self._seq, str(exc))
+        else:
+            self.loaded.emit(self._seq, scene)
+
+
+class ViewerWidget(QWidget):
+    """Embeddable Qt 3D viewer.
+
+    Renders the scalp mesh over the MRI volume inside a pyvista
+    :class:`pyvistaqt.QtInteractor` next to a native Qt panel of layer
+    checkboxes.  :meth:`load` collects the scene on a worker thread and builds
+    the VTK actors on the GUI thread; the :attr:`sceneLoaded` and
+    :attr:`sceneFailed` signals notify embedders when rendering is ready or a
+    load/validation error occurred.
+    """
+
+    sceneLoaded = Signal(object)  # noqa: N815
+    sceneFailed = Signal(str)  # noqa: N815
+
+    def __init__(self, parent: QWidget | None = None, log: Callable[[str], None] = print) -> None:
+        super().__init__(parent)
+        self._log = log
+        self._load_seq = 0
+        self._thread: QThread | None = None
+        self._worker: _SceneLoader | None = None
+
+        self._plotter = QtInteractor(parent=self)
+        self._volume: pv.ImageData | None = None
+        self._mri_actor: Any = None
+        self._mesh_actor: Any = None
+        self._fiducial_actor: Any = None
+        self._fiducial_label_actor: Any = None
+        self._normals_actor: Any = None
+        self._electrode_actors_per_group: list[list[Any]] = []
+        self._flagged_actors_per_group: list[list[Any]] = []
+        self._link_actors_per_group: list[list[Any]] = []
+        self._label_actors_per_group: list[list[Any]] = []
+        self._group_states: list[bool] = []
+        self._mri_visible = True
+        self._fiducials_visible = True
+        self._labels_visible = True
+        self._mesh_opacity = 0.6
+        self._hi_clim: tuple[float, float] | None = None
+
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        layout.addWidget(self._plotter, 1)
+
+        self._layers_panel = QGroupBox("Layers", self)
+        self._layers_layout = QVBoxLayout(self._layers_panel)
+        self._layers_layout.setContentsMargins(4, 4, 4, 4)
+        self._layers_layout.setSpacing(4)
+        layout.addWidget(self._layers_panel, 0)
+
+    # ---- scene loading (background thread -> GUI thread) ----
+
+    def load(self, **kwargs: Any) -> None:
+        if not kwargs.get("nifti_path") and not kwargs.get("mesh_path"):
+            message = "at least one of nifti_path or mesh_path is required"
+            self._log(f"ERROR: viewer failed: {message}")
+            self.sceneFailed.emit(message)
+            return
+        if kwargs.get("electrodes_cras") and not kwargs.get("nifti_path"):
+            message = "electrodes_cras requires nifti_path"
+            self._log(f"ERROR: viewer failed: {message}")
+            self.sceneFailed.emit(message)
+            return
+
+        self._load_seq += 1
+        seq = self._load_seq
+        self.clear_scene()
+        self._log("Loading 3D scene...")
+
+        self._thread = QThread(self)
+        self._worker = _SceneLoader(self._log, kwargs, seq)
+        self._worker.moveToThread(self._thread)
+        self._thread.started.connect(self._worker.run)
+        self._worker.loaded.connect(self._on_scene_loaded)
+        self._worker.failed.connect(self._on_scene_failed)
+        self._thread.start()
+
+    def _on_scene_loaded(self, seq: int, scene: object) -> None:
+        if seq != self._load_seq:
+            return
+        self._finish_loading()
+        self.set_scene(scene)  # type: ignore[arg-type]
+        self.sceneLoaded.emit(scene)
+
+    def _on_scene_failed(self, seq: int, message: str) -> None:
+        if seq != self._load_seq:
+            return
+        self._finish_loading()
+        self._log(f"ERROR: viewer failed: {message}")
+        self.sceneFailed.emit(message)
+
+    def _finish_loading(self) -> None:
+        if self._thread is not None:
+            self._thread.quit()
+            self._thread.wait()
+            self._thread.deleteLater()
+            self._thread = None
+        if self._worker is not None:
+            self._worker.deleteLater()
+            self._worker = None
+
+    def clear_scene(self) -> None:
+        self._plotter.clear()
+        self._clear_layers()
+
+    def _clear_layers(self) -> None:
+        while self._layers_layout.count():
+            item = self._layers_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+    # ---- actor building (GUI thread) ----
+
+    def set_scene(self, scene: SceneData) -> None:
+        self._plotter.clear()
+        self._clear_layers()
+
+        self._volume = scene.volume
+        self._mesh_opacity = scene.mesh_opacity
+        self._hi_clim = scene.hi_clim
+        self._mri_actor = None
+        self._mesh_actor = None
+        if scene.volume is not None:
+            self._mri_actor = self._plotter.add_volume(
+                scene.volume, cmap="bone", opacity="sigmoid", mapper="smart"
             )
-        electrode_actors_per_group.append(e_actors)
-        flagged_actors_per_group.append(f_actors)
-        link_actors_per_group.append(l_actors)
-        label_actors_per_group.append(n_actors)
+        if scene.scene_mesh is not None:
+            self._mesh_actor = self._plotter.add_mesh(
+                scene.scene_mesh, color="salmon", opacity=self._mesh_opacity
+            )
 
-    y = 10
-    mri_visible = {"on": True}
+        self._fiducial_actor = None
+        self._fiducial_label_actor = None
+        if scene.fiducial_points is not None and len(scene.fiducial_points) > 0:
+            scene_points = scene.fiducial_points
+            self._fiducial_actor = self._plotter.add_points(
+                scene_points, color="red", point_size=10, render_points_as_spheres=True
+            )
+            self._fiducial_label_actor = self._plotter.add_point_labels(
+                scene_points,
+                scene.fiducial_labels,
+                font_size=12,
+                text_color="white",
+                show_points=False,
+                shape="rounded_rect",
+                shape_color="black",
+                shape_opacity=0.65,
+                always_visible=True,
+            )
 
-    def set_mesh_visibility(flag: bool) -> None:
-        mesh_actor.SetVisibility(flag)
+        self._normals_actor = None
+        if scene.normals_poly is not None:
+            self._normals_actor = self._plotter.add_mesh(
+                scene.normals_poly, color="cyan", opacity=0.8, line_width=2
+            )
 
-    def set_mri_visibility(flag: bool) -> None:
-        mri_visible["on"] = bool(flag)
-        mri_actor.SetVisibility(flag)
+        self._electrode_actors_per_group = []
+        self._flagged_actors_per_group = []
+        self._link_actors_per_group = []
+        self._label_actors_per_group = []
+        for group in scene.electrode_groups:
+            pts = group["points"]
+            flg = group["flags"]
+            meas = group["measured"]
+            color = group["color"]
+            e_actors: list[Any] = []
+            f_actors: list[Any] = []
+            l_actors: list[Any] = []
+            n_actors: list[Any] = []
+            if pts is not None and len(pts) > 0:
+                healthy = ~flg
+                if healthy.any():
+                    e_actors.append(
+                        self._plotter.add_points(
+                            pts[healthy],
+                            color=color,
+                            point_size=12,
+                            render_points_as_spheres=True,
+                        )
+                    )
+                if (~healthy).any():
+                    f_actors.append(
+                        self._plotter.add_points(
+                            pts[~healthy],
+                            color=_intensify_color(color),
+                            point_size=17,
+                            render_points_as_spheres=True,
+                        )
+                    )
+                links = _build_electrode_links(pts, meas, scene.fiducial_id_to_point)
+                if len(links) > 0:
+                    flat = links.reshape(-1, 3)
+                    l_actors.append(self._plotter.add_lines(flat, color=color, width=1))
+                n_actors.append(
+                    self._plotter.add_point_labels(
+                        pts,
+                        group["names"],
+                        font_size=12,
+                        text_color="white",
+                        show_points=False,
+                        shape="rounded_rect",
+                        shape_color="black",
+                        shape_opacity=0.65,
+                        always_visible=True,
+                    )
+                )
+            self._electrode_actors_per_group.append(e_actors)
+            self._flagged_actors_per_group.append(f_actors)
+            self._link_actors_per_group.append(l_actors)
+            self._label_actors_per_group.append(n_actors)
 
-    def set_contrast(flag: bool) -> None:
-        nonlocal mri_actor
-        if mesh_actor is not None:
+        self._group_states = [True] * len(scene.electrode_groups)
+        self._mri_visible = True
+        self._fiducials_visible = True
+        self._labels_visible = True
+        self._build_layers(scene)
+        self._plotter.add_axes(interactive=False)
+        self._plotter.render()
+
+    def _build_layers(self, scene: SceneData) -> None:
+        if self._mesh_actor is not None:
+            self._add_layer_check("Show mesh", True, self._set_mesh_visibility)
+        if self._mri_actor is not None:
+            self._add_layer_check("Show MRI", True, self._set_mri_visibility)
+        if self._fiducial_actor is not None:
+            self._add_layer_check("Show fiducials", True, self._set_fiducials_visibility)
+        if self._normals_actor is not None:
+            self._add_layer_check("Show normals", True, self._set_normals_visibility)
+        if self._fiducial_label_actor is not None or any(
+            group_actors for group_actors in self._label_actors_per_group
+        ):
+            self._add_layer_check("Show labels", True, self._set_labels_visibility)
+        for gi, group in enumerate(scene.electrode_groups):
+            all_actors = (
+                self._electrode_actors_per_group[gi]
+                + self._flagged_actors_per_group[gi]
+                + self._link_actors_per_group[gi]
+            )
+            if all_actors or self._label_actors_per_group[gi]:
+                self._add_layer_check(
+                    f"Show {group['label']}",
+                    True,
+                    lambda flag, gi=gi: self._set_group_visibility(gi, flag),
+                )
+        self._add_layer_check("Boost contrast", False, self._set_contrast)
+        self._layers_layout.addStretch(1)
+
+    def _add_layer_check(self, text: str, checked: bool, slot: Callable[[bool], None]) -> None:
+        check = QCheckBox(text, self._layers_panel)
+        check.setChecked(checked)
+        check.toggled.connect(slot)
+        self._layers_layout.addWidget(check)
+
+    # ---- layer visibility ----
+
+    def _apply_labels_visibility(self) -> None:
+        for gi in range(len(self._group_states)):
+            for actor in self._label_actors_per_group[gi]:
+                actor.SetVisibility(self._group_states[gi] and self._labels_visible)
+        if self._fiducial_label_actor is not None:
+            self._fiducial_label_actor.SetVisibility(
+                self._fiducials_visible and self._labels_visible
+            )
+
+    def _apply_group_visibility(self, gi: int) -> None:
+        visible = self._group_states[gi]
+        for actor in (
+            self._electrode_actors_per_group[gi]
+            + self._flagged_actors_per_group[gi]
+            + self._link_actors_per_group[gi]
+        ):
+            actor.SetVisibility(visible)
+        for actor in self._label_actors_per_group[gi]:
+            actor.SetVisibility(visible and self._labels_visible)
+
+    def _set_mesh_visibility(self, flag: bool) -> None:
+        if self._mesh_actor is not None:
+            self._mesh_actor.SetVisibility(flag)
+
+    def _set_mri_visibility(self, flag: bool) -> None:
+        self._mri_visible = bool(flag)
+        if self._mri_actor is not None:
+            self._mri_actor.SetVisibility(flag)
+
+    def _set_fiducials_visibility(self, flag: bool) -> None:
+        self._fiducials_visible = bool(flag)
+        if self._fiducial_actor is not None:
+            self._fiducial_actor.SetVisibility(flag)
+        self._apply_labels_visibility()
+
+    def _set_normals_visibility(self, flag: bool) -> None:
+        if self._normals_actor is not None:
+            self._normals_actor.SetVisibility(flag)
+
+    def _set_labels_visibility(self, flag: bool) -> None:
+        self._labels_visible = bool(flag)
+        self._apply_labels_visibility()
+
+    def _set_group_visibility(self, gi: int, flag: bool) -> None:
+        self._group_states[gi] = bool(flag)
+        self._apply_group_visibility(gi)
+
+    def _set_contrast(self, flag: bool) -> None:
+        if self._mesh_actor is not None:
             if flag:
-                mesh_actor.prop.opacity = 0.95
-                mesh_actor.prop.diffuse = 1.0
-                mesh_actor.prop.specular = 0.6
-                mesh_actor.prop.specular_power = 40.0
-                mesh_actor.prop.ambient = 0.2
+                self._mesh_actor.prop.opacity = 0.95
+                self._mesh_actor.prop.diffuse = 1.0
+                self._mesh_actor.prop.specular = 0.6
+                self._mesh_actor.prop.specular_power = 40.0
+                self._mesh_actor.prop.ambient = 0.2
             else:
-                mesh_actor.prop.opacity = mesh_opacity
-                mesh_actor.prop.diffuse = 1.0
-                mesh_actor.prop.specular = 0.0
-                mesh_actor.prop.specular_power = 100.0
-                mesh_actor.prop.ambient = 0.0
-        if volume is not None:
-            if "intensity" in plotter.scalar_bars:
-                plotter.remove_scalar_bar("intensity")
-            plotter.remove_actor(mri_actor)
+                self._mesh_actor.prop.opacity = self._mesh_opacity
+                self._mesh_actor.prop.diffuse = 1.0
+                self._mesh_actor.prop.specular = 0.0
+                self._mesh_actor.prop.specular_power = 100.0
+                self._mesh_actor.prop.ambient = 0.0
+        if self._volume is not None and self._mri_actor is not None:
+            if "intensity" in self._plotter.scalar_bars:
+                self._plotter.remove_scalar_bar("intensity")
+            self._plotter.remove_actor(self._mri_actor)
             if flag:
-                mri_actor = plotter.add_volume(
-                    volume,
+                self._mri_actor = self._plotter.add_volume(
+                    self._volume,
                     cmap="bone",
                     opacity="sigmoid_10",
                     mapper="smart",
-                    clim=hi_clim,
+                    clim=self._hi_clim,
                     opacity_unit_distance=0.5,
                 )
             else:
-                mri_actor = plotter.add_volume(
-                    volume,
-                    cmap="bone",
-                    opacity="sigmoid",
-                    mapper="smart",
+                self._mri_actor = self._plotter.add_volume(
+                    self._volume, cmap="bone", opacity="sigmoid", mapper="smart"
                 )
-            mri_actor.SetVisibility(mri_visible["on"])
-        plotter.render()
+            self._mri_actor.SetVisibility(self._mri_visible)
+        self._plotter.render()
 
-    if mesh_actor is not None:
-        plotter.add_checkbox_button_widget(set_mesh_visibility, value=True, position=(10, y))
-        plotter.add_text("Show mesh", position=(75, y + 10), font_size=18, name="mesh_label")
-        y += 50
-    if mri_actor is not None:
-        plotter.add_checkbox_button_widget(set_mri_visibility, value=True, position=(10, y))
-        plotter.add_text("Show MRI", position=(75, y + 10), font_size=18, name="mri_label")
-        y += 50
+    def closeEvent(self, event: Any) -> None:  # noqa: N802 - Qt naming
+        if self._thread is not None and self._thread.isRunning():
+            self._thread.quit()
+            self._thread.wait(3000)
+            self._thread = None
+        super().closeEvent(event)
 
-    # Visibility is state-driven: a label is shown only when both its group
-    # (or the fiducials) and the global "Show labels" toggle are on.
-    fiducial_state = {"on": True}
-    labels_state = {"on": True}
-    group_states = [{"on": True} for _ in electrode_groups]
 
-    def _apply_labels_visibility() -> None:
-        for gi in range(len(electrode_groups)):
-            for a in label_actors_per_group[gi]:
-                a.SetVisibility(group_states[gi]["on"] and labels_state["on"])
-        if fiducial_label_actor is not None:
-            fiducial_label_actor.SetVisibility(fiducial_state["on"] and labels_state["on"])
+def show_viewer(
+    nifti_path: str | None = None,
+    mesh_path: str | None = None,
+    fiducials_path: str | None = None,
+    normals_path: str | None = None,
+    downsample_stride: int = 1,
+    mesh_opacity: float = 0.6,
+    normals_scale: float = 3.0,
+    normals_density: int = 500,
+    electrode_specs: list[tuple[str, str | None]] | None = None,
+    electrodes_cras: bool = False,
+    log: Callable[[str], None] = print,
+) -> None:
+    """Launch the interactive 3D viewer window.
 
-    def _apply_group_visibility(gi: int) -> None:
-        visible = group_states[gi]["on"]
-        for a in (
-            electrode_actors_per_group[gi]
-            + flagged_actors_per_group[gi]
-            + link_actors_per_group[gi]
-        ):
-            a.SetVisibility(visible)
-        for a in label_actors_per_group[gi]:
-            a.SetVisibility(visible and labels_state["on"])
+    Parameters map directly to the CLI flags of ``virda-gui``.  At least one of
+    *nifti_path* or *mesh_path* must be provided.  *electrode_specs* is a list
+    of ``(path, color)`` pairs as produced by :func:`_parse_electrode_specs`;
+    pass ``electrodes_cras=True`` to force the FreeSurfer cRAS -> scanner RAS
+    conversion of tabular electrode files.  *log* receives progress and QC
+    messages (defaults to :func:`print`; embedders such as the GUI pass a
+    callback that routes lines into their own log pane).  The call blocks until
+    the viewer window is closed.
+    """
+    if not nifti_path and not mesh_path:
+        raise ValueError("at least one of nifti_path or mesh_path is required")
+    if electrodes_cras and not nifti_path:
+        raise ValueError("electrodes_cras requires nifti_path")
 
-    if fiducial_actor is not None:
+    app = QApplication.instance() or QApplication([])
 
-        def set_fiducials_visibility(flag: bool) -> None:
-            fiducial_state["on"] = bool(flag)
-            fiducial_actor.SetVisibility(fiducial_state["on"])
-            _apply_labels_visibility()
+    window = QMainWindow()
+    window.setWindowTitle("VIRDA — scalp mesh and/or MRI volume")
+    widget = ViewerWidget(log=log)
+    widget.sceneFailed.connect(lambda message: log(f"ERROR: 3D viewer failed: {message}"))
+    window.setCentralWidget(widget)
+    window.resize(960, 720)
+    window.show()
 
-        plotter.add_checkbox_button_widget(set_fiducials_visibility, value=True, position=(10, y))
-        plotter.add_text(
-            "Show fiducials", position=(75, y + 10), font_size=18, name="fiducials_label"
-        )
-        y += 50
-    if normals_actor is not None:
+    widget.load(
+        nifti_path=nifti_path,
+        mesh_path=mesh_path,
+        fiducials_path=fiducials_path,
+        normals_path=normals_path,
+        downsample_stride=downsample_stride,
+        mesh_opacity=mesh_opacity,
+        normals_scale=normals_scale,
+        normals_density=normals_density,
+        electrode_specs=electrode_specs,
+        electrodes_cras=electrodes_cras,
+    )
 
-        def set_normals_visibility(flag: bool) -> None:
-            normals_actor.SetVisibility(flag)
-
-        plotter.add_checkbox_button_widget(set_normals_visibility, value=True, position=(10, y))
-        plotter.add_text("Show normals", position=(75, y + 10), font_size=18, name="normals_label")
-        y += 50
-
-    if any(label_actors_per_group) or fiducial_label_actor is not None:
-
-        def set_labels_visibility(flag: bool) -> None:
-            labels_state["on"] = bool(flag)
-            _apply_labels_visibility()
-
-        plotter.add_checkbox_button_widget(set_labels_visibility, value=True, position=(10, y))  # type: ignore[arg-type]
-        plotter.add_text("Show labels", position=(75, y + 10), font_size=18, name="labels_label")
-        y += 50
-    for gi, (group, e_actors, f_actors, l_actors) in enumerate(
-        zip(
-            electrode_groups,
-            electrode_actors_per_group,
-            flagged_actors_per_group,
-            link_actors_per_group,
-            strict=True,
-        )
-    ):
-        label = group["label"]
-        color = group["color"]
-        all_actors = e_actors + f_actors
-
-        def make_group_toggle(idx: int) -> Any:
-            def _toggle(flag: bool) -> None:
-                group_states[idx]["on"] = bool(flag)
-                _apply_group_visibility(idx)
-
-            return _toggle
-
-        if all_actors or l_actors or label_actors_per_group[gi]:
-            plotter.add_checkbox_button_widget(make_group_toggle(gi), value=True, position=(10, y))  # type: ignore[arg-type]
-            plotter.add_text(
-                f"Show {label}", position=(75, y + 10), font_size=18, name=f"elec_{label}"
-            )
-            y += 50
-    plotter.add_checkbox_button_widget(set_contrast, value=False, position=(10, y))
-    plotter.add_text("Boost contrast", position=(75, y + 10), font_size=18, name="contrast_label")
-    plotter.add_axes(interactive=False)
-    plotter.show()
+    if QApplication.instance() is app:
+        app.exec()
 
 
 def main() -> None:
