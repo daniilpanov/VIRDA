@@ -3,7 +3,6 @@ name: Build Executables
 on:
   release:
     types: [published]
-
   workflow_dispatch:
 
 # Least privilege by default; the release job grants write where needed.
@@ -21,29 +20,15 @@ jobs:
   test:
     name: Test gate
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+      - name: Run Python tests
+        uses: ./.github/actions/python-test
         with:
-          enable-cache: true
-          version: "0.11.33"
-
-      - name: Set up Python
-        run: uv python install 3.14
-
-      - name: Install Qt system libraries
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libegl1 libgl1 libxkbcommon0
-
-      - name: Install dependencies
-        run: uv sync --frozen --all-packages --all-extras
-
-      - name: Run tests
-        run: uv run pytest -q
+          python-version: "3.14"
 
   # ========================================
   # Linux build (ubuntu-22.04)
@@ -61,14 +46,18 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
-        with:
-          enable-cache: true
-          version: "0.11.33"
+      - name: Install uv and Python
+        uses: ./.github/actions/setup-python-uv
 
-      - name: Set up Python
-        run: uv python install 3.14
+      # PyInstaller analysis is the slow part; cache its working directory so
+      # repeated builds on the same dependency set skip re-analysis.
+      - name: Cache PyInstaller build directory
+        uses: actions/cache@v6
+        with:
+          path: build/
+          key: ${{ runner.os }}-pyinstaller-${{ hashFiles('uv.lock', 'virda_gui.spec', 'src/**') }}
+          restore-keys: |
+            ${{ runner.os }}-pyinstaller-
 
       - name: Install dependencies (incl. PyInstaller)
         run: uv sync --frozen --package virda-gui --group build
@@ -96,14 +85,18 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
-        with:
-          enable-cache: true
-          version: "0.11.33"
+      - name: Install uv and Python
+        uses: ./.github/actions/setup-python-uv
 
-      - name: Set up Python
-        run: uv python install 3.14
+      # PyInstaller analysis is the slow part; cache its working directory so
+      # repeated builds on the same dependency set skip re-analysis.
+      - name: Cache PyInstaller build directory
+        uses: actions/cache@v6
+        with:
+          path: build/
+          key: ${{ runner.os }}-pyinstaller-${{ hashFiles('uv.lock', 'virda_gui.spec', 'src/**') }}
+          restore-keys: |
+            ${{ runner.os }}-pyinstaller-
 
       - name: Install dependencies (incl. PyInstaller)
         run: uv sync --frozen --package virda-gui --group build

@@ -54,60 +54,27 @@ jobs:
   # JOB 2: Tests with coverage
   # ========================================
   test:
-    name: Test (Python ${{ matrix.python-version }})
+    name: Test (Python 3.14)
     runs-on: ubuntu-latest
-
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.14"]
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
+      - name: Run Python tests
+        uses: ./.github/actions/python-test
         with:
-          version: "latest"
-
-      - name: Set up Python ${{ matrix.python-version }}
-        run: uv python install ${{ matrix.python-version }}
-
-      - name: Install Qt system libraries
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libegl1 libgl1 libxkbcommon0
-
-      - name: Install dependencies
-        run: uv sync --all-extras --all-packages --frozen
-
-      - name: Run tests with coverage
-        run: |
-          uv run pytest tests/ \
-            -v \
-            --cov-report=term-missing \
-            --cov-report=xml:coverage.xml \
-            --cov-report=html:htmlcov \
-            --junitxml=junit.xml
-
-      - name: Upload coverage reports
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: coverage-report
-          path: |
-            coverage.xml
-            htmlcov/
-          retention-days: 7
-
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: test-results
-          path: junit.xml
-          retention-days: 7
+          python-version: "3.14"
+          uv-version: latest
+          test-command: |
+            uv run pytest tests/ \
+              -v \
+              --cov-report=term-missing \
+              --cov-report=xml:coverage.xml \
+              --cov-report=html:htmlcov \
+              --junitxml=junit.xml
+          coverage: true
+          junit: true
 
   # ========================================
   # JOB 3: Integration test (push only)
