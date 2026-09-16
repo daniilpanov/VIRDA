@@ -1,10 +1,9 @@
-"""VIRDA GUI application — main window with ttkbootstrap.
+"""VIRDA GUI application — main window with PySide6.
 
-Launches a tkinter GUI for configuring and running the VIRDA electrode
+Launches a Qt GUI for configuring and running the VIRDA electrode
 localisation pipeline (Stage 1 segmentation/mesh, Stage 2 ESE and Stage 3
-localization).  After a successful run the *Results* tab shows a summary and
-the user can open the interactive 3D viewer (with electrode overlays) or
-export an HTML viewer.
+localization).  After a successful run the 3D viewer opens automatically
+(with electrode overlays) and an HTML viewer can be exported.
 
 The *Saved Results* tab browses the artifacts of any project directory:
 it lists everything saved by previous pipeline runs (mesh, fiducials, ESE,
@@ -25,18 +24,33 @@ import queue
 import shutil
 import subprocess
 import threading
-import tkinter as tk
-import tkinter.scrolledtext as scrolledtext
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from tkinter import ttk
 from typing import Any
 
 import numpy as np
-import ttkbootstrap as ttkb
-from ttkbootstrap.constants import BOTH, LEFT, RIGHT, YES, E, W, X, Y
-from ttkbootstrap.dialogs import Messagebox
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtWidgets import (
+    QApplication,
+    QCheckBox,
+    QDialog,
+    QFrame,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QMessageBox,
+    QPlainTextEdit,
+    QPushButton,
+    QScrollArea,
+    QSplitter,
+    QTabWidget,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
 
 from virda.config import load_config_file
 from virda.io.fiducial_helpers import load_fiducials
@@ -45,7 +59,7 @@ from virda.main import run
 from virda.models.config import Config
 from virda.models.coordsystem import Coordsystem
 
-from .viewer import show_viewer
+from .viewer import ViewerWidget
 from .widgets import (
     DirectorySelector,
     ElectrodeGroupRow,
@@ -58,7 +72,6 @@ _DONE_SENTINEL = "__DONE__"
 _ERROR_SENTINEL = "__ERROR__"
 _EXPORT_DONE_SENTINEL = "__EXPORT_DONE__"
 _EXPORT_ERROR_SENTINEL = "__EXPORT_ERROR__"
-_VIEWER_DONE_SENTINEL = "__VIEWER_DONE__"
 
 
 class _QueueLogHandler(logging.Handler):
@@ -90,6 +103,7 @@ _PROJECT_ARTIFACT_DIRS = [
     "fiducials",
     "ese",
     "localization",
+    "quality_control",
     "logs",
 ]
 
@@ -153,18 +167,17 @@ _ADVANCED_COMBO_FIELDS: dict[str, list[str]] = {
 }
 
 
-class AdvancedSettingsDialog(tk.Toplevel):
+class AdvancedSettingsDialog(QDialog):
     """Modal dialog for advanced pipeline parameters."""
 
     def __init__(
         self,
-        parent: tk.Misc,
+        parent: QWidget | None,
         values: dict[str, str],
     ) -> None:
         super().__init__(parent)
-        self.title("Advanced Settings")
-        self.resizable(False, False)
-        self.grab_set()
+        self.setWindowTitle("Advanced Settings")
+        self.setModal(True)
 
         self.result_values: dict[str, str] = dict(values)
         self.confirmed: bool = False
@@ -172,97 +185,89 @@ class AdvancedSettingsDialog(tk.Toplevel):
         self._fields: dict[str, LabeledField] = {}
 
         self._build_ui()
-        self._center_on_parent(parent)
-        self.protocol("WM_DELETE_WINDOW", self._on_cancel)
-
-    def _center_on_parent(self, parent: tk.Misc) -> None:
-        self.update_idletasks()
-        pw = parent.winfo_width()
-        ph = parent.winfo_height()
-        px = parent.winfo_rootx()
-        py = parent.winfo_rooty()
-        w = self.winfo_width()
-        h = self.winfo_height()
-        x = px + (pw - w) // 2
-        y = py + (ph - h) // 2
-        self.geometry(f"+{x}+{y}")
 
     def _build_ui(self) -> None:
-        canvas = tk.Canvas(self, borderwidth=0, highlightthickness=0)
-        scrollbar = ttk.Scrollbar(self, orient="vertical", command=canvas.yview)
-        self._scroll_frame = ttk.Frame(canvas)
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(4)
 
-        self._scroll_frame.bind(
-            "<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-        )
-        canvas.create_window((0, 0), window=self._scroll_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
+        self._build_segmentation_section(container, layout)
+        self._build_mesh_section(container, layout)
+        self._build_ese_section(container, layout)
+        self._build_neighborhood_section(container, layout)
+        self._build_stage3_section(container, layout)
 
-        canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
+        btn_frame = QFrame(container)
+        btn_layout = QHBoxLayout(btn_frame)
+        btn_layout.setContentsMargins(0, 8, 0, 0)
 
-        self._build_segmentation_section(self._scroll_frame)
-        self._build_mesh_section(self._scroll_frame)
-        self._build_ese_section(self._scroll_frame)
-        self._build_neighborhood_section(self._scroll_frame)
-        self._build_stage3_section(self._scroll_frame)
+        ok_btn = QPushButton("OK")
+        ok_btn.setFixedWidth(100)
+        ok_btn.clicked.connect(self._on_ok)
+        btn_layout.addWidget(ok_btn)
 
-        btn_frame = ttk.Frame(self._scroll_frame)
-        btn_frame.pack(fill=X, padx=8, pady=8)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        btn_layout.addWidget(cancel_btn)
 
-        ttkb.Button(btn_frame, text="OK", bootstyle="success", command=self._on_ok, width=10).pack(
-            side=LEFT, padx=(0, 8)
-        )
-        ttkb.Button(
-            btn_frame, text="Cancel", bootstyle="secondary", command=self._on_cancel, width=10
-        ).pack(side=LEFT)
+        layout.addWidget(btn_frame)
+        scroll.setWidget(container)
 
-    def _build_segmentation_section(self, parent: tk.Misc) -> None:
-        frame = ttk.LabelFrame(parent, text="  Stage 1: Segmentation  ")
-        frame.pack(fill=X, padx=8, pady=4)
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.addWidget(scroll)
 
-        self._add_field(frame, "otsu_scope", "Otsu scope", "combo")
-        self._add_field(frame, "otsu_threshold_scale", "Threshold scale", "entry")
-        self._add_field(frame, "closing_radius", "Closing radius", "entry")
+    def _build_segmentation_section(self, parent: QWidget, outer: QVBoxLayout) -> None:
+        box = QGroupBox("Stage 1: Segmentation", parent)
+        layout = QVBoxLayout(box)
+        self._add_field(box, layout, "otsu_scope", "Otsu scope", "combo")
+        self._add_field(box, layout, "otsu_threshold_scale", "Threshold scale", "entry")
+        self._add_field(box, layout, "closing_radius", "Closing radius", "entry")
+        outer.addWidget(box)
 
-    def _build_mesh_section(self, parent: tk.Misc) -> None:
-        frame = ttk.LabelFrame(parent, text="  Stage 1: Mesh Processing  ")
-        frame.pack(fill=X, padx=8, pady=4)
+    def _build_mesh_section(self, parent: QWidget, outer: QVBoxLayout) -> None:
+        box = QGroupBox("Stage 1: Mesh Processing", parent)
+        layout = QVBoxLayout(box)
+        self._add_field(box, layout, "seal_enabled", "Seal mask gaps", "check")
+        self._add_field(box, layout, "seal_radius", "Seal radius", "entry")
+        self._add_field(box, layout, "cleaner_min_vertices", "Min component vertices", "entry")
+        self._add_field(box, layout, "cleaner_merge_digits", "Merge digits", "entry")
+        self._add_field(box, layout, "smoother_type", "Smoother type", "combo")
+        self._add_field(box, layout, "smoother_iterations", "Iterations", "entry")
+        self._add_field(box, layout, "smoother_lamb", "Lambda", "entry")
+        self._add_field(box, layout, "smoother_nu", "Nu (Taubin)", "entry")
+        outer.addWidget(box)
 
-        self._add_field(frame, "seal_enabled", "Seal mask gaps", "check")
-        self._add_field(frame, "seal_radius", "Seal radius", "entry")
-        self._add_field(frame, "cleaner_min_vertices", "Min component vertices", "entry")
-        self._add_field(frame, "cleaner_merge_digits", "Merge digits", "entry")
-        self._add_field(frame, "smoother_type", "Smoother type", "combo")
-        self._add_field(frame, "smoother_iterations", "Iterations", "entry")
-        self._add_field(frame, "smoother_lamb", "Lambda", "entry")
-        self._add_field(frame, "smoother_nu", "Nu (Taubin)", "entry")
+    def _build_ese_section(self, parent: QWidget, outer: QVBoxLayout) -> None:
+        box = QGroupBox("Stage 2: ESE Parameters", parent)
+        layout = QVBoxLayout(box)
+        self._add_field(box, layout, "ese_offset_mm", "Offset (mm)", "entry")
+        outer.addWidget(box)
 
-    def _build_ese_section(self, parent: tk.Misc) -> None:
-        frame = ttk.LabelFrame(parent, text="  Stage 2: ESE Parameters  ")
-        frame.pack(fill=X, padx=8, pady=4)
+    def _build_neighborhood_section(self, parent: QWidget, outer: QVBoxLayout) -> None:
+        box = QGroupBox("Stage 2: Neighborhood", parent)
+        layout = QVBoxLayout(box)
+        self._add_field(box, layout, "neighborhood_radius_mm", "Radius (mm)", "entry")
+        self._add_field(box, layout, "k_neighbors", "K neighbors", "entry")
+        self._add_field(box, layout, "pca_sigma_mm", "PCA sigma (mm)", "entry")
+        self._add_field(box, layout, "min_neighbors", "Min neighbors", "entry")
+        self._add_field(box, layout, "use_weighted_pca", "Weighted PCA", "check")
+        outer.addWidget(box)
 
-        self._add_field(frame, "ese_offset_mm", "Offset (mm)", "entry")
+    def _build_stage3_section(self, parent: QWidget, outer: QVBoxLayout) -> None:
+        box = QGroupBox("Stage 3: Localization", parent)
+        layout = QVBoxLayout(box)
+        self._add_field(box, layout, "residual_threshold_mm", "Residual threshold (mm)", "entry")
+        self._add_field(box, layout, "calibrate_ese_offset", "Calibrate ESE offset", "check")
+        outer.addWidget(box)
 
-    def _build_neighborhood_section(self, parent: tk.Misc) -> None:
-        frame = ttk.LabelFrame(parent, text="  Stage 2: Neighborhood  ")
-        frame.pack(fill=X, padx=8, pady=4)
-
-        self._add_field(frame, "neighborhood_radius_mm", "Radius (mm)", "entry")
-        self._add_field(frame, "k_neighbors", "K neighbors", "entry")
-        self._add_field(frame, "pca_sigma_mm", "PCA sigma (mm)", "entry")
-        self._add_field(frame, "min_neighbors", "Min neighbors", "entry")
-        self._add_field(frame, "use_weighted_pca", "Weighted PCA", "check")
-
-    def _build_stage3_section(self, parent: tk.Misc) -> None:
-        frame = ttk.LabelFrame(parent, text="  Stage 3: Localization  ")
-        frame.pack(fill=X, padx=8, pady=4)
-
-        self._add_field(frame, "residual_threshold_mm", "Residual threshold (mm)", "entry")
-        self._add_field(frame, "calibrate_ese_offset", "Calibrate ESE offset", "check")
-
-    def _add_field(self, parent: tk.Misc, key: str, label: str, widget_type: str) -> None:
-        values = _ADVANCED_COMBO_FIELDS.get(key) if widget_type == "combo" else None
+    def _add_field(
+        self, parent: QWidget, layout: QVBoxLayout, key: str, label: str, widget_type: str
+    ) -> None:
+        values = _ADVANCED_COMBO_FIELDS.get(key)
         field = LabeledField(
             parent,
             label=label,
@@ -270,44 +275,50 @@ class AdvancedSettingsDialog(tk.Toplevel):
             values=values,
             default=self.result_values.get(key, _ADVANCED_FIELD_DEFAULTS.get(key, "")),
         )
-        field.pack(fill=X, padx=4, pady=2)
+        layout.addWidget(field)
         self._fields[key] = field
 
     def _on_ok(self) -> None:
         for key, field in self._fields.items():
             self.result_values[key] = field.get()
         self.confirmed = True
-        self.destroy()
+        self.accept()
 
-    def _on_cancel(self) -> None:
-        self.confirmed = False
-        self.destroy()
+
+class _VirdaMainWindow(QMainWindow):
+    """Main window whose :meth:`closeEvent` triggers the app teardown hook."""
+
+    def __init__(self, on_close: Callable[[], None]) -> None:
+        super().__init__()
+        self._on_close_callback = on_close
+
+    def closeEvent(self, event: Any) -> None:  # noqa: N802 - Qt naming
+        try:
+            self._on_close_callback()
+        finally:
+            super().closeEvent(event)
 
 
 class VirdaApp:
     """Main application window."""
 
     def __init__(self) -> None:
-        self._root = ttkb.Window(
-            title="VIRDA — Electrode Localization System",
-            themename="cosmo",
-            size=(820, 600),
-            resizable=(True, True),
-        )
+        self._root = _VirdaMainWindow(self._on_close)
+        self._root.setWindowTitle("VIRDA — Electrode Localization System")
+        self._root.resize(860, 640)
 
         self._log_queue: queue.Queue[str | None] = queue.Queue()
         self._pipeline_thread: threading.Thread | None = None
-        self._viewer_thread: threading.Thread | None = None
-        self._run_btn: ttkb.Button | None = None
-        self._viewer_btn: ttkb.Button | None = None
-        self._export_btn: ttkb.Button | None = None
+        self._viewer_loading = False
+        self._run_btn: QPushButton | None = None
+        self._viewer_btn: QPushButton | None = None
+        self._export_btn: QPushButton | None = None
         self._last_project_dir: str | None = None
         self._advanced_values: dict[str, str] = dict(_ADVANCED_FIELD_DEFAULTS)
         self._electrode_rows: list[ElectrodeGroupRow] = []
         self._palette_index = 0
         self._stage3_summary: dict[str, Any] | None = None
         self._coordsystem: Coordsystem | None = None
-        self._results_tree_paths: dict[str, Path] = {}
 
         # Capture pipeline/library logs into the log pane (console handlers
         # set up by the pipeline itself keep working).
@@ -315,264 +326,232 @@ class VirdaApp:
         add_log_handler(self._log_handler)
 
         self._build_ui()
-        self._poll_log_queue()
+        self._poll_timer = QTimer()
+        self._poll_timer.setInterval(100)
+        self._poll_timer.timeout.connect(self._poll_log_queue)
+        self._poll_timer.start()
 
     # ------------------------------------------------------------------
     # UI construction
     # ------------------------------------------------------------------
 
     def _build_ui(self) -> None:
-        self._notebook = ttkb.Notebook(self._root, bootstyle="default")
-        self._notebook.pack(fill=BOTH, expand=YES, padx=8, pady=8)
+        self._notebook = QTabWidget()
+        self._root.setCentralWidget(self._notebook)
 
-        self._config_frame = ttk.Frame(self._notebook)
-        self._notebook.add(self._config_frame, text="  Configuration  ")
+        self._config_frame = QWidget()
+        self._notebook.addTab(self._config_frame, "  Configuration  ")
 
-        self._results_frame = ttk.Frame(self._notebook)
-        self._notebook.add(self._results_frame, text="  Results  ")
-
-        self._saved_results_frame = ttk.Frame(self._notebook)
-        self._notebook.add(self._saved_results_frame, text="  Saved Results  ")
+        self._saved_results_frame = QWidget()
+        self._notebook.addTab(self._saved_results_frame, "  Saved Results  ")
 
         self._build_config_tab()
-        self._build_results_tab()
         self._build_saved_results_tab()
+
+        self._viewer_frame = QWidget()
+        self._viewer_tab_index = self._notebook.addTab(self._viewer_frame, "  3D Viewer  ")
+        self._notebook.setTabEnabled(self._viewer_tab_index, False)
+        self._build_viewer_tab()
 
     # ---- Configuration tab ----
 
     def _build_config_tab(self) -> None:
         parent = self._config_frame
+        outer = QVBoxLayout(parent)
+        outer.setContentsMargins(8, 8, 8, 8)
+        outer.setSpacing(4)
 
-        input_frame = ttk.LabelFrame(parent, text="  Input Files  ")
-        input_frame.pack(fill=X, padx=8, pady=(8, 4))
+        input_box = QGroupBox("Input Files", parent)
+        input_layout = QVBoxLayout(input_box)
 
         self._config_file = FileSelector(
-            input_frame,
+            input_box,
             label="Config file",
-            filetypes=[("JSON", "*.json"), ("All files", "*.*")],
+            filetypes=[("JSON", "*.json"), ("All files", "*")],
         )
-        self._config_file.pack(fill=X, padx=6, pady=4)
-        self._config_file._var.trace_add("write", self._on_config_file_changed)
+        input_layout.addWidget(self._config_file)
+        self._config_file.textChanged.connect(self._on_config_file_changed)
 
         self._nifti = FileSelector(
-            input_frame,
+            input_box,
             label="NIfTI scan",
-            filetypes=[("NIfTI", "*.nii.gz *.nii"), ("All files", "*.*")],
+            filetypes=[("NIfTI", "*.nii.gz *.nii"), ("All files", "*")],
         )
-        self._nifti.pack(fill=X, padx=6, pady=4)
+        input_layout.addWidget(self._nifti)
 
-        self._project_dir = DirectorySelector(input_frame, label="Project dir")
-        self._project_dir.pack(fill=X, padx=6, pady=4)
+        self._project_dir = DirectorySelector(input_box, label="Project dir")
+        input_layout.addWidget(self._project_dir)
 
         self._fiducials = FileSelector(
-            input_frame,
+            input_box,
             label="Fiducials",
-            filetypes=[("JSON", "*.json"), ("All files", "*.*")],
+            filetypes=[("JSON", "*.json"), ("All files", "*")],
         )
-        self._fiducials.pack(fill=X, padx=6, pady=4)
-        self._fiducials._var.trace_add("write", self._on_fiducials_path_changed)
+        input_layout.addWidget(self._fiducials)
+        self._fiducials.textChanged.connect(self._on_fiducials_path_changed)
 
         self._measurements = FileSelector(
-            input_frame,
+            input_box,
             label="Measurements",
-            filetypes=[("JSON", "*.json"), ("All files", "*.*")],
+            filetypes=[("JSON", "*.json"), ("All files", "*")],
         )
-        self._measurements.pack(fill=X, padx=6, pady=4)
+        input_layout.addWidget(self._measurements)
 
         self._auto_detect_fid = LabeledField(
-            input_frame,
+            input_box,
             label="Auto detect fiducials",
             widget_type="check",
             default="false",
         )
-        self._auto_detect_fid.pack(fill=X, padx=6, pady=(4, 6))
+        input_layout.addWidget(self._auto_detect_fid)
 
-        groups_frame = ttk.LabelFrame(parent, text="  Electrode Groups (viewer overlays)  ")
-        groups_frame.pack(fill=X, padx=8, pady=(4, 4))
+        outer.addWidget(input_box)
 
-        self._groups_inner = ttk.Frame(groups_frame)
-        self._groups_inner.pack(fill=X, padx=6, pady=(4, 2))
+        groups_box = QGroupBox("Electrode Groups (viewer overlays)", parent)
+        groups_layout = QVBoxLayout(groups_box)
+        self._groups_inner = QWidget(groups_box)
+        self._groups_layout = QVBoxLayout(self._groups_inner)
+        self._groups_layout.setContentsMargins(0, 0, 0, 0)
+        self._groups_layout.setSpacing(4)
+        groups_layout.addWidget(self._groups_inner)
 
-        groups_btns = ttk.Frame(groups_frame)
-        groups_btns.pack(fill=X, padx=6, pady=(0, 6))
+        groups_btns = QFrame(groups_box)
+        groups_btns_layout = QHBoxLayout(groups_btns)
+        groups_btns_layout.setContentsMargins(0, 0, 0, 0)
 
-        ttkb.Button(
-            groups_btns,
-            text="Add group",
-            bootstyle="secondary-outline",
-            command=self._on_add_electrode_group,
-            width=12,
-        ).pack(side=LEFT, padx=(0, 8))
+        add_group_btn = QPushButton("Add group")
+        add_group_btn.clicked.connect(self._on_add_electrode_group)
+        groups_btns_layout.addWidget(add_group_btn)
 
-        self._electrodes_cras_var = tk.StringVar(value="false")
-        ttk.Checkbutton(
-            groups_btns,
-            text="Force cRAS conversion",
-            variable=self._electrodes_cras_var,
-            onvalue="true",
-            offvalue="false",
-        ).pack(side=LEFT)
+        self._electrodes_cras_check = QCheckBox("Force cRAS conversion")
+        groups_btns_layout.addWidget(self._electrodes_cras_check)
 
-        btn_frame = ttk.Frame(parent)
-        btn_frame.pack(fill=X, padx=8, pady=(4, 2))
+        groups_btns_layout.addStretch(1)
+        groups_layout.addWidget(groups_btns)
 
-        self._advanced_btn = ttkb.Button(
-            btn_frame,
-            text="Advanced Settings",
-            bootstyle="secondary-outline",
-            command=self._on_show_advanced,
-            width=18,
-        )
-        self._advanced_btn.pack(side=LEFT, padx=(0, 8))
+        outer.addWidget(groups_box)
 
-        self._run_btn = ttkb.Button(
-            btn_frame,
-            text="Run Pipeline",
-            bootstyle="success",
-            command=self._on_run,
-            width=16,
-        )
-        self._run_btn.pack(side=LEFT, padx=(0, 8))
+        btn_frame = QFrame(parent)
+        btn_layout = QHBoxLayout(btn_frame)
+        btn_layout.setContentsMargins(0, 4, 0, 4)
 
-        self._viewer_btn = ttkb.Button(
-            btn_frame,
-            text="Open 3D Viewer",
-            bootstyle="info-outline",
-            command=self._on_open_viewer,
-            state=tk.DISABLED,
-            width=16,
-        )
-        self._viewer_btn.pack(side=LEFT, padx=(0, 8))
+        self._advanced_btn = QPushButton("Advanced Settings")
+        self._advanced_btn.clicked.connect(self._on_show_advanced)
+        btn_layout.addWidget(self._advanced_btn)
+        btn_layout.addSpacing(8)
 
-        self._export_btn = ttkb.Button(
-            btn_frame,
-            text="Export HTML",
-            bootstyle="secondary-outline",
-            command=self._on_export_html,
-            state=tk.DISABLED,
-            width=16,
-        )
-        self._export_btn.pack(side=LEFT)
+        self._run_btn = QPushButton("Run Pipeline")
+        self._run_btn.clicked.connect(self._on_run)
+        btn_layout.addWidget(self._run_btn)
+        btn_layout.addSpacing(8)
+
+        self._viewer_btn = QPushButton("Open 3D Viewer")
+        self._viewer_btn.clicked.connect(self._on_open_viewer)
+        self._viewer_btn.setEnabled(False)
+        btn_layout.addWidget(self._viewer_btn)
+        btn_layout.addSpacing(8)
+
+        self._export_btn = QPushButton("Export HTML")
+        self._export_btn.clicked.connect(self._on_export_html)
+        self._export_btn.setEnabled(False)
+        btn_layout.addWidget(self._export_btn)
+
+        btn_layout.addStretch(1)
+        outer.addWidget(btn_frame)
 
         self._log_viewer = LogViewer(parent)
-        self._log_viewer.pack(fill=BOTH, expand=YES, padx=8, pady=(2, 8))
-
-    # ---- Results tab ----
-
-    def _build_results_tab(self) -> None:
-        parent = self._results_frame
-
-        info_frame = ttk.LabelFrame(parent, text="  Pipeline Results  ")
-        info_frame.pack(fill=X, padx=8, pady=(8, 4))
-
-        self._result_label = ttk.Label(info_frame, text="No results yet. Run the pipeline first.")
-        self._result_label.pack(padx=8, pady=8, anchor=W)
-
-        actions_frame = ttk.Frame(parent)
-        actions_frame.pack(fill=X, padx=8, pady=4)
-
-        viewer_btn = ttkb.Button(
-            actions_frame,
-            text="Open 3D Viewer",
-            bootstyle="info",
-            command=self._on_open_viewer,
-            state=tk.DISABLED,
-        )
-        viewer_btn.pack(side=LEFT, padx=(0, 8))
-        self._results_viewer_btn = viewer_btn
-
-        export_btn = ttkb.Button(
-            actions_frame,
-            text="Export HTML Viewer",
-            bootstyle="secondary",
-            command=self._on_export_html,
-            state=tk.DISABLED,
-        )
-        export_btn.pack(side=LEFT)
-        self._results_export_btn = export_btn
+        outer.addWidget(self._log_viewer, 1)
 
     # ---- Saved Results tab ----
 
     def _build_saved_results_tab(self) -> None:
         parent = self._saved_results_frame
+        outer = QVBoxLayout(parent)
+        outer.setContentsMargins(8, 8, 8, 8)
+        outer.setSpacing(4)
 
-        row = ttk.Frame(parent)
-        row.pack(fill=X, padx=8, pady=(8, 4))
+        row = QFrame(parent)
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
 
         self._results_project_dir = DirectorySelector(row, label="Project dir")
-        self._results_project_dir.pack(side=LEFT, fill=X, expand=True)
+        row_layout.addWidget(self._results_project_dir, 1)
 
-        ttkb.Button(
-            row,
-            text="Refresh",
-            bootstyle="secondary-outline",
-            command=self._refresh_saved_results,
-            width=10,
-        ).pack(side=LEFT, padx=(6, 0))
+        refresh_btn = QPushButton("Refresh")
+        refresh_btn.clicked.connect(self._refresh_saved_results)
+        row_layout.addWidget(refresh_btn)
 
-        tree_frame = ttk.Frame(parent)
-        tree_frame.pack(fill=BOTH, expand=YES, padx=8, pady=4)
+        outer.addWidget(row)
 
-        columns = ("size", "modified")
-        self._results_tree = ttk.Treeview(
-            tree_frame, columns=columns, selectmode="browse", show="tree headings", height=9
-        )
-        self._results_tree.heading("#0", text="Artifact", anchor=W)
-        self._results_tree.heading("size", text="Size", anchor=E)
-        self._results_tree.heading("modified", text="Modified", anchor=W)
-        self._results_tree.column("#0", stretch=True)
-        self._results_tree.column("size", width=90, minwidth=70, anchor=E, stretch=False)
-        self._results_tree.column("modified", width=150, minwidth=120, anchor=W, stretch=False)
+        splitter = QSplitter(Qt.Orientation.Vertical, parent)
 
-        tree_scroll = ttk.Scrollbar(tree_frame, orient="vertical", command=self._results_tree.yview)
-        self._results_tree.configure(yscrollcommand=tree_scroll.set)
-        self._results_tree.pack(side=LEFT, fill=BOTH, expand=YES)
-        tree_scroll.pack(side=LEFT, fill=Y)
-        self._results_tree.bind("<<TreeviewSelect>>", self._on_results_artifact_selected)
+        tree_widget = QWidget(splitter)
+        tree_layout = QVBoxLayout(tree_widget)
+        tree_layout.setContentsMargins(0, 0, 0, 0)
 
-        preview_frame = ttk.LabelFrame(parent, text="  Preview  ")
-        preview_frame.pack(fill=BOTH, expand=YES, padx=8, pady=(2, 4))
+        self._results_tree = QTreeWidget(tree_widget)
+        self._results_tree.setColumnCount(3)
+        self._results_tree.setHeaderLabels(["Artifact", "Size", "Modified"])
+        self._results_tree.setColumnWidth(0, 260)
+        self._results_tree.itemSelectionChanged.connect(self._on_results_artifact_selected)
+        tree_layout.addWidget(self._results_tree)
 
-        self._results_preview = scrolledtext.ScrolledText(
-            preview_frame, height=10, state=tk.DISABLED, wrap=tk.WORD, font=("TkDefaultFont", 9)
-        )
-        self._results_preview.pack(fill=BOTH, expand=True, padx=6, pady=6)
+        preview_box = QGroupBox("Preview", splitter)
+        preview_layout = QVBoxLayout(preview_box)
+        self._results_preview = QPlainTextEdit(preview_box)
+        self._results_preview.setReadOnly(True)
+        preview_layout.addWidget(self._results_preview)
 
-        actions = ttk.Frame(parent)
-        actions.pack(fill=X, padx=8, pady=(0, 8))
+        splitter.addWidget(tree_widget)
+        splitter.addWidget(preview_box)
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 2)
+        outer.addWidget(splitter, 1)
 
-        ttkb.Button(
-            actions,
-            text="Open 3D Viewer",
-            bootstyle="info",
-            command=self._on_open_viewer_from_results,
-        ).pack(side=LEFT, padx=(0, 8))
+        actions = QFrame(parent)
+        actions_layout = QHBoxLayout(actions)
+        actions_layout.setContentsMargins(0, 4, 0, 0)
 
-        ttkb.Button(
-            actions,
-            text="Export HTML Viewer",
-            bootstyle="secondary",
-            command=self._on_export_html_from_results,
-        ).pack(side=LEFT, padx=(0, 8))
+        viewer_btn = QPushButton("Open 3D Viewer")
+        viewer_btn.clicked.connect(self._on_open_viewer_from_results)
+        actions_layout.addWidget(viewer_btn)
+        actions_layout.addSpacing(8)
 
-        self._reveal_btn = ttkb.Button(
-            actions,
-            text="Show in Explorer",
-            bootstyle="secondary-outline",
-            command=self._on_show_in_explorer,
-        )
-        self._reveal_btn.pack(side=LEFT)
-        if not self._file_manager_opener():
-            # No known way to reveal a folder on this platform: hide the button.
-            self._reveal_btn.pack_forget()
-        self._results_summary_label = ttk.Label(actions, text="")
-        self._results_summary_label.pack(side=RIGHT)
+        export_btn = QPushButton("Export HTML Viewer")
+        export_btn.clicked.connect(self._on_export_html_from_results)
+        actions_layout.addWidget(export_btn)
+        actions_layout.addSpacing(8)
+
+        self._reveal_btn = QPushButton("Show in Explorer")
+        self._reveal_btn.clicked.connect(self._on_show_in_explorer)
+        actions_layout.addWidget(self._reveal_btn)
+        if self._file_manager_opener() is None:
+            self._reveal_btn.hide()
+
+        actions_layout.addStretch(1)
+
+        self._results_summary_label = QLabel("")
+        actions_layout.addWidget(self._results_summary_label)
+
+        outer.addWidget(actions)
+
+    # ---- 3D Viewer tab ----
+
+    def _build_viewer_tab(self) -> None:
+        parent = self._viewer_frame
+        outer = QVBoxLayout(parent)
+        outer.setContentsMargins(0, 0, 0, 0)
+
+        self._viewer_widget = ViewerWidget(parent, log=self._log_queue.put)
+        self._viewer_widget.sceneLoaded.connect(self._on_viewer_scene_loaded)
+        self._viewer_widget.sceneFailed.connect(self._on_viewer_scene_failed)
+        outer.addWidget(self._viewer_widget)
 
     # ------------------------------------------------------------------
     # Config file handling
     # ------------------------------------------------------------------
 
-    def _on_config_file_changed(self, *_args: Any) -> None:
+    def _on_config_file_changed(self, _text: str) -> None:
         self._coordsystem = None
         path = self._config_file.get()
         if not path:
@@ -580,9 +559,7 @@ class VirdaApp:
         try:
             data = load_config_file(path)
         except Exception as exc:
-            Messagebox.show_error(
-                f"Invalid config file:\n{exc}", title="Config error", parent=self._root
-            )
+            QMessageBox.critical(self._root, "Config error", f"Invalid config file:\n{exc}")
             self._config_file.set("")
             return
         self._populate_from_config(data)
@@ -613,18 +590,14 @@ class VirdaApp:
                 )
             self._coordsystem = None
 
-    def _on_fiducials_path_changed(self, *_args: Any) -> None:
+    def _on_fiducials_path_changed(self, _text: str) -> None:
         path = self._fiducials.get()
         if not path:
             return
         try:
             load_fiducials(Path(path))
         except Exception as exc:
-            Messagebox.show_error(
-                f"Invalid fiducials file:\n{exc}",
-                title="Fiducials error",
-                parent=self._root,
-            )
+            QMessageBox.critical(self._root, "Fiducials error", f"Invalid fiducials file:\n{exc}")
             self._fiducials.set("")
 
     # ------------------------------------------------------------------
@@ -633,8 +606,7 @@ class VirdaApp:
 
     def _on_show_advanced(self) -> None:
         dialog = AdvancedSettingsDialog(self._root, self._advanced_values)
-        self._root.wait_window(dialog)
-        if dialog.confirmed:
+        if dialog.exec():
             self._advanced_values = dialog.result_values
 
     # ------------------------------------------------------------------
@@ -647,19 +619,19 @@ class VirdaApp:
             self._palette_index += 1
 
         row = ElectrodeGroupRow(
-            self._groups_inner,
             on_remove=lambda: self._on_remove_electrode_group(row),
             color=color,
         )
         if path:
             row.set(path)
-        row.pack(fill=X, pady=2)
+        self._groups_layout.addWidget(row)
         self._electrode_rows.append(row)
 
     def _on_remove_electrode_group(self, row: ElectrodeGroupRow) -> None:
         if row in self._electrode_rows:
             self._electrode_rows.remove(row)
-        row.destroy()
+            self._groups_layout.removeWidget(row)
+        row.deleteLater()
 
     def _collect_electrode_specs(self) -> list[tuple[str, str]]:
         """Return (path, color) pairs of all non-empty electrode group rows."""
@@ -767,14 +739,12 @@ class VirdaApp:
         try:
             config = self._collect_config()
         except Exception as exc:  # noqa: BLE001 - surfaced to the user as a dialog
-            Messagebox.show_error(str(exc), title="Validation error", parent=self._root)
+            QMessageBox.critical(self._root, "Validation error", str(exc))
             return
 
-        self._run_btn.configure(state=tk.DISABLED)
-        self._viewer_btn.configure(state=tk.DISABLED)
-        self._export_btn.configure(state=tk.DISABLED)
-        self._results_viewer_btn.configure(state=tk.DISABLED)
-        self._results_export_btn.configure(state=tk.DISABLED)
+        self._run_btn.setEnabled(False)
+        self._viewer_btn.setEnabled(False)
+        self._export_btn.setEnabled(False)
         self._log_viewer.clear()
         self._log_queue.put("Starting pipeline...")
         self._last_project_dir = config.project_dir
@@ -782,10 +752,10 @@ class VirdaApp:
 
         measurements_path = self._measurements.get().strip() or None
         if measurements_path and not Path(measurements_path).is_file():
-            Messagebox.show_error(
+            QMessageBox.critical(
+                self._root,
+                "Measurements error",
                 f"Measurements file not found:\n{measurements_path}",
-                title="Measurements error",
-                parent=self._root,
             )
             self._on_pipeline_error()
             return
@@ -838,9 +808,6 @@ class VirdaApp:
     # ------------------------------------------------------------------
 
     def _poll_log_queue(self) -> None:
-        # Schedule the next tick first so a handler exception below can never
-        # silently kill the polling loop.
-        self._root.after(100, self._poll_log_queue)
         try:
             while True:
                 msg = self._log_queue.get_nowait()
@@ -856,11 +823,6 @@ class VirdaApp:
                 if msg == _EXPORT_ERROR_SENTINEL:
                     self._log_viewer.append("HTML export failed — see log above.")
                     break
-                if msg == _VIEWER_DONE_SENTINEL:
-                    self._log_viewer.append("3D viewer closed.")
-                    self._viewer_btn.configure(state=tk.NORMAL)
-                    self._results_viewer_btn.configure(state=tk.NORMAL)
-                    break
                 self._log_viewer.append(msg)
         except queue.Empty:
             pass
@@ -869,41 +831,36 @@ class VirdaApp:
         added = self._ensure_stage3_electrodes_group()
         if added:
             self._log_viewer.append(f"Electrode group added: {added}")
-        self._run_btn.configure(state=tk.NORMAL)
-        self._viewer_btn.configure(state=tk.NORMAL)
-        self._export_btn.configure(state=tk.NORMAL)
-        self._results_viewer_btn.configure(state=tk.NORMAL)
-        self._results_export_btn.configure(state=tk.NORMAL)
+        self._run_btn.setEnabled(True)
+        self._viewer_btn.setEnabled(True)
+        self._export_btn.setEnabled(True)
         if self._last_project_dir:
             self._results_project_dir.set(self._last_project_dir)
             self._refresh_saved_results()
         self._update_results_info(success=True)
 
     def _on_pipeline_error(self) -> None:
-        self._run_btn.configure(state=tk.NORMAL)
+        self._run_btn.setEnabled(True)
         self._update_results_info(success=False)
 
     def _update_results_info(self, *, success: bool) -> None:
+        project = self._last_project_dir
         if success:
-            self._notebook.select(1)  # switch to Results tab
-            project = self._last_project_dir or "—"
-            text = f"Pipeline completed.\nProject directory: {project}"
+            if project:
+                self._open_viewer(Path(project))
             summary = self._stage3_summary
             if summary:
                 shift = summary["offset_shift_mm"]
                 shift_text = f", offset shift {shift:.2f} mm" if shift is not None else ""
-                text += (
-                    f"\nStage 3: {summary['localized']}/{summary['total']} electrodes "
-                    f"localized ({summary['flagged']} flagged{shift_text})"
+                self._log_viewer.append(
+                    "Pipeline completed. "
+                    f"Stage 3: {summary['localized']}/{summary['total']} electrodes "
+                    f"localized ({summary['flagged']} flagged{shift_text})."
                 )
-            else:
-                text += "\nStage 3: not run (no measurements provided)."
-            self._result_label.configure(text=text, foreground="green")
+            elif project:
+                self._log_viewer.append(f"Pipeline completed. Project directory: {project}")
         else:
-            self._result_label.configure(
-                text="Pipeline failed. Check the log for details.",
-                foreground="red",
-            )
+            self._log_viewer.append("Pipeline failed. Check the log for details.")
 
     # ------------------------------------------------------------------
     # Actions
@@ -912,9 +869,10 @@ class VirdaApp:
     def _on_open_viewer(self) -> None:
         resolved = self._last_project_dir or self._project_dir.get().strip()
         if not resolved:
-            Messagebox.show_warning(
+            QMessageBox.warning(
+                self._root,
+                "No project directory",
                 "No project directory selected. Run the pipeline or pick a Project dir.",
-                parent=self._root,
             )
             return
         self._open_viewer(Path(resolved))
@@ -922,16 +880,17 @@ class VirdaApp:
     def _on_open_viewer_from_results(self) -> None:
         project = self._selected_results_project()
         if project is None:
-            Messagebox.show_warning(
+            QMessageBox.warning(
+                self._root,
+                "No project directory",
                 "Select a valid project directory on the Saved Results tab first.",
-                parent=self._root,
             )
             return
         self._open_viewer(project)
 
     def _open_viewer(self, project: Path) -> None:
         mesh_path = project / "mesh" / "final_mesh.ply"
-        fiducials_path = project / "input" / "fiducials.json"
+        fiducials_path = project / "fiducials" / "fiducials.json"
         normals_path = project / "ese" / "normals.npy"
 
         nifti = self._nifti.get()
@@ -957,48 +916,52 @@ class VirdaApp:
         electrode_specs = self._collect_electrode_specs()
         if electrode_specs:
             kwargs["electrode_specs"] = electrode_specs
-            kwargs["electrodes_cras"] = self._electrodes_cras_var.get() == "true"
+            kwargs["electrodes_cras"] = self._electrodes_cras_check.isChecked()
 
         if not kwargs:
-            Messagebox.show_warning(
-                "No mesh or NIfTI file found in the project.", parent=self._root
+            QMessageBox.warning(
+                self._root, "Nothing to view", "No mesh or NIfTI file found in the project."
             )
             return
 
-        if self._viewer_thread is not None and self._viewer_thread.is_alive():
-            Messagebox.show_warning(
-                "The 3D viewer is already open. Close it before opening another one.",
-                parent=self._root,
+        if self._viewer_loading:
+            QMessageBox.warning(
+                self._root,
+                "Viewer still loading",
+                "The 3D viewer is still loading a scene. Wait for it to finish.",
             )
             return
 
         self._log_viewer.append("Opening 3D viewer...")
-        self._viewer_btn.configure(state=tk.DISABLED)
-        self._results_viewer_btn.configure(state=tk.DISABLED)
-        self._viewer_thread = threading.Thread(
-            target=self._run_viewer_thread, kwargs=kwargs, daemon=True
-        )
-        self._viewer_thread.start()
+        self._set_viewer_buttons_enabled(False)
+        self._viewer_loading = True
+        self._notebook.setTabEnabled(self._viewer_tab_index, False)
+        self._notebook.setCurrentIndex(self._viewer_tab_index)
+        self._viewer_widget.load(**kwargs)
 
-    def _run_viewer_thread(self, **kwargs: Any) -> None:
-        """Background thread body: run show_viewer, route failures to the log.
+    # ---- 3D viewer callbacks ----
 
-        The VTK window is created off the main thread, which some platforms
-        tolerate only partially; any failure must reach the log pane instead
-        of silently killing this daemon thread.
-        """
-        try:
-            show_viewer(log=self._log_queue.put, **kwargs)
-        except Exception as exc:
-            self._log_queue.put(f"ERROR: 3D viewer failed: {exc}")
-        self._log_queue.put(_VIEWER_DONE_SENTINEL)
+    def _set_viewer_buttons_enabled(self, enabled: bool) -> None:
+        self._viewer_btn.setEnabled(enabled)
+
+    def _on_viewer_scene_loaded(self, _scene: Any) -> None:
+        self._viewer_loading = False
+        self._log_viewer.append("3D viewer scene loaded.")
+        self._set_viewer_buttons_enabled(True)
+        self._notebook.setTabEnabled(self._viewer_tab_index, True)
+        self._notebook.setCurrentIndex(self._viewer_tab_index)  # switch to 3D Viewer tab
+
+    def _on_viewer_scene_failed(self, _message: str) -> None:
+        self._viewer_loading = False
+        self._set_viewer_buttons_enabled(True)
 
     def _on_export_html(self) -> None:
         resolved = self._last_project_dir or self._project_dir.get().strip()
         if not resolved:
-            Messagebox.show_warning(
+            QMessageBox.warning(
+                self._root,
+                "No project directory",
                 "No project directory selected. Run the pipeline or pick a Project dir.",
-                parent=self._root,
             )
             return
         self._export_html(Path(resolved))
@@ -1006,9 +969,10 @@ class VirdaApp:
     def _on_export_html_from_results(self) -> None:
         project = self._selected_results_project()
         if project is None:
-            Messagebox.show_warning(
+            QMessageBox.warning(
+                self._root,
+                "No project directory",
                 "Select a valid project directory on the Saved Results tab first.",
-                parent=self._root,
             )
             return
         self._export_html(project)
@@ -1044,18 +1008,18 @@ class VirdaApp:
 
     def _refresh_saved_results(self) -> None:
         tree = self._results_tree
-        for iid in tree.get_children():
-            tree.delete(iid)
-        self._results_tree_paths.clear()
+        tree.clear()
         self._set_results_preview("")
 
         project = self._selected_results_project()
         if project is None:
-            self._results_summary_label.configure(text="Select a valid project directory.")
+            self._results_summary_label.setText("Select a valid project directory.")
             return
 
-        root_iid = tree.insert("", "end", text=project.name, open=True, values=("<dir>", ""))
-        self._results_tree_paths[root_iid] = project
+        root_item = QTreeWidgetItem([project.name, "<dir>", ""])
+        root_item.setExpanded(True)
+        root_item.setData(0, Qt.ItemDataRole.UserRole, project)
+        tree.addTopLevelItem(root_item)
 
         known = [name for name in _PROJECT_ARTIFACT_DIRS if (project / name).is_dir()]
         extra_dirs = sorted(
@@ -1068,40 +1032,38 @@ class VirdaApp:
         n_files = 0
         for subdir in known + extra_dirs:
             node = project / subdir
-            group_iid = tree.insert(root_iid, "end", text=subdir, open=False, values=("<dir>", ""))
-            self._results_tree_paths[group_iid] = node
+            group_item = QTreeWidgetItem([subdir, "<dir>", ""])
+            group_item.setData(0, Qt.ItemDataRole.UserRole, node)
+            root_item.addChild(group_item)
             for file_path in sorted(node.rglob("*")):
                 if not file_path.is_file():
                     continue
                 rel = file_path.relative_to(node).as_posix()
-                child = tree.insert(
-                    group_iid,
-                    "end",
-                    text=rel,
-                    values=(self._format_file_size(file_path), self._format_mtime(file_path)),
+                child = QTreeWidgetItem(
+                    [rel, self._format_file_size(file_path), self._format_mtime(file_path)]
                 )
-                self._results_tree_paths[child] = file_path
+                child.setData(0, Qt.ItemDataRole.UserRole, file_path)
+                group_item.addChild(child)
                 n_files += 1
 
         for file_path in loose_files:
-            child = tree.insert(
-                root_iid,
-                "end",
-                text=file_path.name,
-                values=(self._format_file_size(file_path), self._format_mtime(file_path)),
+            child = QTreeWidgetItem(
+                [file_path.name, self._format_file_size(file_path), self._format_mtime(file_path)]
             )
-            self._results_tree_paths[child] = file_path
+            child.setData(0, Qt.ItemDataRole.UserRole, file_path)
+            root_item.addChild(child)
             n_files += 1
 
-        self._results_summary_label.configure(
-            text=f"{n_files} file(s)" if n_files else "No saved artifacts found yet."
+        self._results_summary_label.setText(
+            f"{n_files} file(s)" if n_files else "No saved artifacts found yet."
         )
 
-    def _on_results_artifact_selected(self, *_args: Any) -> None:
-        selection = self._results_tree.selection()
-        if not selection:
+    def _on_results_artifact_selected(self) -> None:
+        items = self._results_tree.selectedItems()
+        if not items:
             return
-        path = self._results_tree_paths.get(selection[0])
+        item = items[0]
+        path = item.data(0, Qt.ItemDataRole.UserRole)
         if path is None:
             return
         try:
@@ -1115,10 +1077,7 @@ class VirdaApp:
         self._set_results_preview(preview)
 
     def _set_results_preview(self, text: str) -> None:
-        self._results_preview.configure(state=tk.NORMAL)
-        self._results_preview.delete("1.0", tk.END)
-        self._results_preview.insert(tk.END, text)
-        self._results_preview.configure(state=tk.DISABLED)
+        self._results_preview.setPlainText(text)
 
     @staticmethod
     def _format_file_size(path: Path) -> str:
@@ -1187,9 +1146,10 @@ class VirdaApp:
     def _on_show_in_explorer(self) -> None:
         project = self._selected_results_project()
         if project is None:
-            Messagebox.show_warning(
+            QMessageBox.warning(
+                self._root,
+                "No project directory",
                 "Select a valid project directory on the Saved Results tab first.",
-                parent=self._root,
             )
             return
         opener = self._file_manager_opener()
@@ -1198,10 +1158,8 @@ class VirdaApp:
         try:
             opener(project)
         except (OSError, subprocess.SubprocessError) as exc:
-            Messagebox.show_error(
-                f"Could not open the folder:\n{exc}",
-                title="File manager error",
-                parent=self._root,
+            QMessageBox.critical(
+                self._root, "File manager error", f"Could not open the folder:\n{exc}"
             )
 
     @staticmethod
@@ -1225,16 +1183,18 @@ class VirdaApp:
     # ------------------------------------------------------------------
 
     def run(self) -> None:
-        """Start the tkinter main loop."""
-        self._root.protocol("WM_DELETE_WINDOW", self._on_close)
-        self._root.mainloop()
+        """Start the Qt event loop."""
+        app = QApplication.instance()
+        self._root.show()
+        app.exec()
 
     def _on_close(self) -> None:
         remove_log_handler(self._log_handler)
-        self._root.destroy()
 
 
 def main() -> None:
     """Entry point for ``virda-gui``."""
-    app = VirdaApp()
-    app.run()
+    app = QApplication.instance() or QApplication([])
+    window = VirdaApp()
+    window.run()
+    del app
