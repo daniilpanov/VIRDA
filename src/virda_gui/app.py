@@ -638,6 +638,7 @@ class VirdaApp(QObject):
         self._results_tree.setHeaderLabels(["Artifact", "Size", "Modified"])
         self._results_tree.setColumnWidth(0, 260)
         self._results_tree.itemSelectionChanged.connect(self._on_results_artifact_selected)
+        self._results_tree.itemDoubleClicked.connect(self._on_results_artifact_double_clicked)
         tree_layout.addWidget(self._results_tree)
 
         preview_box = QGroupBox("Preview", splitter)
@@ -653,6 +654,8 @@ class VirdaApp(QObject):
         self._results_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._results_table.setAlternatingRowColors(True)
         self._preview_stack.addWidget(self._results_table)
+
+        self._results_viewer_widget: ViewerWidget | None = None
 
         self._preview_stack.setCurrentWidget(self._results_preview)
 
@@ -1222,6 +1225,33 @@ class VirdaApp(QObject):
             return
         self._start_preview_load(path)
 
+    def _on_results_artifact_double_clicked(self, item: QTreeWidgetItem, _column: int) -> None:
+        path = item.data(0, Qt.ItemDataRole.UserRole)
+        if path is None or path.is_dir():
+            return
+        name = path.name.lower()
+        if not (name.endswith(".ply") or name.endswith((".nii.gz", ".nii"))):
+            return
+        viewer = self._ensure_results_viewer()
+        if name.endswith(".ply"):
+            viewer.load(mesh_path=str(path))
+        else:
+            viewer.load(nifti_path=str(path))
+        self._preview_stack.setCurrentWidget(viewer)
+        self._preview_load_seq += 1
+        if self._preview_worker is not None:
+            self._preview_worker.schedule(self._preview_load_seq, None)
+
+    def _ensure_results_viewer(self) -> ViewerWidget:
+        if self._results_viewer_widget is None:
+            self._results_viewer_widget = ViewerWidget(self._preview_stack, log=self._log_queue.put)
+            self._results_viewer_widget.sceneFailed.connect(self._on_results_viewer_failed)
+            self._preview_stack.addWidget(self._results_viewer_widget)
+        return self._results_viewer_widget
+
+    def _on_results_viewer_failed(self, message: str) -> None:
+        self._set_results_text(f"3D preview failed: {message}")
+
     def _start_preview_load(self, path: Path) -> None:
         self._preview_load_seq += 1
         seq = self._preview_load_seq
@@ -1345,6 +1375,8 @@ class VirdaApp(QObject):
             self._preview_worker.stop()
         if self._preview_thread is not None:
             self._preview_thread.quit()
+        if self._results_viewer_widget is not None:
+            self._results_viewer_widget.shutdown()
         remove_log_handler(self._log_handler)
 
 

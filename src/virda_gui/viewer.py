@@ -1001,11 +1001,19 @@ class ViewerWidget(QWidget):
         self._plotter.render()
 
     def closeEvent(self, event: Any) -> None:  # noqa: N802 - Qt naming
+        self.shutdown()
+        super().closeEvent(event)
+
+    def shutdown(self) -> None:
+        """Stop the scene-loading thread, if any.
+
+        Safe to call at application teardown for embedded widgets whose
+        :meth:`closeEvent` is never delivered (children of a main window).
+        """
         if self._thread is not None and self._thread.isRunning():
             self._thread.quit()
             self._thread.wait(3000)
             self._thread = None
-        super().closeEvent(event)
 
 
 def show_viewer(

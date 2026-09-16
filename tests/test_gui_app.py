@@ -8,6 +8,8 @@ created (CI runners have no display).
 from types import SimpleNamespace
 from typing import cast
 
+from PySide6.QtWidgets import QTreeWidgetItem
+
 from virda_gui.app import (
     _ADVANCED_FIELD_DEFAULTS,
     _CONFIG_KEY_TO_ADVANCED,
@@ -81,3 +83,99 @@ def test_viewer_widget_importable_from_app() -> None:
     from virda_gui.viewer import ViewerWidget
 
     assert vars(app_module)["ViewerWidget"] is ViewerWidget
+
+
+class _FakeViewer:
+    def __init__(self) -> None:
+        self.load_calls: list[dict[str, str]] = []
+
+    def load(self, **kwargs: str) -> None:
+        self.load_calls.append(dict(kwargs))
+
+
+class _FakeStack:
+    def setCurrentWidget(self, widget: object) -> None:  # noqa: N802 - Qt naming
+        self.current = widget
+
+
+class _FakeItem:
+    def __init__(self, path: object) -> None:
+        self._path = path
+
+    def data(self, _role: object, _value: object) -> object:
+        return self._path
+
+
+def _double_click_stub(viewer: _FakeViewer) -> SimpleNamespace:
+    return SimpleNamespace(
+        _results_viewer_widget=viewer,
+        _preview_stack=_FakeStack(),
+        _preview_load_seq=0,
+        _preview_worker=None,
+        _ensure_results_viewer=lambda: viewer,
+    )
+
+
+def test_double_click_mesh_loads_interactive_preview(tmp_path) -> None:
+    mesh = tmp_path / "final_mesh.ply"
+    mesh.write_bytes(b"ply\n")
+    viewer = _FakeViewer()
+    stub = _double_click_stub(viewer)
+    item = _FakeItem(mesh)
+
+    VirdaApp._on_results_artifact_double_clicked(
+        cast("VirdaApp", stub),
+        cast("QTreeWidgetItem", item),
+        0,
+    )
+
+    assert viewer.load_calls == [{"mesh_path": str(mesh)}]
+    assert stub._preview_stack.current is viewer
+
+
+def test_double_click_nifti_loads_interactive_preview(tmp_path) -> None:
+    nifti = tmp_path / "head.nii.gz"
+    nifti.write_bytes(b"\x00")
+    viewer = _FakeViewer()
+    stub = _double_click_stub(viewer)
+    item = _FakeItem(nifti)
+
+    VirdaApp._on_results_artifact_double_clicked(
+        cast("VirdaApp", stub),
+        cast("QTreeWidgetItem", item),
+        0,
+    )
+
+    assert viewer.load_calls == [{"nifti_path": str(nifti)}]
+
+
+def test_double_click_non_visual_file_does_not_load(tmp_path) -> None:
+    csv_file = tmp_path / "electrode_coords.csv"
+    csv_file.write_text("id\n1\n", encoding="utf-8")
+    viewer = _FakeViewer()
+    stub = _double_click_stub(viewer)
+    item = _FakeItem(csv_file)
+
+    VirdaApp._on_results_artifact_double_clicked(
+        cast("VirdaApp", stub),
+        cast("QTreeWidgetItem", item),
+        0,
+    )
+
+    assert viewer.load_calls == []
+
+
+def test_double_click_directory_does_not_load(tmp_path) -> None:
+    directory = tmp_path / "mesh"
+    directory.mkdir()
+    viewer = _FakeViewer()
+    stub = _double_click_stub(viewer)
+    item = _FakeItem(directory)
+
+    VirdaApp._on_results_artifact_double_clicked(
+        cast("VirdaApp", stub),
+        cast("QTreeWidgetItem", item),
+        0,
+    )
+
+    assert viewer.load_calls == []
