@@ -350,6 +350,7 @@ class VirdaApp:
 
         self._viewer_frame = QWidget()
         self._viewer_tab_index = self._notebook.addTab(self._viewer_frame, "  3D Viewer  ")
+        self._notebook.setTabEnabled(self._viewer_tab_index, False)
         self._build_viewer_tab()
 
     # ---- Configuration tab ----
@@ -934,6 +935,7 @@ class VirdaApp:
         self._log_viewer.append("Opening 3D viewer...")
         self._set_viewer_buttons_enabled(False)
         self._viewer_loading = True
+        self._notebook.setTabEnabled(self._viewer_tab_index, False)
         self._notebook.setCurrentIndex(self._viewer_tab_index)
         self._viewer_widget.load(**kwargs)
 
@@ -946,6 +948,7 @@ class VirdaApp:
         self._viewer_loading = False
         self._log_viewer.append("3D viewer scene loaded.")
         self._set_viewer_buttons_enabled(True)
+        self._notebook.setTabEnabled(self._viewer_tab_index, True)
         self._notebook.setCurrentIndex(self._viewer_tab_index)  # switch to 3D Viewer tab
 
     def _on_viewer_scene_failed(self, _message: str) -> None:
