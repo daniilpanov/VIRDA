@@ -2,9 +2,8 @@
 
 Launches a Qt GUI for configuring and running the VIRDA electrode
 localisation pipeline (Stage 1 segmentation/mesh, Stage 2 ESE and Stage 3
-localization).  After a successful run the *Results* tab shows a summary and
-the user can open the interactive 3D viewer (with electrode overlays) or
-export an HTML viewer.
+localization).  After a successful run the 3D viewer opens automatically
+(with electrode overlays) and an HTML viewer can be exported.
 
 The *Saved Results* tab browses the artifacts of any project directory:
 it lists everything saved by previous pipeline runs (mesh, fiducials, ESE,
@@ -343,14 +342,10 @@ class VirdaApp:
         self._config_frame = QWidget()
         self._notebook.addTab(self._config_frame, "  Configuration  ")
 
-        self._results_frame = QWidget()
-        self._notebook.addTab(self._results_frame, "  Results  ")
-
         self._saved_results_frame = QWidget()
         self._notebook.addTab(self._saved_results_frame, "  Saved Results  ")
 
         self._build_config_tab()
-        self._build_results_tab()
         self._build_saved_results_tab()
 
         self._viewer_frame = QWidget()
@@ -465,44 +460,6 @@ class VirdaApp:
 
         self._log_viewer = LogViewer(parent)
         outer.addWidget(self._log_viewer, 1)
-
-    # ---- Results tab ----
-
-    def _build_results_tab(self) -> None:
-        parent = self._results_frame
-        outer = QVBoxLayout(parent)
-        outer.setContentsMargins(8, 8, 8, 8)
-        outer.setSpacing(4)
-
-        info_box = QGroupBox("Pipeline Results", parent)
-        info_layout = QVBoxLayout(info_box)
-
-        self._result_label = QLabel("No results yet. Run the pipeline first.")
-        self._result_label.setWordWrap(True)
-        info_layout.addWidget(self._result_label)
-
-        outer.addWidget(info_box)
-
-        actions = QFrame(parent)
-        actions_layout = QHBoxLayout(actions)
-        actions_layout.setContentsMargins(0, 4, 0, 0)
-
-        viewer_btn = QPushButton("Open 3D Viewer")
-        viewer_btn.clicked.connect(self._on_open_viewer)
-        viewer_btn.setEnabled(False)
-        actions_layout.addWidget(viewer_btn)
-        self._results_viewer_btn = viewer_btn
-        actions_layout.addSpacing(8)
-
-        export_btn = QPushButton("Export HTML Viewer")
-        export_btn.clicked.connect(self._on_export_html)
-        export_btn.setEnabled(False)
-        actions_layout.addWidget(export_btn)
-        self._results_export_btn = export_btn
-
-        actions_layout.addStretch(1)
-        outer.addWidget(actions)
-        outer.addStretch(1)
 
     # ---- Saved Results tab ----
 
@@ -787,8 +744,6 @@ class VirdaApp:
         self._run_btn.setEnabled(False)
         self._viewer_btn.setEnabled(False)
         self._export_btn.setEnabled(False)
-        self._results_viewer_btn.setEnabled(False)
-        self._results_export_btn.setEnabled(False)
         self._log_viewer.clear()
         self._log_queue.put("Starting pipeline...")
         self._last_project_dir = config.project_dir
@@ -878,8 +833,6 @@ class VirdaApp:
         self._run_btn.setEnabled(True)
         self._viewer_btn.setEnabled(True)
         self._export_btn.setEnabled(True)
-        self._results_viewer_btn.setEnabled(True)
-        self._results_export_btn.setEnabled(True)
         if self._last_project_dir:
             self._results_project_dir.set(self._last_project_dir)
             self._refresh_saved_results()
@@ -890,25 +843,23 @@ class VirdaApp:
         self._update_results_info(success=False)
 
     def _update_results_info(self, *, success: bool) -> None:
+        project = self._last_project_dir
         if success:
-            self._notebook.setCurrentIndex(1)  # switch to Results tab
-            project = self._last_project_dir or "—"
-            text = f"Pipeline completed.\nProject directory: {project}"
+            if project:
+                self._open_viewer(Path(project))
             summary = self._stage3_summary
             if summary:
                 shift = summary["offset_shift_mm"]
                 shift_text = f", offset shift {shift:.2f} mm" if shift is not None else ""
-                text += (
-                    f"\nStage 3: {summary['localized']}/{summary['total']} electrodes "
-                    f"localized ({summary['flagged']} flagged{shift_text})"
+                self._log_viewer.append(
+                    "Pipeline completed. "
+                    f"Stage 3: {summary['localized']}/{summary['total']} electrodes "
+                    f"localized ({summary['flagged']} flagged{shift_text})."
                 )
-            else:
-                text += "\nStage 3: not run (no measurements provided)."
-            self._result_label.setText(text)
-            self._result_label.setStyleSheet("color: green;")
+            elif project:
+                self._log_viewer.append(f"Pipeline completed. Project directory: {project}")
         else:
-            self._result_label.setText("Pipeline failed. Check the log for details.")
-            self._result_label.setStyleSheet("color: red;")
+            self._log_viewer.append("Pipeline failed. Check the log for details.")
 
     # ------------------------------------------------------------------
     # Actions
@@ -990,7 +941,6 @@ class VirdaApp:
 
     def _set_viewer_buttons_enabled(self, enabled: bool) -> None:
         self._viewer_btn.setEnabled(enabled)
-        self._results_viewer_btn.setEnabled(enabled)
 
     def _on_viewer_scene_loaded(self, _scene: Any) -> None:
         self._viewer_loading = False
