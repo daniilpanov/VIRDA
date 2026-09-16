@@ -24,11 +24,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
+      - name: Install uv and Python
+        uses: ./.github/actions/setup-python-uv
         with:
-          enable-cache: true
-          version: "latest"
+          uv-version: latest
 
       - name: Cache pre-commit
         uses: actions/cache@v6
@@ -44,9 +43,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-mypy-${{ hashFiles('pyproject.toml') }}-
             ${{ runner.os }}-mypy-
-
-      - name: Set up Python
-        run: uv python install 3.14
 
       - name: Install dependencies
         run: uv sync --all-extras --all-packages --frozen
@@ -125,18 +121,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
+      - name: Install uv and Python
+        uses: ./.github/actions/setup-python-uv
         with:
-          version: "latest"
-
-      - name: Set up Python
-        run: uv python install 3.14
+          uv-version: latest
 
       - name: Install Qt system libraries
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libegl1 libgl1 libxkbcommon0
+        uses: ./.github/actions/install-qt-libs
 
       - name: Install dependencies
         run: uv sync --all-extras --all-packages --frozen

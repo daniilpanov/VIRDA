@@ -1,0 +1,11 @@
+name: Install Qt system libraries
+description: Install the system libraries PySide6 (only for Linux).
+
+runs:
+  using: composite
+  steps:
+    - name: Install Qt system libraries
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libegl1 libgl1 libxkbcommon0
