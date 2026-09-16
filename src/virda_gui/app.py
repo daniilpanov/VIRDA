@@ -28,6 +28,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QApplication,
@@ -61,9 +62,12 @@ from virda.models.config import Config
 from virda.models.coordsystem import Coordsystem
 
 from .preview import (
+    npy_table_rows_chunked,
+    open_npy_memmap,
     parse_csv_tsv_chunked,
     preview_artifact_text,
     preview_json_text_chunked,
+    table_from_npy,
 )
 from .viewer import ViewerWidget
 from .widgets import (
@@ -201,6 +205,23 @@ class _PreviewWorker(QObject):
             if text is None:
                 return None
             return _PreviewBundle("text", text=text)
+
+        if suffix == ".npy":
+            array = open_npy_memmap(path)
+            try:
+                try:
+                    headers, tabular = table_from_npy(array, path.name)
+                except ValueError:
+                    return _PreviewBundle("text", text=preview_artifact_text(path, array=array))
+                rows = npy_table_rows_chunked(tabular, is_current)
+                if rows is None:
+                    return None
+                return _PreviewBundle("table", headers=headers, rows=rows)
+            finally:
+                if isinstance(array, np.memmap):
+                    array.flush()
+                    array._mmap.close()
+                    del array
 
         if not is_current():
             return None
