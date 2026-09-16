@@ -1,0 +1,63 @@
+name: Run Python tests
+description: Install the toolchain, run pytest, and optionally upload coverage and junit artifacts.
+
+inputs:
+  python-version:
+    description: Python version to install and test against. Required because tests must run on a known interpreter.
+    required: true
+  uv-version:
+    description: uv version to install.
+    required: false
+    default: latest
+  test-command:
+    description: Command that runs the test suite in the workspace environment.
+    required: false
+    default: "uv run pytest -q"
+  coverage:
+    description: Upload coverage.xml and htmlcov as artifacts.
+    required: false
+    default: "false"
+  junit:
+    description: Upload junit.xml as an artifact.
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Install uv and Python
+      uses: ./.github/actions/setup-python-uv
+      with:
+        python-version: ${{ inputs.python-version }}
+        uv-version: ${{ inputs.uv-version }}
+
+    - name: Install Qt system libraries
+      uses: ./.github/actions/install-qt-libs
+
+    - name: Install dependencies
+      shell: bash
+      run: uv sync --frozen --all-packages --all-extras
+
+    - name: Run tests
+      shell: bash
+      run: ${{ inputs.test-command }}
+
+    - name: Upload coverage reports
+      if: ${{ always() && inputs.coverage == 'true' }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      with:
+        name: coverage-report
+        path: |
+          coverage.xml
+          htmlcov/
+        retention-days: 7
+        if-no-files-found: warn
+
+    - name: Upload test results
+      if: ${{ always() && inputs.junit == 'true' }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      with:
+        name: test-results
+        path: junit.xml
+        retention-days: 7
+        if-no-files-found: warn
