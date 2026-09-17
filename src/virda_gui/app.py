@@ -17,12 +17,9 @@ automatically. Fiducials from an MNE ``coordsystem.json`` loaded as the
 config file are passed to the pipeline automatically.
 """
 
-import logging
 import os
-import queue
 import shutil
 import subprocess
-import threading
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -54,7 +51,6 @@ from PySide6.QtWidgets import (
 from virda.config import load_config_file
 from virda.io.fiducial_helpers import load_fiducials
 from virda.logging_setup import add_log_handler, remove_log_handler
-from virda.main import run
 from virda.models.config import Config
 from virda.models.coordsystem import Coordsystem
 
@@ -66,6 +62,7 @@ from .constants import (
     ELECTRODE_PALETTE,
     PROJECT_ARTIFACT_DIRS,
 )
+from .pipeline_runner import PipelineRunner
 from .preview_worker import _PreviewBundle, _PreviewWorker
 from .state import AppState
 from .viewer import ViewerWidget
@@ -76,31 +73,6 @@ from .widgets import (
     LabeledField,
     LogViewer,
 )
-
-_DONE_SENTINEL = "__DONE__"
-_ERROR_SENTINEL = "__ERROR__"
-_EXPORT_DONE_SENTINEL = "__EXPORT_DONE__"
-_EXPORT_ERROR_SENTINEL = "__EXPORT_ERROR__"
-
-
-class _QueueLogHandler(logging.Handler):
-    """Forward ``virda.*`` log records into the GUI log queue.
-
-    ``emit`` runs on whatever thread logged the record (pipeline and viewer
-    run in background threads); :class:`queue.Queue` makes the hand-off to
-    the main thread safe.
-    """
-
-    def __init__(self, log_queue: queue.Queue[str | None]) -> None:
-        super().__init__()
-        self._log_queue = log_queue
-        self.setFormatter(logging.Formatter("%(levelname)s | %(name)s | %(message)s"))
-
-    def emit(self, record: logging.LogRecord) -> None:
-        try:
-            self._log_queue.put(self.format(record))
-        except Exception:  # pragma: no cover - logging must never raise
-            self.handleError(record)
 
 
 class _VirdaMainWindow(QMainWindow):
@@ -143,8 +115,16 @@ class VirdaApp(QObject):
 
         # Capture pipeline/library logs into the log pane (console handlers
         # set up by the pipeline itself keep working).
-        self._log_handler = _QueueLogHandler(self._state.log_queue)
-        add_log_handler(self._log_handler)
+        self._pipe_runner = PipelineRunner(self._state)
+        add_log_handler(self._pipe_runner.log_handler)
+        self._pipe_runner.finished.connect(self._on_pipeline_done)
+        self._pipe_runner.failed.connect(self._on_pipeline_error)
+        self._pipe_runner.exportDone.connect(
+            lambda: self._log_viewer.append("HTML export completed.")
+        )
+        self._pipe_runner.exportFailed.connect(
+            lambda: self._log_viewer.append("HTML export failed — see log above.")
+        )
 
         self._build_ui()
         self._poll_timer = QTimer()
@@ -594,74 +574,14 @@ class VirdaApp(QObject):
             self._on_pipeline_error()
             return
 
-        self._state.pipeline_thread = threading.Thread(
-            target=self._run_pipeline, args=(config, measurements_path), daemon=True
-        )
-        self._state.pipeline_thread.start()
-
-    def _run_pipeline(self, config: Config, measurements_path: str | None) -> None:
-        """Background thread: run the pipeline and post results to the queue."""
-        try:
-            self._state.log_queue.put("Building configuration...")
-            stage1_result, ese_mesh, electrodes = run(config, measurements_path)
-
-            msg = f"Stage 1: mesh with {len(stage1_result.mesh.vertices)} vertices"
-            self._state.log_queue.put(msg)
-
-            if ese_mesh is not None:
-                msg = f"Stage 2: ESE mesh with {len(ese_mesh.vertices)} vertices"
-                self._state.log_queue.put(msg)
-
-            if electrodes is not None:
-                items = electrodes.items
-                localized = sum(1 for e in items if e.is_localized)
-                flagged = sum(1 for e in items if e.flagged)
-                shift = electrodes.calibrated_offset_shift_mm
-                msg = f"Stage 3: {localized}/{len(items)} electrodes localized ({flagged} flagged)"
-                if shift is not None:
-                    msg += f", ESE offset shift {shift:.2f} mm"
-                self._state.log_queue.put(msg)
-                self._state.stage3_summary = {
-                    "total": len(items),
-                    "localized": localized,
-                    "flagged": flagged,
-                    "offset_shift_mm": shift,
-                }
-            elif measurements_path:
-                self._state.log_queue.put(
-                    "Stage 3 skipped: ESE mesh or measurements are not available."
-                )
-
-            self._state.log_queue.put("Pipeline completed successfully.")
-            self._state.log_queue.put(_DONE_SENTINEL)
-
-        except Exception as exc:
-            self._state.log_queue.put(f"ERROR: {exc}")
-            self._state.log_queue.put(_ERROR_SENTINEL)
+        self._pipe_runner.submit(config, measurements_path)
 
     # ------------------------------------------------------------------
     # Log queue polling (main thread)
     # ------------------------------------------------------------------
 
     def _poll_log_queue(self) -> None:
-        try:
-            while True:
-                msg = self._state.log_queue.get_nowait()
-                if msg == _DONE_SENTINEL:
-                    self._on_pipeline_done()
-                    break
-                if msg == _ERROR_SENTINEL:
-                    self._on_pipeline_error()
-                    break
-                if msg == _EXPORT_DONE_SENTINEL:
-                    self._log_viewer.append("HTML export completed.")
-                    break
-                if msg == _EXPORT_ERROR_SENTINEL:
-                    self._log_viewer.append("HTML export failed — see log above.")
-                    break
-                self._log_viewer.append(msg)
-        except queue.Empty:
-            pass
+        self._pipe_runner.poll(self._log_viewer.append)
 
     def _on_pipeline_done(self) -> None:
         added = self._ensure_stage3_electrodes_group()
@@ -815,21 +735,8 @@ class VirdaApp(QObject):
 
     def _export_html(self, project: Path) -> None:
         output = project / "viewer.html"
-
         self._log_viewer.append(f"Exporting HTML viewer to {output}...")
-
-        def _export() -> None:
-            try:
-                from .html_export import export_project
-
-                export_project(str(project), output)
-                self._state.log_queue.put(f"HTML exported: {output}")
-                self._state.log_queue.put(_EXPORT_DONE_SENTINEL)
-            except Exception as exc:
-                self._state.log_queue.put(f"HTML export failed: {exc}")
-                self._state.log_queue.put(_EXPORT_ERROR_SENTINEL)
-
-        threading.Thread(target=_export, daemon=True).start()
+        self._pipe_runner.start_html_export(project, output)
 
     # ------------------------------------------------------------------
     # Saved Results tab
@@ -1058,7 +965,7 @@ class VirdaApp(QObject):
             self._preview_thread.quit()
         if self._results_viewer_widget is not None:
             self._results_viewer_widget.shutdown()
-        remove_log_handler(self._log_handler)
+        remove_log_handler(self._pipe_runner.log_handler)
 
 
 def main() -> None:
