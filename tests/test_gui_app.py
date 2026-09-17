@@ -2,20 +2,21 @@
 
 These tests exercise the pure helper logic of :mod:`virda_gui.app` by calling
 the methods unbound against lightweight stubs, so no ``QApplication`` is
-created (CI runners have no display).
+created (CI runners have no display).  The one exception is the offscreen
+smoke test below, which constructs the real :class:`VirdaApp` to catch signal
+wiring regressions that the stubs cannot.
 """
 
+import os
 from types import SimpleNamespace
 from typing import cast
 
+import pytest
 from PySide6.QtWidgets import QTreeWidgetItem
 
-from virda_gui.app import VirdaApp
 from virda_gui.config_tab import ConfigTab
-from virda_gui.constants import (
-    ADVANCED_FIELD_DEFAULTS,
-    CONFIG_KEY_TO_ADVANCED,
-)
+from virda_gui.constants import ADVANCED_FIELD_DEFAULTS, CONFIG_KEY_TO_ADVANCED
+from virda_gui.results_tab import ResultsTab
 
 
 class _FakeRow:
@@ -126,8 +127,8 @@ def test_double_click_mesh_loads_interactive_preview(tmp_path) -> None:
     stub = _double_click_stub(viewer)
     item = _FakeItem(mesh)
 
-    VirdaApp._on_results_artifact_double_clicked(
-        cast("VirdaApp", stub),
+    ResultsTab._on_results_artifact_double_clicked(
+        cast("ResultsTab", stub),
         cast("QTreeWidgetItem", item),
         0,
     )
@@ -143,8 +144,8 @@ def test_double_click_nifti_loads_interactive_preview(tmp_path) -> None:
     stub = _double_click_stub(viewer)
     item = _FakeItem(nifti)
 
-    VirdaApp._on_results_artifact_double_clicked(
-        cast("VirdaApp", stub),
+    ResultsTab._on_results_artifact_double_clicked(
+        cast("ResultsTab", stub),
         cast("QTreeWidgetItem", item),
         0,
     )
@@ -159,8 +160,8 @@ def test_double_click_non_visual_file_does_not_load(tmp_path) -> None:
     stub = _double_click_stub(viewer)
     item = _FakeItem(csv_file)
 
-    VirdaApp._on_results_artifact_double_clicked(
-        cast("VirdaApp", stub),
+    ResultsTab._on_results_artifact_double_clicked(
+        cast("ResultsTab", stub),
         cast("QTreeWidgetItem", item),
         0,
     )
@@ -175,10 +176,39 @@ def test_double_click_directory_does_not_load(tmp_path) -> None:
     stub = _double_click_stub(viewer)
     item = _FakeItem(directory)
 
-    VirdaApp._on_results_artifact_double_clicked(
-        cast("VirdaApp", stub),
+    ResultsTab._on_results_artifact_double_clicked(
+        cast("ResultsTab", stub),
         cast("QTreeWidgetItem", item),
         0,
     )
 
     assert viewer.load_calls == []
+
+
+def test_virda_app_constructs_offscreen() -> None:
+    """The full widget tree builds, so every connected slot exists.
+
+    Builds the real ``VirdaApp`` under the offscreen Qt platform to catch
+    ``AttributeError`` wiring regressions the stub-based tests cannot see
+    (e.g. a ``Signal.connect`` target that was dropped during a refactor).
+    Skips when the headless Qt platform is unavailable.
+    """
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    if os.environ.get("PYVISTA_OFF_SCREEN") is None:
+        os.environ["PYVISTA_OFF_SCREEN"] = "true"
+
+    try:
+        from PySide6.QtWidgets import QApplication
+
+        from virda_gui.app import VirdaApp
+    except Exception as exc:  # pragma: no cover - depends on local Qt install
+        pytest.skip(f"Qt platform unavailable: {exc}")
+
+    app = QApplication.instance() or QApplication([])
+    try:
+        window = VirdaApp()
+        assert window._notebook.count() == 3
+        assert window._notebook.isTabEnabled(window._viewer_tab_index) is False
+    finally:
+        window._on_close()
+        app.quit()
