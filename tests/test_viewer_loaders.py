@@ -5,13 +5,13 @@ import numpy as np
 import pytest
 import pyvista as pv
 
-from virda_gui.viewer import (
+from virda_gui.viewer_loaders import (
     _cras_decision_message,
     _cras_to_scanner_ras_offset,
     _detect_cras_conversion,
     _load_electrodes,
-    _parse_electrode_specs,
     _resolve_group_color,
+    parse_electrode_specs,
 )
 
 
@@ -193,17 +193,17 @@ class TestCrasAutoDetection:
 
 class TestElectrodeSpecs:
     def test_path_only(self) -> None:
-        assert _parse_electrode_specs([["a.tsv"]]) == [("a.tsv", None)]
+        assert parse_electrode_specs([["a.tsv"]]) == [("a.tsv", None)]
 
     def test_path_with_color(self) -> None:
-        assert _parse_electrode_specs([["a.tsv", "yellow"], ["b.json", "green"]]) == [
+        assert parse_electrode_specs([["a.tsv", "yellow"], ["b.json", "green"]]) == [
             ("a.tsv", "yellow"),
             ("b.json", "green"),
         ]
 
     def test_rejects_extra_values(self) -> None:
         with pytest.raises(ValueError, match="expects FILE .COLOR., got 3"):
-            _parse_electrode_specs([["a.tsv", "yellow", "extra"]])
+            parse_electrode_specs([["a.tsv", "yellow", "extra"]])
 
     def test_explicit_color_wins(self) -> None:
         assert _resolve_group_color("green", 0) == "green"
@@ -219,20 +219,20 @@ class TestElectrodeSpecs:
 
 class TestIntensifyColor:
     def test_returns_valid_distinct_color(self) -> None:
-        from virda_gui.viewer import _intensify_color
+        from virda_gui.viewer_loaders import intensify_color
 
         for base in ("yellow", "lime", "magenta", "cyan", "orange", "white", "#34eb89"):
-            boosted = _intensify_color(base)
+            boosted = intensify_color(base)
             assert pv.Color(boosted) is not None
             assert pv.Color(boosted).float_rgb != pv.Color(base).float_rgb
 
     def test_preserves_hue(self) -> None:
         import colorsys
 
-        from virda_gui.viewer import _intensify_color
+        from virda_gui.viewer_loaders import intensify_color
 
         base = pv.Color("orange").float_rgb
-        boosted = pv.Color(_intensify_color("orange")).float_rgb
+        boosted = pv.Color(intensify_color("orange")).float_rgb
         h0 = colorsys.rgb_to_hls(*base)[0]
         h1 = colorsys.rgb_to_hls(*boosted)[0]
         assert abs(h0 - h1) < 1e-3
