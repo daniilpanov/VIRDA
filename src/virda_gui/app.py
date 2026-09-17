@@ -26,7 +26,6 @@ from typing import Any
 from PySide6.QtCore import QObject, Qt, QThread, QTimer
 from PySide6.QtWidgets import (
     QApplication,
-    QCheckBox,
     QFrame,
     QGroupBox,
     QHBoxLayout,
@@ -46,18 +45,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from virda.config import load_config_file
-from virda.io.fiducial_helpers import load_fiducials
 from virda.logging_setup import add_log_handler, remove_log_handler
-from virda.models.config import Config
-from virda.models.coordsystem import Coordsystem
 
-from .advanced_settings import AdvancedSettingsDialog
+from .config_tab import ConfigTab
 from .constants import (
     ADVANCED_FIELD_DEFAULTS,
-    CONFIG_KEY_TO_ADVANCED,
-    CONFIG_KEY_TO_INPUT,
-    ELECTRODE_PALETTE,
     PROJECT_ARTIFACT_DIRS,
 )
 from .file_manager import open_in_file_manager
@@ -67,10 +59,6 @@ from .state import AppState
 from .viewer import ViewerWidget
 from .widgets import (
     DirectorySelector,
-    ElectrodeGroupRow,
-    FileSelector,
-    LabeledField,
-    LogViewer,
 )
 
 
@@ -108,9 +96,6 @@ class VirdaApp(QObject):
         self._preview_load_seq = 0
         self._preview_thread: QThread | None = None
         self._preview_worker: _PreviewWorker | None = None
-        self._run_btn: QPushButton | None = None
-        self._viewer_btn: QPushButton | None = None
-        self._export_btn: QPushButton | None = None
 
         # Capture pipeline/library logs into the log pane (console handlers
         # set up by the pipeline itself keep working).
@@ -139,128 +124,22 @@ class VirdaApp(QObject):
         self._notebook = QTabWidget()
         self._root.setCentralWidget(self._notebook)
 
-        self._config_frame = QWidget()
-        self._notebook.addTab(self._config_frame, "  Configuration  ")
+        self._config_tab = ConfigTab(self._state)
+        self._notebook.addTab(self._config_tab, "  Configuration  ")
+        self._config_tab.runRequested.connect(self._on_run)
+        self._config_tab.openViewer.connect(self._on_open_viewer)
+        self._config_tab.exportHtml.connect(self._on_export_html)
+        self._log_viewer = self._config_tab.log_viewer
 
         self._saved_results_frame = QWidget()
         self._notebook.addTab(self._saved_results_frame, "  Saved Results  ")
 
-        self._build_config_tab()
         self._build_saved_results_tab()
 
         self._viewer_frame = QWidget()
         self._viewer_tab_index = self._notebook.addTab(self._viewer_frame, "  3D Viewer  ")
         self._notebook.setTabEnabled(self._viewer_tab_index, False)
         self._build_viewer_tab()
-
-    # ---- Configuration tab ----
-
-    def _build_config_tab(self) -> None:
-        parent = self._config_frame
-        outer = QVBoxLayout(parent)
-        outer.setContentsMargins(8, 8, 8, 8)
-        outer.setSpacing(4)
-
-        input_box = QGroupBox("Input Files", parent)
-        input_layout = QVBoxLayout(input_box)
-
-        self._config_file = FileSelector(
-            input_box,
-            label="Config file",
-            filetypes=[("JSON", "*.json"), ("All files", "*")],
-        )
-        input_layout.addWidget(self._config_file)
-        self._config_file.textChanged.connect(self._on_config_file_changed)
-
-        self._nifti = FileSelector(
-            input_box,
-            label="NIfTI scan",
-            filetypes=[("NIfTI", "*.nii.gz *.nii"), ("All files", "*")],
-        )
-        input_layout.addWidget(self._nifti)
-
-        self._project_dir = DirectorySelector(input_box, label="Project dir")
-        input_layout.addWidget(self._project_dir)
-
-        self._fiducials = FileSelector(
-            input_box,
-            label="Fiducials",
-            filetypes=[("JSON", "*.json"), ("All files", "*")],
-        )
-        input_layout.addWidget(self._fiducials)
-        self._fiducials.textChanged.connect(self._on_fiducials_path_changed)
-
-        self._measurements = FileSelector(
-            input_box,
-            label="Measurements",
-            filetypes=[("JSON", "*.json"), ("All files", "*")],
-        )
-        input_layout.addWidget(self._measurements)
-
-        self._auto_detect_fid = LabeledField(
-            input_box,
-            label="Auto detect fiducials",
-            widget_type="check",
-            default="false",
-        )
-        input_layout.addWidget(self._auto_detect_fid)
-
-        outer.addWidget(input_box)
-
-        groups_box = QGroupBox("Electrode Groups (viewer overlays)", parent)
-        groups_layout = QVBoxLayout(groups_box)
-        self._groups_inner = QWidget(groups_box)
-        self._groups_layout = QVBoxLayout(self._groups_inner)
-        self._groups_layout.setContentsMargins(0, 0, 0, 0)
-        self._groups_layout.setSpacing(4)
-        groups_layout.addWidget(self._groups_inner)
-
-        groups_btns = QFrame(groups_box)
-        groups_btns_layout = QHBoxLayout(groups_btns)
-        groups_btns_layout.setContentsMargins(0, 0, 0, 0)
-
-        add_group_btn = QPushButton("Add group")
-        add_group_btn.clicked.connect(self._on_add_electrode_group)
-        groups_btns_layout.addWidget(add_group_btn)
-
-        self._electrodes_cras_check = QCheckBox("Force cRAS conversion")
-        groups_btns_layout.addWidget(self._electrodes_cras_check)
-
-        groups_btns_layout.addStretch(1)
-        groups_layout.addWidget(groups_btns)
-
-        outer.addWidget(groups_box)
-
-        btn_frame = QFrame(parent)
-        btn_layout = QHBoxLayout(btn_frame)
-        btn_layout.setContentsMargins(0, 4, 0, 4)
-
-        self._advanced_btn = QPushButton("Advanced Settings")
-        self._advanced_btn.clicked.connect(self._on_show_advanced)
-        btn_layout.addWidget(self._advanced_btn)
-        btn_layout.addSpacing(8)
-
-        self._run_btn = QPushButton("Run Pipeline")
-        self._run_btn.clicked.connect(self._on_run)
-        btn_layout.addWidget(self._run_btn)
-        btn_layout.addSpacing(8)
-
-        self._viewer_btn = QPushButton("Open 3D Viewer")
-        self._viewer_btn.clicked.connect(self._on_open_viewer)
-        self._viewer_btn.setEnabled(False)
-        btn_layout.addWidget(self._viewer_btn)
-        btn_layout.addSpacing(8)
-
-        self._export_btn = QPushButton("Export HTML")
-        self._export_btn.clicked.connect(self._on_export_html)
-        self._export_btn.setEnabled(False)
-        btn_layout.addWidget(self._export_btn)
-
-        btn_layout.addStretch(1)
-        outer.addWidget(btn_frame)
-
-        self._log_viewer = LogViewer(parent)
-        outer.addWidget(self._log_viewer, 1)
 
     # ---- Saved Results tab ----
 
@@ -361,209 +240,25 @@ class VirdaApp(QObject):
         outer.addWidget(self._viewer_widget)
 
     # ------------------------------------------------------------------
-    # Config file handling
-    # ------------------------------------------------------------------
-
-    def _on_config_file_changed(self, _text: str) -> None:
-        self._state.coordsystem = None
-        path = self._config_file.get()
-        if not path:
-            return
-        try:
-            data = load_config_file(path)
-        except Exception as exc:
-            QMessageBox.critical(self._root, "Config error", f"Invalid config file:\n{exc}")
-            self._config_file.set("")
-            return
-        self._populate_from_config(data)
-
-    def _populate_from_config(self, data: dict[str, Any]) -> None:
-        for config_key, attr_name in CONFIG_KEY_TO_INPUT.items():
-            if config_key in data:
-                widget = getattr(self, f"_{attr_name}", None)
-                if widget is not None and not widget.get():
-                    widget.set(str(data[config_key]))
-
-        if data.get("measurements_path") and not self._measurements.get():
-            self._measurements.set(str(data["measurements_path"]))
-
-        for config_key, adv_key in CONFIG_KEY_TO_ADVANCED.items():
-            if config_key in data and not self._state.advanced.get(adv_key):
-                self._state.advanced[adv_key] = str(data[config_key])
-
-        # Keep the parsed MNE coordsystem (its fiducials feed Stage 1).
-        coordsystem = data.get("coordsystem")
-        if isinstance(coordsystem, Coordsystem):
-            self._state.coordsystem = coordsystem
-        else:
-            if coordsystem is not None:
-                self._log_viewer.append(
-                    "WARNING: 'coordsystem' entry in the config file was not parsed "
-                    "from a coordsystem.json file — its fiducials are ignored."
-                )
-            self._state.coordsystem = None
-
-    def _on_fiducials_path_changed(self, _text: str) -> None:
-        path = self._fiducials.get()
-        if not path:
-            return
-        try:
-            load_fiducials(Path(path))
-        except Exception as exc:
-            QMessageBox.critical(self._root, "Fiducials error", f"Invalid fiducials file:\n{exc}")
-            self._fiducials.set("")
-
-    # ------------------------------------------------------------------
-    # Advanced settings
-    # ------------------------------------------------------------------
-
-    def _on_show_advanced(self) -> None:
-        dialog = AdvancedSettingsDialog(self._root, self._state.advanced)
-        if dialog.exec():
-            self._state.advanced = dialog.result_values
-
-    # ------------------------------------------------------------------
-    # Electrode groups
-    # ------------------------------------------------------------------
-
-    def _on_add_electrode_group(self, path: str = "", color: str | None = None) -> None:
-        if color is None:
-            color = ELECTRODE_PALETTE[self._state.palette_index % len(ELECTRODE_PALETTE)]
-            self._state.palette_index += 1
-
-        row = ElectrodeGroupRow(
-            on_remove=lambda: self._on_remove_electrode_group(row),
-            color=color,
-        )
-        if path:
-            row.set(path)
-        self._groups_layout.addWidget(row)
-        self._state.electrode_rows.append(row)
-
-    def _on_remove_electrode_group(self, row: ElectrodeGroupRow) -> None:
-        if row in self._state.electrode_rows:
-            self._state.electrode_rows.remove(row)
-            self._groups_layout.removeWidget(row)
-        row.deleteLater()
-
-    def _collect_electrode_specs(self) -> list[tuple[str, str]]:
-        """Return (path, color) pairs of all non-empty electrode group rows."""
-        specs: list[tuple[str, str]] = []
-        seen: set[str] = set()
-        for row in self._state.electrode_rows:
-            path = row.get().strip()
-            if not path or path in seen:
-                continue
-            seen.add(path)
-            specs.append((path, row.get_color()))
-        return specs
-
-    def _ensure_stage3_electrodes_group(self, project_dir: str | Path | None = None) -> str | None:
-        """Add the Stage 3 output as a group unless already present.
-
-        Returns the added path or None when there is nothing to add.
-        """
-        resolved = project_dir or self._state.last_project_dir
-        if not resolved:
-            return None
-        electrodes_path = Path(resolved) / "localization" / "electrodes.json"
-        if not electrodes_path.is_file():
-            return None
-        path_str = str(electrodes_path)
-        if any(row.get().strip() == path_str for row in self._state.electrode_rows):
-            return None
-        self._on_add_electrode_group(path=path_str)
-        return path_str
-
-    # ------------------------------------------------------------------
-    # Config collection
-    # ------------------------------------------------------------------
-
-    def _collect_config(self) -> Config:
-        nifti = self._nifti.get() or None
-        project = self._project_dir.get() or None
-        fiducials = self._fiducials.get() or None
-
-        if not nifti:
-            raise ValueError("NIfTI scan path is required.")
-        if not project:
-            raise ValueError("Project directory is required.")
-
-        adv = self._state.advanced
-
-        def _int(val: str, default: int | None = None, *, key: str = "value") -> int | None:
-            val = val.strip()
-            if not val:
-                return default
-            try:
-                return int(val)
-            except ValueError:
-                raise ValueError(f"{key}: expected an integer, got {val!r}") from None
-
-        def _float(val: str, default: float | None = None, *, key: str = "value") -> float | None:
-            val = val.strip()
-            if not val:
-                return default
-            try:
-                return float(val)
-            except ValueError:
-                raise ValueError(f"{key}: expected a number, got {val!r}") from None
-
-        return Config(
-            nifti_path=nifti,
-            project_dir=project,
-            fiducials_path=fiducials or None,
-            auto_detect_fiducials=self._auto_detect_fid.get() == "true",
-            coordsystem=self._state.coordsystem,
-            closing_radius=_int(adv["closing_radius"], 5, key="closing_radius"),
-            otsu_scope=adv["otsu_scope"] or "all",  # type: ignore[arg-type]
-            otsu_threshold_scale=_float(
-                adv["otsu_threshold_scale"], 0.6, key="otsu_threshold_scale"
-            ),
-            seal_enabled=adv["seal_enabled"] == "true",
-            seal_radius=_int(adv["seal_radius"], 4, key="seal_radius"),
-            cleaner_min_vertices=_int(adv["cleaner_min_vertices"], 100, key="cleaner_min_vertices"),
-            cleaner_merge_digits=_int(adv["cleaner_merge_digits"], 7, key="cleaner_merge_digits"),
-            smoother_type=adv["smoother_type"] or "laplacian",
-            smoother_iterations=_int(adv["smoother_iterations"], 5, key="smoother_iterations"),
-            smoother_lamb=_float(adv["smoother_lamb"], 0.5, key="smoother_lamb"),
-            smoother_nu=_float(adv["smoother_nu"], -0.53, key="smoother_nu"),
-            ese_offset_mm=_float(adv["ese_offset_mm"], key="ese_offset_mm"),
-            neighborhood_radius_mm=_float(
-                adv["neighborhood_radius_mm"], 10.0, key="neighborhood_radius_mm"
-            ),
-            k_neighbors=_int(adv["k_neighbors"], key="k_neighbors"),
-            use_weighted_pca=adv["use_weighted_pca"] == "true",
-            pca_sigma_mm=_float(adv["pca_sigma_mm"], 5.0, key="pca_sigma_mm"),
-            min_neighbors=_int(adv["min_neighbors"], 5, key="min_neighbors"),
-            residual_threshold_mm=_float(
-                adv["residual_threshold_mm"],  # type: ignore[arg-type]
-                10.0,
-                key="residual_threshold_mm",
-            ),
-            calibrate_ese_offset=adv["calibrate_ese_offset"] == "true",
-        )
-
-    # ------------------------------------------------------------------
     # Pipeline execution (background thread)
     # ------------------------------------------------------------------
 
     def _on_run(self) -> None:
         try:
-            config = self._collect_config()
+            config = self._config_tab.collect_config()
         except Exception as exc:  # noqa: BLE001 - surfaced to the user as a dialog
             QMessageBox.critical(self._root, "Validation error", str(exc))
             return
 
-        self._run_btn.setEnabled(False)
-        self._viewer_btn.setEnabled(False)
-        self._export_btn.setEnabled(False)
+        self._config_tab.run_btn.setEnabled(False)
+        self._config_tab.viewer_btn.setEnabled(False)
+        self._config_tab.export_btn.setEnabled(False)
         self._log_viewer.clear()
         self._state.log_queue.put("Starting pipeline...")
         self._state.last_project_dir = config.project_dir
         self._state.stage3_summary = None
 
-        measurements_path = self._measurements.get().strip() or None
+        measurements_path = self._config_tab.measurements.get().strip() or None
         if measurements_path and not Path(measurements_path).is_file():
             QMessageBox.critical(
                 self._root,
@@ -583,19 +278,19 @@ class VirdaApp(QObject):
         self._pipe_runner.poll(self._log_viewer.append)
 
     def _on_pipeline_done(self) -> None:
-        added = self._ensure_stage3_electrodes_group()
+        added = self._config_tab.ensure_stage3_electrodes_group()
         if added:
             self._log_viewer.append(f"Electrode group added: {added}")
-        self._run_btn.setEnabled(True)
-        self._viewer_btn.setEnabled(True)
-        self._export_btn.setEnabled(True)
+        self._config_tab.run_btn.setEnabled(True)
+        self._config_tab.viewer_btn.setEnabled(True)
+        self._config_tab.export_btn.setEnabled(True)
         if self._state.last_project_dir:
             self._results_project_dir.set(self._state.last_project_dir)
             self._refresh_saved_results()
         self._update_results_info(success=True)
 
     def _on_pipeline_error(self) -> None:
-        self._run_btn.setEnabled(True)
+        self._config_tab.run_btn.setEnabled(True)
         self._update_results_info(success=False)
 
     def _update_results_info(self, *, success: bool) -> None:
@@ -622,7 +317,7 @@ class VirdaApp(QObject):
     # ------------------------------------------------------------------
 
     def _on_open_viewer(self) -> None:
-        resolved = self._state.last_project_dir or self._project_dir.get().strip()
+        resolved = self._state.last_project_dir or self._config_tab.project_dir()
         if not resolved:
             QMessageBox.warning(
                 self._root,
@@ -648,7 +343,7 @@ class VirdaApp(QObject):
         fiducials_path = project / "input" / "fiducials.json"
         normals_path = project / "ese" / "normals.npy"
 
-        nifti = self._nifti.get()
+        nifti = self._config_tab.nifti_path()
 
         kwargs: dict[str, Any] = {}
         if nifti:
@@ -667,11 +362,11 @@ class VirdaApp(QObject):
         if normals_path.exists():
             kwargs["normals_path"] = str(normals_path)
 
-        self._ensure_stage3_electrodes_group(project)
-        electrode_specs = self._collect_electrode_specs()
+        self._config_tab.ensure_stage3_electrodes_group(project)
+        electrode_specs = self._config_tab.collect_electrode_specs()
         if electrode_specs:
             kwargs["electrode_specs"] = electrode_specs
-            kwargs["electrodes_cras"] = self._electrodes_cras_check.isChecked()
+            kwargs["electrodes_cras"] = self._config_tab.electrodes_cras_check.isChecked()
 
         if not kwargs:
             QMessageBox.warning(
@@ -697,7 +392,7 @@ class VirdaApp(QObject):
     # ---- 3D viewer callbacks ----
 
     def _set_viewer_buttons_enabled(self, enabled: bool) -> None:
-        self._viewer_btn.setEnabled(enabled)
+        self._config_tab.viewer_btn.setEnabled(enabled)
 
     def _on_viewer_scene_loaded(self, _scene: Any) -> None:
         self._state.viewer_loading = False
@@ -711,7 +406,7 @@ class VirdaApp(QObject):
         self._set_viewer_buttons_enabled(True)
 
     def _on_export_html(self) -> None:
-        resolved = self._state.last_project_dir or self._project_dir.get().strip()
+        resolved = self._state.last_project_dir or self._config_tab.project_dir()
         if not resolved:
             QMessageBox.warning(
                 self._root,

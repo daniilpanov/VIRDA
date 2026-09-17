@@ -11,6 +11,7 @@ from typing import cast
 from PySide6.QtWidgets import QTreeWidgetItem
 
 from virda_gui.app import VirdaApp
+from virda_gui.config_tab import ConfigTab
 from virda_gui.constants import (
     ADVANCED_FIELD_DEFAULTS,
     CONFIG_KEY_TO_ADVANCED,
@@ -50,7 +51,7 @@ def test_collect_electrode_specs_skips_empty_and_duplicates(tmp_path) -> None:
         _FakeRow(str(tmp_path / "b.json"), "magenta"),
     ]
     stub = SimpleNamespace(_state=SimpleNamespace(electrode_rows=rows))
-    specs = VirdaApp._collect_electrode_specs(cast("VirdaApp", stub))
+    specs = ConfigTab.collect_electrode_specs(cast("ConfigTab", stub))
 
     assert specs == [
         (str(tmp_path / "a.tsv"), "yellow"),
@@ -60,13 +61,13 @@ def test_collect_electrode_specs_skips_empty_and_duplicates(tmp_path) -> None:
 
 def test_ensure_stage3_group_without_project_dir(tmp_path) -> None:
     stub = SimpleNamespace(_state=SimpleNamespace(last_project_dir=None, electrode_rows=[]))
-    assert VirdaApp._ensure_stage3_electrodes_group(cast("VirdaApp", stub)) is None
+    assert ConfigTab.ensure_stage3_electrodes_group(cast("ConfigTab", stub)) is None
 
 
 def test_ensure_stage3_group_without_output_file(tmp_path) -> None:
     state = SimpleNamespace(last_project_dir=str(tmp_path), electrode_rows=[])
     stub = SimpleNamespace(_state=state)
-    assert VirdaApp._ensure_stage3_electrodes_group(cast("VirdaApp", stub)) is None
+    assert ConfigTab.ensure_stage3_electrodes_group(cast("ConfigTab", stub)) is None
 
 
 def test_ensure_stage3_group_already_present(tmp_path) -> None:
@@ -76,7 +77,7 @@ def test_ensure_stage3_group_already_present(tmp_path) -> None:
     rows = [_FakeRow(str(electrodes), "yellow")]
     state = SimpleNamespace(last_project_dir=str(tmp_path), electrode_rows=rows)
     stub = SimpleNamespace(_state=state)
-    assert VirdaApp._ensure_stage3_electrodes_group(cast("VirdaApp", stub)) is None
+    assert ConfigTab.ensure_stage3_electrodes_group(cast("ConfigTab", stub)) is None
 
 
 def test_viewer_widget_importable_from_app() -> None:

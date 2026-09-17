@@ -1,0 +1,343 @@
+"""Configuration tab: input files, electrode groups and run controls.
+
+The tab builds a :class:`Config` from the visible fields on demand, streams
+progress into its own :class:`LogViewer`, and asks the host application to
+act through the ``runRequested``/``openViewer``/``exportHtml`` signals.
+"""
+
+from pathlib import Path
+from typing import Any
+
+from PySide6.QtCore import Signal
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QFrame,
+    QGroupBox,
+    QHBoxLayout,
+    QMessageBox,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
+
+from virda.config import load_config_file
+from virda.io.fiducial_helpers import load_fiducials
+from virda.models.config import Config
+from virda.models.coordsystem import Coordsystem
+from virda_gui.advanced_settings import AdvancedSettingsDialog
+from virda_gui.constants import (
+    CONFIG_KEY_TO_ADVANCED,
+    CONFIG_KEY_TO_INPUT,
+    ELECTRODE_PALETTE,
+)
+from virda_gui.state import AppState
+from virda_gui.widgets import (
+    DirectorySelector,
+    ElectrodeGroupRow,
+    FileSelector,
+    LabeledField,
+    LogViewer,
+)
+
+
+class ConfigTab(QWidget):
+    """The "Configuration" tab of the main window."""
+
+    runRequested = Signal()  # noqa: N815
+    openViewer = Signal()  # noqa: N815
+    exportHtml = Signal()  # noqa: N815
+
+    def __init__(self, state: AppState, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._state = state
+
+        self._config_file = FileSelector(
+            self,
+            label="Config file",
+            filetypes=[("JSON", "*.json"), ("All files", "*")],
+        )
+        self._nifti = FileSelector(
+            self,
+            label="NIfTI scan",
+            filetypes=[("NIfTI", "*.nii.gz *.nii"), ("All files", "*")],
+        )
+        self._project_dir = DirectorySelector(self, label="Project dir")
+        self._fiducials = FileSelector(
+            self,
+            label="Fiducials",
+            filetypes=[("JSON", "*.json"), ("All files", "*")],
+        )
+        self.measurements = FileSelector(
+            self,
+            label="Measurements",
+            filetypes=[("JSON", "*.json"), ("All files", "*")],
+        )
+        self._auto_detect_fid = LabeledField(
+            self,
+            label="Auto detect fiducials",
+            widget_type="check",
+            default="false",
+        )
+
+        self.run_btn = QPushButton("Run Pipeline")
+        self.viewer_btn = QPushButton("Open 3D Viewer")
+        self.viewer_btn.setEnabled(False)
+        self.export_btn = QPushButton("Export HTML")
+        self.export_btn.setEnabled(False)
+
+        self.electrodes_cras_check = QCheckBox("Force cRAS conversion")
+
+        self.log_viewer = LogViewer(self)
+
+        self._groups_inner = QWidget(self)
+        self._groups_layout = QVBoxLayout(self._groups_inner)
+
+        self._build_ui()
+
+        self._config_file.textChanged.connect(self._on_config_file_changed)
+        self._fiducials.textChanged.connect(self._on_fiducials_path_changed)
+        self.run_btn.clicked.connect(self.runRequested)
+        self.viewer_btn.clicked.connect(self.openViewer)
+        self.export_btn.clicked.connect(self.exportHtml)
+
+    # ---- UI construction ----
+
+    def _build_ui(self) -> None:
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(8, 8, 8, 8)
+        outer.setSpacing(4)
+
+        input_box = QGroupBox("Input Files", self)
+        input_layout = QVBoxLayout(input_box)
+        input_layout.addWidget(self._config_file)
+        input_layout.addWidget(self._nifti)
+        input_layout.addWidget(self._project_dir)
+        input_layout.addWidget(self._fiducials)
+        input_layout.addWidget(self.measurements)
+        input_layout.addWidget(self._auto_detect_fid)
+        outer.addWidget(input_box)
+
+        groups_box = QGroupBox("Electrode Groups (viewer overlays)", self)
+        groups_layout = QVBoxLayout(groups_box)
+        self._groups_layout.setContentsMargins(0, 0, 0, 0)
+        self._groups_layout.setSpacing(4)
+        groups_layout.addWidget(self._groups_inner)
+
+        groups_btns = QFrame(groups_box)
+        groups_btns_layout = QHBoxLayout(groups_btns)
+        groups_btns_layout.setContentsMargins(0, 0, 0, 0)
+
+        add_group_btn = QPushButton("Add group")
+        add_group_btn.clicked.connect(self._on_add_electrode_group)
+        groups_btns_layout.addWidget(add_group_btn)
+
+        groups_btns_layout.addWidget(self.electrodes_cras_check)
+
+        groups_btns_layout.addStretch(1)
+        groups_layout.addWidget(groups_btns)
+
+        outer.addWidget(groups_box)
+
+        btn_frame = QFrame(self)
+        btn_layout = QHBoxLayout(btn_frame)
+        btn_layout.setContentsMargins(0, 4, 0, 4)
+
+        advanced_btn = QPushButton("Advanced Settings")
+        advanced_btn.clicked.connect(self._on_show_advanced)
+        btn_layout.addWidget(advanced_btn)
+        btn_layout.addSpacing(8)
+
+        btn_layout.addWidget(self.run_btn)
+        btn_layout.addSpacing(8)
+
+        btn_layout.addWidget(self.viewer_btn)
+        btn_layout.addSpacing(8)
+
+        btn_layout.addWidget(self.export_btn)
+
+        btn_layout.addStretch(1)
+        outer.addWidget(btn_frame)
+
+        outer.addWidget(self.log_viewer, 1)
+
+    # ---- Config file handling ----
+
+    def _on_config_file_changed(self, _text: str) -> None:
+        self._state.coordsystem = None
+        path = self._config_file.get()
+        if not path:
+            return
+        try:
+            data = load_config_file(path)
+        except Exception as exc:
+            QMessageBox.critical(self, "Config error", f"Invalid config file:\n{exc}")
+            self._config_file.set("")
+            return
+        self._populate_from_config(data)
+
+    def _populate_from_config(self, data: dict[str, Any]) -> None:
+        for config_key, attr_name in CONFIG_KEY_TO_INPUT.items():
+            if config_key in data:
+                widget = getattr(self, f"_{attr_name}", None)
+                if widget is not None and not widget.get():
+                    widget.set(str(data[config_key]))
+
+        if data.get("measurements_path") and not self.measurements.get():
+            self.measurements.set(str(data["measurements_path"]))
+
+        for config_key, adv_key in CONFIG_KEY_TO_ADVANCED.items():
+            if config_key in data and not self._state.advanced.get(adv_key):
+                self._state.advanced[adv_key] = str(data[config_key])
+
+        # Keep the parsed MNE coordsystem (its fiducials feed Stage 1).
+        coordsystem = data.get("coordsystem")
+        if isinstance(coordsystem, Coordsystem):
+            self._state.coordsystem = coordsystem
+        else:
+            if coordsystem is not None:
+                self.log_viewer.append(
+                    "WARNING: 'coordsystem' entry in the config file was not parsed "
+                    "from a coordsystem.json file — its fiducials are ignored."
+                )
+            self._state.coordsystem = None
+
+    def _on_fiducials_path_changed(self, _text: str) -> None:
+        path = self._fiducials.get()
+        if not path:
+            return
+        try:
+            load_fiducials(Path(path))
+        except Exception as exc:
+            QMessageBox.critical(self, "Fiducials error", f"Invalid fiducials file:\n{exc}")
+            self._fiducials.set("")
+
+    # ---- Advanced settings ----
+
+    def _on_show_advanced(self) -> None:
+        dialog = AdvancedSettingsDialog(self, self._state.advanced)
+        if dialog.exec():
+            self._state.advanced = dialog.result_values
+
+    # ---- Electrode groups ----
+
+    def _on_add_electrode_group(self, path: str = "", color: str | None = None) -> None:
+        if color is None:
+            color = ELECTRODE_PALETTE[self._state.palette_index % len(ELECTRODE_PALETTE)]
+            self._state.palette_index += 1
+
+        row = ElectrodeGroupRow(
+            on_remove=lambda: self._on_remove_electrode_group(row),
+            color=color,
+        )
+        if path:
+            row.set(path)
+        self._groups_layout.addWidget(row)
+        self._state.electrode_rows.append(row)
+
+    def _on_remove_electrode_group(self, row: ElectrodeGroupRow) -> None:
+        if row in self._state.electrode_rows:
+            self._state.electrode_rows.remove(row)
+            self._groups_layout.removeWidget(row)
+        row.deleteLater()
+
+    def collect_electrode_specs(self) -> list[tuple[str, str]]:
+        """Return (path, color) pairs of all non-empty electrode group rows."""
+        specs: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for row in self._state.electrode_rows:
+            path = row.get().strip()
+            if not path or path in seen:
+                continue
+            seen.add(path)
+            specs.append((path, row.get_color()))
+        return specs
+
+    def ensure_stage3_electrodes_group(self, project_dir: str | Path | None = None) -> str | None:
+        """Add the Stage 3 output as a group unless already present.
+
+        Returns the added path or None when there is nothing to add.
+        """
+        resolved = project_dir or self._state.last_project_dir
+        if not resolved:
+            return None
+        electrodes_path = Path(resolved) / "localization" / "electrodes.json"
+        if not electrodes_path.is_file():
+            return None
+        path_str = str(electrodes_path)
+        if any(row.get().strip() == path_str for row in self._state.electrode_rows):
+            return None
+        self._on_add_electrode_group(path=path_str)
+        return path_str
+
+    # ---- Config collection ----
+
+    def nifti_path(self) -> str:
+        return self._nifti.get()
+
+    def project_dir(self) -> str:
+        return self._project_dir.get().strip()
+
+    def collect_config(self) -> Config:
+        nifti = self._nifti.get() or None
+        project = self._project_dir.get() or None
+        fiducials = self._fiducials.get() or None
+
+        if not nifti:
+            raise ValueError("NIfTI scan path is required.")
+        if not project:
+            raise ValueError("Project directory is required.")
+
+        adv = self._state.advanced
+
+        def _int(val: str, default: int | None = None, *, key: str = "value") -> int | None:
+            val = val.strip()
+            if not val:
+                return default
+            try:
+                return int(val)
+            except ValueError:
+                raise ValueError(f"{key}: expected an integer, got {val!r}") from None
+
+        def _float(val: str, default: float | None = None, *, key: str = "value") -> float | None:
+            val = val.strip()
+            if not val:
+                return default
+            try:
+                return float(val)
+            except ValueError:
+                raise ValueError(f"{key}: expected a number, got {val!r}") from None
+
+        return Config(
+            nifti_path=nifti,
+            project_dir=project,
+            fiducials_path=fiducials or None,
+            auto_detect_fiducials=self._auto_detect_fid.get() == "true",
+            coordsystem=self._state.coordsystem,
+            closing_radius=_int(adv["closing_radius"], 5, key="closing_radius"),
+            otsu_scope=adv["otsu_scope"] or "all",  # type: ignore[arg-type]
+            otsu_threshold_scale=_float(
+                adv["otsu_threshold_scale"], 0.6, key="otsu_threshold_scale"
+            ),
+            seal_enabled=adv["seal_enabled"] == "true",
+            seal_radius=_int(adv["seal_radius"], 4, key="seal_radius"),
+            cleaner_min_vertices=_int(adv["cleaner_min_vertices"], 100, key="cleaner_min_vertices"),
+            cleaner_merge_digits=_int(adv["cleaner_merge_digits"], 7, key="cleaner_merge_digits"),
+            smoother_type=adv["smoother_type"] or "laplacian",
+            smoother_iterations=_int(adv["smoother_iterations"], 5, key="smoother_iterations"),
+            smoother_lamb=_float(adv["smoother_lamb"], 0.5, key="smoother_lamb"),
+            smoother_nu=_float(adv["smoother_nu"], -0.53, key="smoother_nu"),
+            ese_offset_mm=_float(adv["ese_offset_mm"], key="ese_offset_mm"),
+            neighborhood_radius_mm=_float(
+                adv["neighborhood_radius_mm"], 10.0, key="neighborhood_radius_mm"
+            ),
+            k_neighbors=_int(adv["k_neighbors"], key="k_neighbors"),
+            use_weighted_pca=adv["use_weighted_pca"] == "true",
+            pca_sigma_mm=_float(adv["pca_sigma_mm"], 5.0, key="pca_sigma_mm"),
+            min_neighbors=_int(adv["min_neighbors"], 5, key="min_neighbors"),
+            residual_threshold_mm=_float(
+                adv["residual_threshold_mm"],  # type: ignore[arg-type]
+                10.0,
+                key="residual_threshold_mm",
+            ),
+            calibrate_ese_offset=adv["calibrate_ese_offset"] == "true",
+        )
