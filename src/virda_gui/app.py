@@ -70,6 +70,7 @@ from .preview import (
     preview_json_text_chunked,
     table_from_npy,
 )
+from .state import AppState
 from .viewer import ViewerWidget
 from .widgets import (
     DirectorySelector,
@@ -428,26 +429,19 @@ class VirdaApp(QObject):
         self._root.setWindowTitle("VIRDA — Electrode Localization System")
         self._root.resize(860, 640)
 
-        self._log_queue: queue.Queue[str | None] = queue.Queue()
-        self._pipeline_thread: threading.Thread | None = None
-        self._viewer_loading = False
-        self._run_btn: QPushButton | None = None
-        self._viewer_btn: QPushButton | None = None
-        self._export_btn: QPushButton | None = None
-        self._last_project_dir: str | None = None
-        self._advanced_values: dict[str, str] = dict(_ADVANCED_FIELD_DEFAULTS)
-        self._electrode_rows: list[ElectrodeGroupRow] = []
-        self._palette_index = 0
-        self._stage3_summary: dict[str, Any] | None = None
-        self._coordsystem: Coordsystem | None = None
+        self._state = AppState(
+            advanced=dict(_ADVANCED_FIELD_DEFAULTS),
+        )
         self._preview_load_seq = 0
         self._preview_thread: QThread | None = None
         self._preview_worker: _PreviewWorker | None = None
-        self._closed = False
+        self._run_btn: QPushButton | None = None
+        self._viewer_btn: QPushButton | None = None
+        self._export_btn: QPushButton | None = None
 
         # Capture pipeline/library logs into the log pane (console handlers
         # set up by the pipeline itself keep working).
-        self._log_handler = _QueueLogHandler(self._log_queue)
+        self._log_handler = _QueueLogHandler(self._state.log_queue)
         add_log_handler(self._log_handler)
 
         self._build_ui()
@@ -680,7 +674,7 @@ class VirdaApp(QObject):
         outer = QVBoxLayout(parent)
         outer.setContentsMargins(0, 0, 0, 0)
 
-        self._viewer_widget = ViewerWidget(parent, log=self._log_queue.put)
+        self._viewer_widget = ViewerWidget(parent, log=self._state.log_queue.put)
         self._viewer_widget.sceneLoaded.connect(self._on_viewer_scene_loaded)
         self._viewer_widget.sceneFailed.connect(self._on_viewer_scene_failed)
         outer.addWidget(self._viewer_widget)
@@ -690,7 +684,7 @@ class VirdaApp(QObject):
     # ------------------------------------------------------------------
 
     def _on_config_file_changed(self, _text: str) -> None:
-        self._coordsystem = None
+        self._state.coordsystem = None
         path = self._config_file.get()
         if not path:
             return
@@ -713,20 +707,20 @@ class VirdaApp(QObject):
             self._measurements.set(str(data["measurements_path"]))
 
         for config_key, adv_key in _CONFIG_KEY_TO_ADVANCED.items():
-            if config_key in data and not self._advanced_values.get(adv_key):
-                self._advanced_values[adv_key] = str(data[config_key])
+            if config_key in data and not self._state.advanced.get(adv_key):
+                self._state.advanced[adv_key] = str(data[config_key])
 
         # Keep the parsed MNE coordsystem (its fiducials feed Stage 1).
         coordsystem = data.get("coordsystem")
         if isinstance(coordsystem, Coordsystem):
-            self._coordsystem = coordsystem
+            self._state.coordsystem = coordsystem
         else:
             if coordsystem is not None:
                 self._log_viewer.append(
                     "WARNING: 'coordsystem' entry in the config file was not parsed "
                     "from a coordsystem.json file — its fiducials are ignored."
                 )
-            self._coordsystem = None
+            self._state.coordsystem = None
 
     def _on_fiducials_path_changed(self, _text: str) -> None:
         path = self._fiducials.get()
@@ -743,9 +737,9 @@ class VirdaApp(QObject):
     # ------------------------------------------------------------------
 
     def _on_show_advanced(self) -> None:
-        dialog = AdvancedSettingsDialog(self._root, self._advanced_values)
+        dialog = AdvancedSettingsDialog(self._root, self._state.advanced)
         if dialog.exec():
-            self._advanced_values = dialog.result_values
+            self._state.advanced = dialog.result_values
 
     # ------------------------------------------------------------------
     # Electrode groups
@@ -753,8 +747,8 @@ class VirdaApp(QObject):
 
     def _on_add_electrode_group(self, path: str = "", color: str | None = None) -> None:
         if color is None:
-            color = ELECTRODE_PALETTE[self._palette_index % len(ELECTRODE_PALETTE)]
-            self._palette_index += 1
+            color = ELECTRODE_PALETTE[self._state.palette_index % len(ELECTRODE_PALETTE)]
+            self._state.palette_index += 1
 
         row = ElectrodeGroupRow(
             on_remove=lambda: self._on_remove_electrode_group(row),
@@ -763,11 +757,11 @@ class VirdaApp(QObject):
         if path:
             row.set(path)
         self._groups_layout.addWidget(row)
-        self._electrode_rows.append(row)
+        self._state.electrode_rows.append(row)
 
     def _on_remove_electrode_group(self, row: ElectrodeGroupRow) -> None:
-        if row in self._electrode_rows:
-            self._electrode_rows.remove(row)
+        if row in self._state.electrode_rows:
+            self._state.electrode_rows.remove(row)
             self._groups_layout.removeWidget(row)
         row.deleteLater()
 
@@ -775,7 +769,7 @@ class VirdaApp(QObject):
         """Return (path, color) pairs of all non-empty electrode group rows."""
         specs: list[tuple[str, str]] = []
         seen: set[str] = set()
-        for row in self._electrode_rows:
+        for row in self._state.electrode_rows:
             path = row.get().strip()
             if not path or path in seen:
                 continue
@@ -788,14 +782,14 @@ class VirdaApp(QObject):
 
         Returns the added path or None when there is nothing to add.
         """
-        resolved = project_dir or self._last_project_dir
+        resolved = project_dir or self._state.last_project_dir
         if not resolved:
             return None
         electrodes_path = Path(resolved) / "localization" / "electrodes.json"
         if not electrodes_path.is_file():
             return None
         path_str = str(electrodes_path)
-        if any(row.get().strip() == path_str for row in self._electrode_rows):
+        if any(row.get().strip() == path_str for row in self._state.electrode_rows):
             return None
         self._on_add_electrode_group(path=path_str)
         return path_str
@@ -814,7 +808,7 @@ class VirdaApp(QObject):
         if not project:
             raise ValueError("Project directory is required.")
 
-        adv = self._advanced_values
+        adv = self._state.advanced
 
         def _int(val: str, default: int | None = None, *, key: str = "value") -> int | None:
             val = val.strip()
@@ -839,7 +833,7 @@ class VirdaApp(QObject):
             project_dir=project,
             fiducials_path=fiducials or None,
             auto_detect_fiducials=self._auto_detect_fid.get() == "true",
-            coordsystem=self._coordsystem,
+            coordsystem=self._state.coordsystem,
             closing_radius=_int(adv["closing_radius"], 5, key="closing_radius"),
             otsu_scope=adv["otsu_scope"] or "all",  # type: ignore[arg-type]
             otsu_threshold_scale=_float(
@@ -884,9 +878,9 @@ class VirdaApp(QObject):
         self._viewer_btn.setEnabled(False)
         self._export_btn.setEnabled(False)
         self._log_viewer.clear()
-        self._log_queue.put("Starting pipeline...")
-        self._last_project_dir = config.project_dir
-        self._stage3_summary = None
+        self._state.log_queue.put("Starting pipeline...")
+        self._state.last_project_dir = config.project_dir
+        self._state.stage3_summary = None
 
         measurements_path = self._measurements.get().strip() or None
         if measurements_path and not Path(measurements_path).is_file():
@@ -898,23 +892,23 @@ class VirdaApp(QObject):
             self._on_pipeline_error()
             return
 
-        self._pipeline_thread = threading.Thread(
+        self._state.pipeline_thread = threading.Thread(
             target=self._run_pipeline, args=(config, measurements_path), daemon=True
         )
-        self._pipeline_thread.start()
+        self._state.pipeline_thread.start()
 
     def _run_pipeline(self, config: Config, measurements_path: str | None) -> None:
         """Background thread: run the pipeline and post results to the queue."""
         try:
-            self._log_queue.put("Building configuration...")
+            self._state.log_queue.put("Building configuration...")
             stage1_result, ese_mesh, electrodes = run(config, measurements_path)
 
             msg = f"Stage 1: mesh with {len(stage1_result.mesh.vertices)} vertices"
-            self._log_queue.put(msg)
+            self._state.log_queue.put(msg)
 
             if ese_mesh is not None:
                 msg = f"Stage 2: ESE mesh with {len(ese_mesh.vertices)} vertices"
-                self._log_queue.put(msg)
+                self._state.log_queue.put(msg)
 
             if electrodes is not None:
                 items = electrodes.items
@@ -924,22 +918,24 @@ class VirdaApp(QObject):
                 msg = f"Stage 3: {localized}/{len(items)} electrodes localized ({flagged} flagged)"
                 if shift is not None:
                     msg += f", ESE offset shift {shift:.2f} mm"
-                self._log_queue.put(msg)
-                self._stage3_summary = {
+                self._state.log_queue.put(msg)
+                self._state.stage3_summary = {
                     "total": len(items),
                     "localized": localized,
                     "flagged": flagged,
                     "offset_shift_mm": shift,
                 }
             elif measurements_path:
-                self._log_queue.put("Stage 3 skipped: ESE mesh or measurements are not available.")
+                self._state.log_queue.put(
+                    "Stage 3 skipped: ESE mesh or measurements are not available."
+                )
 
-            self._log_queue.put("Pipeline completed successfully.")
-            self._log_queue.put(_DONE_SENTINEL)
+            self._state.log_queue.put("Pipeline completed successfully.")
+            self._state.log_queue.put(_DONE_SENTINEL)
 
         except Exception as exc:
-            self._log_queue.put(f"ERROR: {exc}")
-            self._log_queue.put(_ERROR_SENTINEL)
+            self._state.log_queue.put(f"ERROR: {exc}")
+            self._state.log_queue.put(_ERROR_SENTINEL)
 
     # ------------------------------------------------------------------
     # Log queue polling (main thread)
@@ -948,7 +944,7 @@ class VirdaApp(QObject):
     def _poll_log_queue(self) -> None:
         try:
             while True:
-                msg = self._log_queue.get_nowait()
+                msg = self._state.log_queue.get_nowait()
                 if msg == _DONE_SENTINEL:
                     self._on_pipeline_done()
                     break
@@ -972,8 +968,8 @@ class VirdaApp(QObject):
         self._run_btn.setEnabled(True)
         self._viewer_btn.setEnabled(True)
         self._export_btn.setEnabled(True)
-        if self._last_project_dir:
-            self._results_project_dir.set(self._last_project_dir)
+        if self._state.last_project_dir:
+            self._results_project_dir.set(self._state.last_project_dir)
             self._refresh_saved_results()
         self._update_results_info(success=True)
 
@@ -982,11 +978,11 @@ class VirdaApp(QObject):
         self._update_results_info(success=False)
 
     def _update_results_info(self, *, success: bool) -> None:
-        project = self._last_project_dir
+        project = self._state.last_project_dir
         if success:
             if project:
                 self._open_viewer(Path(project))
-            summary = self._stage3_summary
+            summary = self._state.stage3_summary
             if summary:
                 shift = summary["offset_shift_mm"]
                 shift_text = f", offset shift {shift:.2f} mm" if shift is not None else ""
@@ -1005,7 +1001,7 @@ class VirdaApp(QObject):
     # ------------------------------------------------------------------
 
     def _on_open_viewer(self) -> None:
-        resolved = self._last_project_dir or self._project_dir.get().strip()
+        resolved = self._state.last_project_dir or self._project_dir.get().strip()
         if not resolved:
             QMessageBox.warning(
                 self._root,
@@ -1062,7 +1058,7 @@ class VirdaApp(QObject):
             )
             return
 
-        if self._viewer_loading:
+        if self._state.viewer_loading:
             QMessageBox.warning(
                 self._root,
                 "Viewer still loading",
@@ -1072,7 +1068,7 @@ class VirdaApp(QObject):
 
         self._log_viewer.append("Opening 3D viewer...")
         self._set_viewer_buttons_enabled(False)
-        self._viewer_loading = True
+        self._state.viewer_loading = True
         self._notebook.setTabEnabled(self._viewer_tab_index, False)
         self._notebook.setCurrentIndex(self._viewer_tab_index)
         self._viewer_widget.load(**kwargs)
@@ -1083,18 +1079,18 @@ class VirdaApp(QObject):
         self._viewer_btn.setEnabled(enabled)
 
     def _on_viewer_scene_loaded(self, _scene: Any) -> None:
-        self._viewer_loading = False
+        self._state.viewer_loading = False
         self._log_viewer.append("3D viewer scene loaded.")
         self._set_viewer_buttons_enabled(True)
         self._notebook.setTabEnabled(self._viewer_tab_index, True)
         self._notebook.setCurrentIndex(self._viewer_tab_index)  # switch to 3D Viewer tab
 
     def _on_viewer_scene_failed(self, _message: str) -> None:
-        self._viewer_loading = False
+        self._state.viewer_loading = False
         self._set_viewer_buttons_enabled(True)
 
     def _on_export_html(self) -> None:
-        resolved = self._last_project_dir or self._project_dir.get().strip()
+        resolved = self._state.last_project_dir or self._project_dir.get().strip()
         if not resolved:
             QMessageBox.warning(
                 self._root,
@@ -1125,11 +1121,11 @@ class VirdaApp(QObject):
                 from .html_export import export_project
 
                 export_project(str(project), output)
-                self._log_queue.put(f"HTML exported: {output}")
-                self._log_queue.put(_EXPORT_DONE_SENTINEL)
+                self._state.log_queue.put(f"HTML exported: {output}")
+                self._state.log_queue.put(_EXPORT_DONE_SENTINEL)
             except Exception as exc:
-                self._log_queue.put(f"HTML export failed: {exc}")
-                self._log_queue.put(_EXPORT_ERROR_SENTINEL)
+                self._state.log_queue.put(f"HTML export failed: {exc}")
+                self._state.log_queue.put(_EXPORT_ERROR_SENTINEL)
 
         threading.Thread(target=_export, daemon=True).start()
 
@@ -1225,7 +1221,9 @@ class VirdaApp(QObject):
 
     def _ensure_results_viewer(self) -> ViewerWidget:
         if self._results_viewer_widget is None:
-            self._results_viewer_widget = ViewerWidget(self._preview_stack, log=self._log_queue.put)
+            self._results_viewer_widget = ViewerWidget(
+                self._preview_stack, log=self._state.log_queue.put
+            )
             self._results_viewer_widget.sceneFailed.connect(self._on_results_viewer_failed)
             self._preview_stack.addWidget(self._results_viewer_widget)
         return self._results_viewer_widget
@@ -1254,7 +1252,7 @@ class VirdaApp(QObject):
         return self._preview_worker
 
     def _on_preview_ready(self, seq: int, bundle: _PreviewBundle) -> None:
-        if self._closed or seq != self._preview_load_seq:
+        if self._state.closed or seq != self._preview_load_seq:
             return
         if bundle.mode == "table":
             self._set_results_table(bundle.headers, bundle.rows)
@@ -1262,7 +1260,7 @@ class VirdaApp(QObject):
             self._set_results_text(bundle.text)
 
     def _on_preview_failed(self, seq: int, message: str) -> None:
-        if self._closed or seq != self._preview_load_seq:
+        if self._state.closed or seq != self._preview_load_seq:
             return
         self._set_results_text(f"Failed to read preview:\n{message}")
 
@@ -1351,7 +1349,7 @@ class VirdaApp(QObject):
         app.exec()
 
     def _on_close(self) -> None:
-        self._closed = True
+        self._state.closed = True
         if self._preview_worker is not None:
             self._preview_worker.stop()
         if self._preview_thread is not None:

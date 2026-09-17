@@ -49,7 +49,7 @@ def test_collect_electrode_specs_skips_empty_and_duplicates(tmp_path) -> None:
         _FakeRow(str(tmp_path / "a.tsv"), "red"),  # duplicate path is skipped
         _FakeRow(str(tmp_path / "b.json"), "magenta"),
     ]
-    stub = SimpleNamespace(_electrode_rows=rows)
+    stub = SimpleNamespace(_state=SimpleNamespace(electrode_rows=rows))
     specs = VirdaApp._collect_electrode_specs(cast("VirdaApp", stub))
 
     assert specs == [
@@ -59,12 +59,13 @@ def test_collect_electrode_specs_skips_empty_and_duplicates(tmp_path) -> None:
 
 
 def test_ensure_stage3_group_without_project_dir(tmp_path) -> None:
-    stub = SimpleNamespace(_last_project_dir=None, _electrode_rows=[])
+    stub = SimpleNamespace(_state=SimpleNamespace(last_project_dir=None, electrode_rows=[]))
     assert VirdaApp._ensure_stage3_electrodes_group(cast("VirdaApp", stub)) is None
 
 
 def test_ensure_stage3_group_without_output_file(tmp_path) -> None:
-    stub = SimpleNamespace(_last_project_dir=str(tmp_path), _electrode_rows=[])
+    state = SimpleNamespace(last_project_dir=str(tmp_path), electrode_rows=[])
+    stub = SimpleNamespace(_state=state)
     assert VirdaApp._ensure_stage3_electrodes_group(cast("VirdaApp", stub)) is None
 
 
@@ -73,7 +74,8 @@ def test_ensure_stage3_group_already_present(tmp_path) -> None:
     electrodes.parent.mkdir()
     electrodes.write_text("[]", encoding="utf-8")
     rows = [_FakeRow(str(electrodes), "yellow")]
-    stub = SimpleNamespace(_last_project_dir=str(tmp_path), _electrode_rows=rows)
+    state = SimpleNamespace(last_project_dir=str(tmp_path), electrode_rows=rows)
+    stub = SimpleNamespace(_state=state)
     assert VirdaApp._ensure_stage3_electrodes_group(cast("VirdaApp", stub)) is None
 
 
