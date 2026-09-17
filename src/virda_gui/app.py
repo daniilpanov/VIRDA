@@ -17,7 +17,6 @@ automatically. Fiducials from an MNE ``coordsystem.json`` loaded as the
 config file are passed to the pipeline automatically.
 """
 
-import json
 import logging
 import os
 import queue
@@ -30,7 +29,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -45,6 +44,9 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSplitter,
+    QStackedWidget,
+    QTableWidget,
+    QTableWidgetItem,
     QTabWidget,
     QTreeWidget,
     QTreeWidgetItem,
@@ -59,6 +61,14 @@ from virda.main import run
 from virda.models.config import Config
 from virda.models.coordsystem import Coordsystem
 
+from .preview import (
+    npy_table_rows_chunked,
+    open_npy_memmap,
+    parse_csv_tsv_chunked,
+    preview_artifact_text,
+    preview_json_text_chunked,
+    table_from_npy,
+)
 from .viewer import ViewerWidget
 from .widgets import (
     DirectorySelector,
@@ -94,6 +104,133 @@ class _QueueLogHandler(logging.Handler):
             self.handleError(record)
 
 
+class _PreviewBundle:
+    """Result of a background artifact preview: a table or plain text."""
+
+    __slots__ = ("mode", "headers", "rows", "text")
+
+    def __init__(
+        self,
+        mode: str,
+        headers: list[str] | None = None,
+        rows: list[list[str]] | None = None,
+        text: str | None = None,
+    ) -> None:
+        self.mode = mode
+        self.headers = headers or []
+        self.rows = rows or []
+        self.text = text or ""
+
+
+class _PreviewWorker(QObject):
+    """Parse a saved artifact off the GUI thread.
+
+    One worker lives for the whole session on a dedicated :class:`QThread`.
+    There is no request queue: :meth:`schedule` (called on the GUI thread)
+    overwrites the single latest request, and streaming readers abort an
+    in-flight parse as soon as a newer ``seq`` is scheduled.  ``ready``/
+    ``failed`` are delivered back to the main thread because the widgets (the
+    receivers) live there; stale results are dropped by the caller using the
+    monotonic ``seq`` token.
+    """
+
+    ready = Signal(int, object)  # seq, _PreviewBundle
+    failed = Signal(int, str)
+    wake = Signal()
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.wake.connect(self._on_wake)
+        self._requested: tuple[int, Path | None] | None = None
+        self._processed_seq = 0
+        self._aborted = False
+
+    def schedule(self, seq: int, path: Path | None) -> None:
+        """Store the latest request, overwriting any earlier one.
+
+        Called on the GUI thread: the single ``_requested`` write is atomic
+        under the GIL, so a worker mid-parse sees the superseding ``seq`` at
+        the next chunk boundary.  ``path is None`` cancels the active parse
+        without scheduling new work.
+        """
+        self._requested = (seq, path)
+        self.wake.emit()
+
+    def stop(self) -> None:
+        self._aborted = True
+
+    def _on_wake(self) -> None:
+        self._drain()
+
+    def _drain(self) -> None:
+        while not self._aborted:
+            requested = self._requested
+            if requested is None or requested[0] == self._processed_seq:
+                return
+            seq, path = requested
+            if path is None:
+                self._processed_seq = seq
+                continue
+            try:
+                bundle = self._build_chunked(seq, path)
+            except Exception as exc:
+                self.failed.emit(seq, str(exc))
+                self._processed_seq = seq
+            else:
+                if bundle is None:
+                    continue  # superseded mid-parse; pick up whatever is newest
+                self.ready.emit(seq, bundle)
+                self._processed_seq = seq
+
+    def _build_chunked(self, seq: int, path: Path) -> _PreviewBundle | None:
+        def is_current() -> bool:
+            requested = self._requested
+            return not self._aborted and requested is not None and requested[0] == seq
+
+        if path.is_dir():
+            n = sum(1 for p in path.rglob("*") if p.is_file())
+            return _PreviewBundle("text", text=f"{path}\n\n{n} file(s) in this folder.")
+
+        suffix = path.suffix.lower()
+
+        if suffix in (".csv", ".tsv"):
+            parsed = parse_csv_tsv_chunked(path, is_current)
+            if parsed is None:
+                return None
+            headers, rows = parsed
+            return _PreviewBundle("table", headers=headers, rows=rows)
+
+        if suffix == ".json":
+            text = preview_json_text_chunked(path, is_current)
+            if text is None:
+                return None
+            return _PreviewBundle("text", text=text)
+
+        if suffix == ".npy":
+            array = open_npy_memmap(path)
+            try:
+                try:
+                    headers, tabular = table_from_npy(array, path.name)
+                except ValueError:
+                    return _PreviewBundle("text", text=preview_artifact_text(path, array=array))
+                rows = npy_table_rows_chunked(tabular, is_current)
+                if rows is None:
+                    return None
+                return _PreviewBundle("table", headers=headers, rows=rows)
+            finally:
+                if isinstance(array, np.memmap):
+                    array.flush()
+                    array._mmap.close()
+                    del array
+
+        if not is_current():
+            return None
+        text = preview_artifact_text(path)
+        if not is_current():
+            return None
+        return _PreviewBundle("text", text=text)
+
+
 _ELECTRODE_PALETTE = ["yellow", "lime", "magenta", "cyan", "orange", "white"]
 
 _PROJECT_ARTIFACT_DIRS = [
@@ -106,9 +243,6 @@ _PROJECT_ARTIFACT_DIRS = [
     "quality_control",
     "logs",
 ]
-
-_TEXT_PREVIEW_SUFFIXES = {".txt", ".log", ".csv", ".tsv", ".md"}
-_PREVIEW_MAX_CHARS = 8000
 
 _ADVANCED_FIELD_DEFAULTS: dict[str, str] = {
     "otsu_scope": "all",
@@ -299,10 +433,16 @@ class _VirdaMainWindow(QMainWindow):
             super().closeEvent(event)
 
 
-class VirdaApp:
-    """Main application window."""
+class VirdaApp(QObject):
+    """Main application window.
+
+    Subclasses :class:`QObject` so slots connected to background-worker signals
+    are queued to the GUI thread (a plain class would invoke them in the
+    emitting thread and touch Qt widgets off-thread).
+    """
 
     def __init__(self) -> None:
+        super().__init__()
         self._root = _VirdaMainWindow(self._on_close)
         self._root.setWindowTitle("VIRDA — Electrode Localization System")
         self._root.resize(860, 640)
@@ -319,6 +459,10 @@ class VirdaApp:
         self._palette_index = 0
         self._stage3_summary: dict[str, Any] | None = None
         self._coordsystem: Coordsystem | None = None
+        self._preview_load_seq = 0
+        self._preview_thread: QThread | None = None
+        self._preview_worker: _PreviewWorker | None = None
+        self._closed = False
 
         # Capture pipeline/library logs into the log pane (console handlers
         # set up by the pipeline itself keep working).
@@ -494,13 +638,26 @@ class VirdaApp:
         self._results_tree.setHeaderLabels(["Artifact", "Size", "Modified"])
         self._results_tree.setColumnWidth(0, 260)
         self._results_tree.itemSelectionChanged.connect(self._on_results_artifact_selected)
+        self._results_tree.itemDoubleClicked.connect(self._on_results_artifact_double_clicked)
         tree_layout.addWidget(self._results_tree)
 
         preview_box = QGroupBox("Preview", splitter)
         preview_layout = QVBoxLayout(preview_box)
-        self._results_preview = QPlainTextEdit(preview_box)
+        self._preview_stack = QStackedWidget(preview_box)
+        preview_layout.addWidget(self._preview_stack)
+
+        self._results_preview = QPlainTextEdit(self._preview_stack)
         self._results_preview.setReadOnly(True)
-        preview_layout.addWidget(self._results_preview)
+        self._preview_stack.addWidget(self._results_preview)
+
+        self._results_table = QTableWidget(self._preview_stack)
+        self._results_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._results_table.setAlternatingRowColors(True)
+        self._preview_stack.addWidget(self._results_table)
+
+        self._results_viewer_widget: ViewerWidget | None = None
+
+        self._preview_stack.setCurrentWidget(self._results_preview)
 
         splitter.addWidget(tree_widget)
         splitter.addWidget(preview_box)
@@ -890,7 +1047,7 @@ class VirdaApp:
 
     def _open_viewer(self, project: Path) -> None:
         mesh_path = project / "mesh" / "final_mesh.ply"
-        fiducials_path = project / "fiducials" / "fiducials.json"
+        fiducials_path = project / "input" / "fiducials.json"
         normals_path = project / "ese" / "normals.npy"
 
         nifti = self._nifti.get()
@@ -1009,7 +1166,7 @@ class VirdaApp:
     def _refresh_saved_results(self) -> None:
         tree = self._results_tree
         tree.clear()
-        self._set_results_preview("")
+        self._clear_preview()
 
         project = self._selected_results_project()
         if project is None:
@@ -1066,18 +1223,93 @@ class VirdaApp:
         path = item.data(0, Qt.ItemDataRole.UserRole)
         if path is None:
             return
-        try:
-            if path.is_dir():
-                n = sum(1 for p in path.rglob("*") if p.is_file())
-                preview = f"{path}\n\n{n} file(s) in this folder."
-            else:
-                preview = self._preview_artifact(path)
-        except Exception as exc:
-            preview = f"Failed to read {path}:\n{exc}"
-        self._set_results_preview(preview)
+        self._start_preview_load(path)
 
-    def _set_results_preview(self, text: str) -> None:
+    def _on_results_artifact_double_clicked(self, item: QTreeWidgetItem, _column: int) -> None:
+        path = item.data(0, Qt.ItemDataRole.UserRole)
+        if path is None or path.is_dir():
+            return
+        name = path.name.lower()
+        if not (name.endswith(".ply") or name.endswith((".nii.gz", ".nii"))):
+            return
+        viewer = self._ensure_results_viewer()
+        if name.endswith(".ply"):
+            viewer.load(mesh_path=str(path))
+        else:
+            viewer.load(nifti_path=str(path))
+        self._preview_stack.setCurrentWidget(viewer)
+        self._preview_load_seq += 1
+        if self._preview_worker is not None:
+            self._preview_worker.schedule(self._preview_load_seq, None)
+
+    def _ensure_results_viewer(self) -> ViewerWidget:
+        if self._results_viewer_widget is None:
+            self._results_viewer_widget = ViewerWidget(self._preview_stack, log=self._log_queue.put)
+            self._results_viewer_widget.sceneFailed.connect(self._on_results_viewer_failed)
+            self._preview_stack.addWidget(self._results_viewer_widget)
+        return self._results_viewer_widget
+
+    def _on_results_viewer_failed(self, message: str) -> None:
+        self._set_results_text(f"3D preview failed: {message}")
+
+    def _start_preview_load(self, path: Path) -> None:
+        self._preview_load_seq += 1
+        seq = self._preview_load_seq
+        self._clear_preview()
+        self._set_results_text(f"Loading {path.name}...")
+        self._ensure_preview_worker().schedule(seq, path)
+
+    def _ensure_preview_worker(self) -> _PreviewWorker:
+        if self._preview_thread is None:
+            thread = QThread(self)
+            worker = _PreviewWorker()
+            worker.moveToThread(thread)
+            worker.ready.connect(self._on_preview_ready)
+            worker.failed.connect(self._on_preview_failed)
+            thread.start()
+            self._preview_thread = thread
+            self._preview_worker = worker
+        assert self._preview_worker is not None
+        return self._preview_worker
+
+    def _on_preview_ready(self, seq: int, bundle: _PreviewBundle) -> None:
+        if self._closed or seq != self._preview_load_seq:
+            return
+        if bundle.mode == "table":
+            self._set_results_table(bundle.headers, bundle.rows)
+        else:
+            self._set_results_text(bundle.text)
+
+    def _on_preview_failed(self, seq: int, message: str) -> None:
+        if self._closed or seq != self._preview_load_seq:
+            return
+        self._set_results_text(f"Failed to read preview:\n{message}")
+
+    def _set_results_text(self, text: str) -> None:
+        self._preview_stack.setCurrentWidget(self._results_preview)
         self._results_preview.setPlainText(text)
+
+    def _set_results_table(self, headers: list[str], rows: list[list[str]]) -> None:
+        table = self._results_table
+        n_columns = max(len(headers), 1)
+        table.clear()
+        table.setColumnCount(n_columns)
+        if headers:
+            table.setHorizontalHeaderLabels(headers)
+        else:
+            table.setHorizontalHeaderLabels([f"Col {i}" for i in range(n_columns)])
+        table.setRowCount(len(rows))
+        for i, row in enumerate(rows):
+            for j in range(n_columns):
+                table.setItem(i, j, QTableWidgetItem(row[j] if j < len(row) else ""))
+        table.resizeColumnsToContents()
+        self._preview_stack.setCurrentWidget(table)
+
+    def _clear_preview(self) -> None:
+        self._results_preview.setPlainText("")
+        self._results_table.clear()
+        self._results_table.setRowCount(0)
+        self._preview_stack.setCurrentWidget(self._results_preview)
 
     @staticmethod
     def _format_file_size(path: Path) -> str:
@@ -1091,57 +1323,6 @@ class VirdaApp:
     @staticmethod
     def _format_mtime(path: Path) -> str:
         return datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
-
-    @staticmethod
-    def _preview_artifact(path: Path) -> str:
-        """Human-readable preview of a saved artifact (JSON/NIfTI/npy/PLY/text)."""
-        name = path.name.lower()
-        suffix = path.suffix.lower()
-        header_text = f"{path}\n{'-' * 60}\n"
-
-        def _truncate(body: str) -> str:
-            if len(body) > _PREVIEW_MAX_CHARS:
-                body = (
-                    body[:_PREVIEW_MAX_CHARS]
-                    + f"\n\n... (truncated to first {_PREVIEW_MAX_CHARS} characters)"
-                )
-            return header_text + body
-
-        if suffix == ".json":
-            data = json.loads(path.read_text(encoding="utf-8"))
-            return _truncate(json.dumps(data, indent=2, ensure_ascii=False))
-
-        if name.endswith((".nii.gz", ".nii")):
-            import nibabel as nib
-
-            img: Any = nib.load(str(path))
-            nii_header: Any = img.header
-            shape = tuple(int(v) for v in nii_header.get_data_shape())
-            zooms = tuple(round(float(z), 3) for z in nii_header.get_zooms()[:3])
-            return (
-                header_text + f"NIfTI volume\n  shape         : {shape}\n  spacing (mm)  : {zooms}"
-            )
-
-        if suffix == ".npy":
-            array = np.load(path, allow_pickle=False)
-            body = f"NumPy array\n  shape : {array.shape}\n  dtype : {array.dtype}"
-            return _truncate(body)
-
-        if suffix == ".ply":
-            lines: list[str] = []
-            with open(path, "rb") as fh:
-                for line in fh:
-                    decoded = line.decode("ascii", errors="replace").rstrip("\r\n")
-                    lines.append(decoded)
-                    if len(lines) >= 100 or decoded.strip() == "end_header":
-                        break
-            return _truncate("PLY header:\n" + "\n".join(lines))
-
-        if suffix in _TEXT_PREVIEW_SUFFIXES:
-            return _truncate(path.read_text(encoding="utf-8", errors="replace"))
-
-        size_kb = path.stat().st_size / 1024
-        return header_text + f"(binary file, no preview — {size_kb:.1f} KB)"
 
     def _on_show_in_explorer(self) -> None:
         project = self._selected_results_project()
@@ -1189,6 +1370,13 @@ class VirdaApp:
         app.exec()
 
     def _on_close(self) -> None:
+        self._closed = True
+        if self._preview_worker is not None:
+            self._preview_worker.stop()
+        if self._preview_thread is not None:
+            self._preview_thread.quit()
+        if self._results_viewer_widget is not None:
+            self._results_viewer_widget.shutdown()
         remove_log_handler(self._log_handler)
 
 
