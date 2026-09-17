@@ -19,7 +19,7 @@ dependencies = [
 
 [project.scripts]
 virda-gui = "virda_gui.app:main"
-virda-gui-viewer = "virda_gui.viewer:main"
+virda-gui-viewer = "virda_gui.viewer_cli:main"
 virda-gui-html = "virda_gui.html_export:main"
 
 [dependency-groups]
