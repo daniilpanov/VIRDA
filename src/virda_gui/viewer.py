@@ -157,14 +157,16 @@ class ViewerWidget(QWidget):
         self.sceneFailed.emit(message)
 
     def _finish_loading(self) -> None:
+        # deleteLater() must be posted while the worker's event loop is still
+        # live, otherwise the DeferredDelete event is never processed.
+        if self._worker is not None:
+            self._worker.deleteLater()
         if self._thread is not None:
             self._thread.quit()
             self._thread.wait()
             self._thread.deleteLater()
             self._thread = None
-        if self._worker is not None:
-            self._worker.deleteLater()
-            self._worker = None
+        self._worker = None
 
     def clear_scene(self) -> None:
         self._plotter.clear()
@@ -413,6 +415,18 @@ class ViewerWidget(QWidget):
         :meth:`closeEvent` is never delivered (children of a main window).
         """
         if self._thread is not None and self._thread.isRunning():
+            if self._worker is not None:
+                self._worker.loaded.disconnect(self._on_scene_loaded)
+                self._worker.failed.disconnect(self._on_scene_failed)
+                # deleteLater() must be posted while the worker's event loop is
+                # still live, otherwise the DeferredDelete event is never processed.
+                self._worker.deleteLater()
             self._thread.quit()
             self._thread.wait(3000)
+            # Never delete a thread that is still running (wait timed out);
+            # destroying a live QThread is undefined behaviour.  In that case
+            # the thread keeps running under its parent until it finishes.
+            if self._thread.isFinished():
+                self._thread.deleteLater()
             self._thread = None
+            self._worker = None
