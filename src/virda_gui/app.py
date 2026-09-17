@@ -33,7 +33,6 @@ from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
-    QDialog,
     QFrame,
     QGroupBox,
     QHBoxLayout,
@@ -42,7 +41,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
-    QScrollArea,
     QSplitter,
     QStackedWidget,
     QTableWidget,
@@ -61,7 +59,14 @@ from virda.main import run
 from virda.models.config import Config
 from virda.models.coordsystem import Coordsystem
 
-from .constants import CONFIG_KEY_TO_INPUT, ELECTRODE_PALETTE, PROJECT_ARTIFACT_DIRS
+from .advanced_settings import AdvancedSettingsDialog
+from .constants import (
+    ADVANCED_FIELD_DEFAULTS,
+    CONFIG_KEY_TO_ADVANCED,
+    CONFIG_KEY_TO_INPUT,
+    ELECTRODE_PALETTE,
+    PROJECT_ARTIFACT_DIRS,
+)
 from .preview import (
     npy_table_rows_chunked,
     open_npy_memmap,
@@ -233,174 +238,6 @@ class _PreviewWorker(QObject):
         return _PreviewBundle("text", text=text)
 
 
-_ADVANCED_FIELD_DEFAULTS: dict[str, str] = {
-    "otsu_scope": "all",
-    "otsu_threshold_scale": "0.6",
-    "closing_radius": "5",
-    "seal_enabled": "true",
-    "seal_radius": "4",
-    "cleaner_min_vertices": "100",
-    "cleaner_merge_digits": "7",
-    "smoother_type": "laplacian",
-    "smoother_iterations": "5",
-    "smoother_lamb": "0.5",
-    "smoother_nu": "-0.53",
-    "ese_offset_mm": "",
-    "neighborhood_radius_mm": "10.0",
-    "k_neighbors": "",
-    "pca_sigma_mm": "5.0",
-    "min_neighbors": "5",
-    "use_weighted_pca": "false",
-    "residual_threshold_mm": "10.0",
-    "calibrate_ese_offset": "true",
-}
-
-_CONFIG_KEY_TO_ADVANCED: dict[str, str] = {
-    "otsu_scope": "otsu_scope",
-    "otsu_threshold_scale": "otsu_threshold_scale",
-    "closing_radius": "closing_radius",
-    "seal_enabled": "seal_enabled",
-    "seal_radius": "seal_radius",
-    "cleaner_min_vertices": "cleaner_min_vertices",
-    "cleaner_merge_digits": "cleaner_merge_digits",
-    "smoother_type": "smoother_type",
-    "smoother_iterations": "smoother_iterations",
-    "smoother_lamb": "smoother_lamb",
-    "smoother_nu": "smoother_nu",
-    "ese_offset_mm": "ese_offset_mm",
-    "neighborhood_radius_mm": "neighborhood_radius_mm",
-    "k_neighbors": "k_neighbors",
-    "pca_sigma_mm": "pca_sigma_mm",
-    "min_neighbors": "min_neighbors",
-    "use_weighted_pca": "use_weighted_pca",
-    "residual_threshold_mm": "residual_threshold_mm",
-    "calibrate_ese_offset": "calibrate_ese_offset",
-}
-
-_ADVANCED_COMBO_FIELDS: dict[str, list[str]] = {
-    "otsu_scope": ["all", "foreground"],
-    "smoother_type": ["laplacian", "taubin"],
-}
-
-
-class AdvancedSettingsDialog(QDialog):
-    """Modal dialog for advanced pipeline parameters."""
-
-    def __init__(
-        self,
-        parent: QWidget | None,
-        values: dict[str, str],
-    ) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Advanced Settings")
-        self.setModal(True)
-
-        self.result_values: dict[str, str] = dict(values)
-        self.confirmed: bool = False
-
-        self._fields: dict[str, LabeledField] = {}
-
-        self._build_ui()
-
-    def _build_ui(self) -> None:
-        scroll = QScrollArea(self)
-        scroll.setWidgetResizable(True)
-        container = QWidget()
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(4)
-
-        self._build_segmentation_section(container, layout)
-        self._build_mesh_section(container, layout)
-        self._build_ese_section(container, layout)
-        self._build_neighborhood_section(container, layout)
-        self._build_stage3_section(container, layout)
-
-        btn_frame = QFrame(container)
-        btn_layout = QHBoxLayout(btn_frame)
-        btn_layout.setContentsMargins(0, 8, 0, 0)
-
-        ok_btn = QPushButton("OK")
-        ok_btn.setFixedWidth(100)
-        ok_btn.clicked.connect(self._on_ok)
-        btn_layout.addWidget(ok_btn)
-
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.clicked.connect(self.reject)
-        btn_layout.addWidget(cancel_btn)
-
-        layout.addWidget(btn_frame)
-        scroll.setWidget(container)
-
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.addWidget(scroll)
-
-    def _build_segmentation_section(self, parent: QWidget, outer: QVBoxLayout) -> None:
-        box = QGroupBox("Stage 1: Segmentation", parent)
-        layout = QVBoxLayout(box)
-        self._add_field(box, layout, "otsu_scope", "Otsu scope", "combo")
-        self._add_field(box, layout, "otsu_threshold_scale", "Threshold scale", "entry")
-        self._add_field(box, layout, "closing_radius", "Closing radius", "entry")
-        outer.addWidget(box)
-
-    def _build_mesh_section(self, parent: QWidget, outer: QVBoxLayout) -> None:
-        box = QGroupBox("Stage 1: Mesh Processing", parent)
-        layout = QVBoxLayout(box)
-        self._add_field(box, layout, "seal_enabled", "Seal mask gaps", "check")
-        self._add_field(box, layout, "seal_radius", "Seal radius", "entry")
-        self._add_field(box, layout, "cleaner_min_vertices", "Min component vertices", "entry")
-        self._add_field(box, layout, "cleaner_merge_digits", "Merge digits", "entry")
-        self._add_field(box, layout, "smoother_type", "Smoother type", "combo")
-        self._add_field(box, layout, "smoother_iterations", "Iterations", "entry")
-        self._add_field(box, layout, "smoother_lamb", "Lambda", "entry")
-        self._add_field(box, layout, "smoother_nu", "Nu (Taubin)", "entry")
-        outer.addWidget(box)
-
-    def _build_ese_section(self, parent: QWidget, outer: QVBoxLayout) -> None:
-        box = QGroupBox("Stage 2: ESE Parameters", parent)
-        layout = QVBoxLayout(box)
-        self._add_field(box, layout, "ese_offset_mm", "Offset (mm)", "entry")
-        outer.addWidget(box)
-
-    def _build_neighborhood_section(self, parent: QWidget, outer: QVBoxLayout) -> None:
-        box = QGroupBox("Stage 2: Neighborhood", parent)
-        layout = QVBoxLayout(box)
-        self._add_field(box, layout, "neighborhood_radius_mm", "Radius (mm)", "entry")
-        self._add_field(box, layout, "k_neighbors", "K neighbors", "entry")
-        self._add_field(box, layout, "pca_sigma_mm", "PCA sigma (mm)", "entry")
-        self._add_field(box, layout, "min_neighbors", "Min neighbors", "entry")
-        self._add_field(box, layout, "use_weighted_pca", "Weighted PCA", "check")
-        outer.addWidget(box)
-
-    def _build_stage3_section(self, parent: QWidget, outer: QVBoxLayout) -> None:
-        box = QGroupBox("Stage 3: Localization", parent)
-        layout = QVBoxLayout(box)
-        self._add_field(box, layout, "residual_threshold_mm", "Residual threshold (mm)", "entry")
-        self._add_field(box, layout, "calibrate_ese_offset", "Calibrate ESE offset", "check")
-        outer.addWidget(box)
-
-    def _add_field(
-        self, parent: QWidget, layout: QVBoxLayout, key: str, label: str, widget_type: str
-    ) -> None:
-        values = _ADVANCED_COMBO_FIELDS.get(key)
-        field = LabeledField(
-            parent,
-            label=label,
-            widget_type=widget_type,  # type: ignore[arg-type]
-            values=values,
-            default=self.result_values.get(key, _ADVANCED_FIELD_DEFAULTS.get(key, "")),
-        )
-        layout.addWidget(field)
-        self._fields[key] = field
-
-    def _on_ok(self) -> None:
-        for key, field in self._fields.items():
-            self.result_values[key] = field.get()
-        self.confirmed = True
-        self.accept()
-
-
 class _VirdaMainWindow(QMainWindow):
     """Main window whose :meth:`closeEvent` triggers the app teardown hook."""
 
@@ -430,7 +267,7 @@ class VirdaApp(QObject):
         self._root.resize(860, 640)
 
         self._state = AppState(
-            advanced=dict(_ADVANCED_FIELD_DEFAULTS),
+            advanced=dict(ADVANCED_FIELD_DEFAULTS),
         )
         self._preview_load_seq = 0
         self._preview_thread: QThread | None = None
@@ -706,7 +543,7 @@ class VirdaApp(QObject):
         if data.get("measurements_path") and not self._measurements.get():
             self._measurements.set(str(data["measurements_path"]))
 
-        for config_key, adv_key in _CONFIG_KEY_TO_ADVANCED.items():
+        for config_key, adv_key in CONFIG_KEY_TO_ADVANCED.items():
             if config_key in data and not self._state.advanced.get(adv_key):
                 self._state.advanced[adv_key] = str(data[config_key])
 

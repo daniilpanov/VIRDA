@@ -10,10 +10,10 @@ from typing import cast
 
 from PySide6.QtWidgets import QTreeWidgetItem
 
-from virda_gui.app import (
-    _ADVANCED_FIELD_DEFAULTS,
-    _CONFIG_KEY_TO_ADVANCED,
-    VirdaApp,
+from virda_gui.app import VirdaApp
+from virda_gui.constants import (
+    ADVANCED_FIELD_DEFAULTS,
+    CONFIG_KEY_TO_ADVANCED,
 )
 
 
@@ -32,13 +32,13 @@ class _FakeRow:
 
 
 def test_advanced_defaults_cover_stage3() -> None:
-    assert _ADVANCED_FIELD_DEFAULTS["residual_threshold_mm"] == "10.0"
-    assert _ADVANCED_FIELD_DEFAULTS["calibrate_ese_offset"] == "true"
+    assert ADVANCED_FIELD_DEFAULTS["residual_threshold_mm"] == "10.0"
+    assert ADVANCED_FIELD_DEFAULTS["calibrate_ese_offset"] == "true"
 
 
 def test_config_keys_map_stage3_fields() -> None:
-    assert _CONFIG_KEY_TO_ADVANCED["residual_threshold_mm"] == "residual_threshold_mm"
-    assert _CONFIG_KEY_TO_ADVANCED["calibrate_ese_offset"] == "calibrate_ese_offset"
+    assert CONFIG_KEY_TO_ADVANCED["residual_threshold_mm"] == "residual_threshold_mm"
+    assert CONFIG_KEY_TO_ADVANCED["calibrate_ese_offset"] == "calibrate_ese_offset"
 
 
 def test_collect_electrode_specs_skips_empty_and_duplicates(tmp_path) -> None:
