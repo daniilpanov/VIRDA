@@ -61,6 +61,7 @@ from virda.main import run
 from virda.models.config import Config
 from virda.models.coordsystem import Coordsystem
 
+from .constants import CONFIG_KEY_TO_INPUT, ELECTRODE_PALETTE, PROJECT_ARTIFACT_DIRS
 from .preview import (
     npy_table_rows_chunked,
     open_npy_memmap,
@@ -231,19 +232,6 @@ class _PreviewWorker(QObject):
         return _PreviewBundle("text", text=text)
 
 
-_ELECTRODE_PALETTE = ["yellow", "lime", "magenta", "cyan", "orange", "white"]
-
-_PROJECT_ARTIFACT_DIRS = [
-    "input",
-    "segmentation",
-    "mesh",
-    "fiducials",
-    "ese",
-    "localization",
-    "quality_control",
-    "logs",
-]
-
 _ADVANCED_FIELD_DEFAULTS: dict[str, str] = {
     "otsu_scope": "all",
     "otsu_threshold_scale": "0.6",
@@ -286,13 +274,6 @@ _CONFIG_KEY_TO_ADVANCED: dict[str, str] = {
     "use_weighted_pca": "use_weighted_pca",
     "residual_threshold_mm": "residual_threshold_mm",
     "calibrate_ese_offset": "calibrate_ese_offset",
-}
-
-_CONFIG_KEY_TO_INPUT: dict[str, str] = {
-    "nifti_path": "nifti_path",
-    "project_dir": "project_dir",
-    "fiducials_path": "fiducials_path",
-    "auto_detect_fiducials": "auto_detect_fiducials",
 }
 
 _ADVANCED_COMBO_FIELDS: dict[str, list[str]] = {
@@ -722,7 +703,7 @@ class VirdaApp(QObject):
         self._populate_from_config(data)
 
     def _populate_from_config(self, data: dict[str, Any]) -> None:
-        for config_key, attr_name in _CONFIG_KEY_TO_INPUT.items():
+        for config_key, attr_name in CONFIG_KEY_TO_INPUT.items():
             if config_key in data:
                 widget = getattr(self, f"_{attr_name}", None)
                 if widget is not None and not widget.get():
@@ -772,7 +753,7 @@ class VirdaApp(QObject):
 
     def _on_add_electrode_group(self, path: str = "", color: str | None = None) -> None:
         if color is None:
-            color = _ELECTRODE_PALETTE[self._palette_index % len(_ELECTRODE_PALETTE)]
+            color = ELECTRODE_PALETTE[self._palette_index % len(ELECTRODE_PALETTE)]
             self._palette_index += 1
 
         row = ElectrodeGroupRow(
@@ -1178,11 +1159,11 @@ class VirdaApp(QObject):
         root_item.setData(0, Qt.ItemDataRole.UserRole, project)
         tree.addTopLevelItem(root_item)
 
-        known = [name for name in _PROJECT_ARTIFACT_DIRS if (project / name).is_dir()]
+        known = [name for name in PROJECT_ARTIFACT_DIRS if (project / name).is_dir()]
         extra_dirs = sorted(
             entry.name
             for entry in project.iterdir()
-            if entry.is_dir() and entry.name not in _PROJECT_ARTIFACT_DIRS
+            if entry.is_dir() and entry.name not in PROJECT_ARTIFACT_DIRS
         )
         loose_files = sorted(entry for entry in project.iterdir() if entry.is_file())
 
