@@ -128,23 +128,22 @@ class PipelineRunner(QObject):
         """Main thread: drain the log queue and turn sentinels into signals.
 
         Plain log lines are handed to ``append``, which writes them to the
-        visible log widget.
+        visible log widget.  The whole queue is drained per call so a sentinel
+        from one producer (e.g. HTML export finishing while the pipeline still
+        runs) no longer cuts off the other producer's lines for this tick.
         """
         try:
             while True:
                 msg = self._state.log_queue.get_nowait()
                 if msg == _DONE_SENTINEL:
                     self.finished.emit()
-                    break
-                if msg == _ERROR_SENTINEL:
+                elif msg == _ERROR_SENTINEL:
                     self.failed.emit()
-                    break
-                if msg == _EXPORT_DONE_SENTINEL:
+                elif msg == _EXPORT_DONE_SENTINEL:
                     self.exportDone.emit()
-                    break
-                if msg == _EXPORT_ERROR_SENTINEL:
+                elif msg == _EXPORT_ERROR_SENTINEL:
                     self.exportFailed.emit()
-                    break
-                append(msg)
+                else:
+                    append(msg)
         except queue.Empty:
             pass
