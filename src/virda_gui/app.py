@@ -17,8 +17,6 @@ automatically. Fiducials from an MNE ``coordsystem.json`` loaded as the
 config file are passed to the pipeline automatically.
 """
 
-import os
-import shutil
 import subprocess
 from collections.abc import Callable
 from datetime import datetime
@@ -62,6 +60,7 @@ from .constants import (
     ELECTRODE_PALETTE,
     PROJECT_ARTIFACT_DIRS,
 )
+from .file_manager import open_in_file_manager
 from .pipeline_runner import PipelineRunner
 from .preview_worker import _PreviewBundle, _PreviewWorker
 from .state import AppState
@@ -921,31 +920,12 @@ class VirdaApp(QObject):
                 "Select a valid project directory on the Saved Results tab first.",
             )
             return
-        opener = self._file_manager_opener()
-        if opener is None:
-            return
         try:
-            opener(project)
-        except (OSError, subprocess.SubprocessError) as exc:
+            open_in_file_manager(project)
+        except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
             QMessageBox.critical(
                 self._root, "File manager error", f"Could not open the folder:\n{exc}"
             )
-
-    @staticmethod
-    def _file_manager_opener() -> Callable[[Path], None] | None:
-        """Return a callable that reveals a folder, or None if unsupported."""
-        if hasattr(os, "startfile"):  # Windows
-            return lambda path: os.startfile(str(path))  # noqa: S606
-        for command in ("xdg-open", "open"):  # Linux, macOS
-            if shutil.which(command) is not None:
-                return lambda path, command=command: subprocess.run(
-                    [command, str(path)],
-                    check=True,
-                    timeout=10,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-        return None
 
     # ------------------------------------------------------------------
     # Lifecycle
