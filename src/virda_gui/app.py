@@ -311,6 +311,7 @@ class VirdaApp(QObject):
     def _on_close(self) -> None:
         self._state.closed = True
         self._results_tab.shutdown()
+        self._viewer_widget.shutdown()
         remove_log_handler(self._pipe_runner.log_handler)
 
 

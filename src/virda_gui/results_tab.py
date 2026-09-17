@@ -201,6 +201,15 @@ class ResultsTab(QWidget):
     def shutdown(self) -> None:
         if self._results_viewer_widget is not None:
             self._results_viewer_widget.shutdown()
+        worker = self._preview_worker
+        thread = self._preview_thread
+        if worker is not None:
+            worker.ready.disconnect(self._on_preview_ready)
+            worker.failed.disconnect(self._on_preview_failed)
+            worker.stop()
+        if thread is not None:
+            thread.quit()
+            thread.wait(3000)
 
     # ---- Actions ----
 
