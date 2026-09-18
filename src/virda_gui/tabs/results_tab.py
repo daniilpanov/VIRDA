@@ -201,15 +201,30 @@ class ResultsTab(QWidget):
     def shutdown(self) -> None:
         if self._results_viewer_widget is not None:
             self._results_viewer_widget.shutdown()
-        worker = self._preview_worker
         thread = self._preview_thread
+        if thread is None:
+            return
+        if not thread.isRunning():
+            self._preview_thread = None
+            self._preview_worker = None
+            return
+        worker = self._preview_worker
         if worker is not None:
             worker.ready.disconnect(self._on_preview_ready)
             worker.failed.disconnect(self._on_preview_failed)
             worker.stop()
-        if thread is not None:
-            thread.quit()
-            thread.wait(3000)
+            # deleteLater() must be posted while the thread's event loop is
+            # still live, otherwise the DeferredDelete event is never processed.
+            worker.deleteLater()
+        thread.quit()
+        thread.wait(3000)
+        # Never delete a thread that is still running (wait timed out);
+        # destroying a live QThread is undefined behaviour.  In that case the
+        # thread keeps running under its parent until it finishes.
+        if thread.isFinished():
+            thread.deleteLater()
+        self._preview_thread = None
+        self._preview_worker = None
 
     # ---- Actions ----
 
