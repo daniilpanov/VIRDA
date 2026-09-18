@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QPushButton,
     QStackedWidget,
     QTreeWidget,
@@ -15,6 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from virda_gui.importing import ROLE_REGISTRY, ImportRole
 from virda_gui.project import format_file_size, format_mtime, scan_project
 
 
@@ -24,12 +26,14 @@ class ProjectSidebar(QWidget):
     Shows the artifact tree of the open project, grouped by the well-known
     artifact subdirectories in pipeline order, with the *Open 3D viewer* and
     *Run pipeline* quick actions pinned to the bottom.  Double-clicking a file
-    emits :attr:`fileActivated`.
+    emits :attr:`fileActivated`; the right-click context menu offers the
+    role-based :attr:`importRequested` actions.
     """
 
     openViewerRequested = Signal()  # noqa: N815
     runPipelineRequested = Signal()  # noqa: N815
     fileActivated = Signal(object)  # noqa: N815  # path: Path
+    importRequested = Signal(object)  # noqa: N815  # role: ImportRole
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -46,6 +50,8 @@ class ProjectSidebar(QWidget):
         self._tree.setHeaderLabels(["Artifact", "Size", "Modified"])
         self._tree.setColumnWidth(0, 190)
         self._tree.itemDoubleClicked.connect(self._on_item_double_clicked)
+        self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._tree.customContextMenuRequested.connect(self._show_context_menu)
 
         self._open_viewer_btn = QPushButton("Open 3D viewer")
         self._open_viewer_btn.clicked.connect(self.openViewerRequested)
@@ -119,3 +125,23 @@ class ProjectSidebar(QWidget):
         path = item.data(0, Qt.ItemDataRole.UserRole)
         if path is not None and path.is_file():
             self.fileActivated.emit(path)
+
+    def _show_context_menu(self, position) -> None:
+        menu = QMenu(self._tree)
+        grouped: list[tuple[str, list[ImportRole]]] = []
+        group_order: list[str] = []
+        for role in ROLE_REGISTRY:
+            if role.group not in group_order:
+                group_order.append(role.group)
+                grouped.append((role.group, []))
+            grouped[group_order.index(role.group)][1].append(role)
+
+        import_menu = menu.addMenu("Import artifact...")
+        for group, roles in grouped:
+            group_menu = import_menu.addMenu(group)
+            for role in roles:
+                action = group_menu.addAction(role.label)
+                action.triggered.connect(
+                    lambda _checked=False, selected=role: self.importRequested.emit(selected)
+                )
+        menu.exec(self._tree.viewport().mapToGlobal(position))

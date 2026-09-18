@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 from virda.logging_setup import add_log_handler, remove_log_handler
 
 from .constants import ADVANCED_FIELD_DEFAULTS
+from .importing import ImportRole, import_file, import_target
 from .preferences import Preferences
 from .project import classify_artifact, create_project
 from .services.pipeline_runner import PipelineRunner
@@ -73,6 +74,7 @@ class IdeWindow(QMainWindow):
         self._sidebar.openViewerRequested.connect(self._on_open_viewer)
         self._sidebar.runPipelineRequested.connect(self._show_run_tab)
         self._sidebar.fileActivated.connect(self._open_file_tab)
+        self._sidebar.importRequested.connect(self._on_import_role)
 
         self._tabs = QTabWidget(self)
         self._tabs.setTabsClosable(True)
@@ -276,6 +278,42 @@ class IdeWindow(QMainWindow):
 
     def _on_scene_tab_failed(self, _tab: ViewerWidget, message: str) -> None:
         self._config_tab.log_viewer.append(f"3D viewer failed: {message}")
+
+    # ------------------------------------------------------------------
+    # Import
+    # ------------------------------------------------------------------
+
+    def _on_import_role(self, role: ImportRole) -> None:
+        """Pick a source file for *role* and import it into the project."""
+        if self._project is None:
+            QMessageBox.warning(self, "No project", "Open a project first to import artifacts.")
+            return
+        source, _selected_filter = QFileDialog.getOpenFileName(self, f"Import {role.label}...")
+        if not source:
+            return
+        self._perform_import(role, Path(source))
+
+    def _perform_import(self, role: ImportRole, source: Path) -> Path | None:
+        """Copy *source* into the project as *role*; return the target or None."""
+        if self._project is None:
+            return None
+        target = import_target(role, self._project, source)
+        exists = target.exists()
+        if exists:
+            answer = QMessageBox.question(
+                self,
+                "Overwrite?",
+                f"File already exists:\n{target}\n\nOverwrite it?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return None
+        self._config_tab.log_viewer.append(f"Importing {role.label}: {source} -> {target}")
+        import_file(self._project, source, role, overwrite=exists)
+        self._sidebar.set_project(self._project)
+        self.statusBar().showMessage(f"Imported {role.label} -> {target}", 5000)
+        return target
 
     # ------------------------------------------------------------------
     # Pipeline execution (background thread)

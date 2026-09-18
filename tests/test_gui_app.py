@@ -454,3 +454,51 @@ def test_ide_window_prefills_run_tab_from_artifacts_offscreen(
     finally:
         window._on_close()
         app.quit()
+
+
+def test_perform_import_copies_into_project_and_refreshes_sidebar(
+    tmp_path: Path,
+) -> None:
+    """Importing a role copies the file and repopulates the sidebar tree."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    if os.environ.get("PYVISTA_OFF_SCREEN") is None:
+        os.environ["PYVISTA_OFF_SCREEN"] = "true"
+
+    from virda_gui.importing import ROLE_REGISTRY
+
+    role = next(role for role in ROLE_REGISTRY if role.key == "mesh")
+
+    try:
+        from PySide6.QtWidgets import QApplication
+    except Exception as exc:  # pragma: no cover - depends on local Qt install
+        pytest.skip(f"Qt platform unavailable: {exc}")
+
+    app = QApplication.instance() or QApplication([])
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
+    try:
+        assert window._perform_import(role, tmp_path / "mesh.ply") is None  # no project yet
+
+        project = tmp_path / "sample-project"
+        project.mkdir()
+        window.open_project(project)
+        source = tmp_path / "final_mesh.ply"
+        source.write_bytes(b"ply\n")
+
+        target = window._perform_import(role, source)
+
+        assert target == project / "mesh" / "final_mesh.ply"
+        assert target.read_bytes() == b"ply\n"
+        root = window._sidebar._tree.topLevelItem(0)
+        assert root is not None
+        mesh_group = None
+        for i in range(root.childCount()):
+            child = root.child(i)
+            if child is not None and child.text(0) == "mesh":
+                mesh_group = child
+                break
+        assert mesh_group is not None
+        assert mesh_group.childCount() == 1
+    finally:
+        window._on_close()
+        app.quit()
