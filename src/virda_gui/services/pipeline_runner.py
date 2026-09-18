@@ -9,6 +9,7 @@ main thread turns those sentinels into Qt signals via :meth:`PipelineRunner.poll
 import logging
 import queue
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -62,14 +63,22 @@ class PipelineRunner(QObject):
         super().__init__()
         self._state = state
         self.log_handler = _QueueLogHandler(state.log_queue)
+        self._pipeline_thread: threading.Thread | None = None
+        self._export_threads: list[threading.Thread] = []
+        self._closed = False
 
     def submit(self, config: Config, measurements_path: str | None) -> None:
         """Start the pipeline on a background thread (daemon)."""
+        if self._closed:
+            return
         thread = threading.Thread(target=self._run, args=(config, measurements_path), daemon=True)
+        self._pipeline_thread = thread
         thread.start()
 
     def start_html_export(self, project: Path, output: Path) -> None:
         """Export the HTML viewer for ``project`` on a background thread."""
+        if self._closed:
+            return
 
         def _export() -> None:
             try:
@@ -82,7 +91,27 @@ class PipelineRunner(QObject):
                 self._state.log_queue.put(f"HTML export failed: {exc}")
                 self._state.log_queue.put(_EXPORT_ERROR_SENTINEL)
 
-        threading.Thread(target=_export, daemon=True).start()
+        thread = threading.Thread(target=_export, daemon=True)
+        self._export_threads.append(thread)
+        thread.start()
+
+    def shutdown(self, timeout: float = 3.0) -> None:
+        """Give background threads a bounded chance to finish at teardown.
+
+        The pipeline and HTML export threads are daemons, so the process can
+        exit without them; joining for a bounded time handles the common cases
+        (a finished or nearly finished thread) instead of tearing the app down
+        while a worker still writes into the log queue.
+        """
+        deadline = time.monotonic() + timeout
+        for thread in [self._pipeline_thread, *self._export_threads]:
+            if thread is None or not thread.is_alive():
+                continue
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            thread.join(remaining)
+        self._closed = True
 
     def _run(self, config: Config, measurements_path: str | None) -> None:
         """Background thread: run the pipeline and post results to the queue."""
