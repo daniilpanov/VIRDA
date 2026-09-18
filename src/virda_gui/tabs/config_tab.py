@@ -214,7 +214,7 @@ class ConfigTab(QWidget):
     # ---- Advanced settings ----
 
     def _on_show_advanced(self) -> None:
-        dialog = AdvancedSettingsDialog(self, self._state.advanced)
+        dialog = AdvancedSettingsDialog(self, self._state.advanced, nifti_path=self.nifti_path())
         if dialog.exec():
             self._state.advanced = dialog.result_values
 
@@ -307,6 +307,22 @@ class ConfigTab(QWidget):
             except ValueError:
                 raise ValueError(f"{key}: expected a number, got {val!r}") from None
 
+        def _mesh_voxel_size(val: str) -> float | None:
+            if not val.strip():
+                return None
+            size = _float(val, key="mesh_voxel_size_mm")
+            assert size is not None
+            if size <= 0:
+                raise ValueError("mesh_voxel_size_mm: must be positive")
+            return size
+
+        def _mesh_density(val: str) -> float:
+            density = _float(val, 100.0, key="mesh_density_percent")
+            assert density is not None
+            if not 1 <= density <= 100:
+                raise ValueError("mesh_density_percent: must be within [1, 100]")
+            return density
+
         return Config(
             nifti_path=nifti,
             project_dir=project,
@@ -320,6 +336,8 @@ class ConfigTab(QWidget):
             ),
             seal_enabled=adv["seal_enabled"] == "true",
             seal_radius=_int(adv["seal_radius"], 4, key="seal_radius"),
+            mesh_voxel_size_mm=_mesh_voxel_size(adv["mesh_voxel_size_mm"]),
+            mesh_density_percent=_mesh_density(adv["mesh_density_percent"]),
             cleaner_min_vertices=_int(adv["cleaner_min_vertices"], 100, key="cleaner_min_vertices"),
             cleaner_merge_digits=_int(adv["cleaner_merge_digits"], 7, key="cleaner_merge_digits"),
             smoother_type=adv["smoother_type"] or "laplacian",

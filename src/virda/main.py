@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from virda.config import VirdaSettings, build_config, resolve_config_files, resolve_stage3_config
+from virda.mesh.density import step_size_for_voxel_size
 from virda.models.config import Config
 from virda.models.electrode import Electrodes
 from virda.models.ese_mesh import ESEMesh
@@ -66,6 +67,8 @@ def _parse_cli_args() -> argparse.Namespace:
         "otsu_scope",
         "otsu_threshold_scale",
         "seal_radius",
+        "mesh_voxel_size_mm",
+        "mesh_density_percent",
         "cleaner_min_vertices",
         "cleaner_merge_digits",
         "smoother_type",
@@ -92,7 +95,15 @@ def _parse_cli_args() -> argparse.Namespace:
             }
             else (
                 float
-                if name in {"otsu_threshold_scale", "smoother_lamb", "smoother_nu", "ese_offset_mm"}
+                if name
+                in {
+                    "otsu_threshold_scale",
+                    "smoother_lamb",
+                    "smoother_nu",
+                    "ese_offset_mm",
+                    "mesh_voxel_size_mm",
+                    "mesh_density_percent",
+                }
                 else str
             )
         )
@@ -266,6 +277,14 @@ def main() -> None:
 
     stage1_result, ese_mesh, electrodes = run(config, measurements_path=args.measurements_path)
     print(f"Stage 1: mesh with {len(stage1_result.mesh.vertices)} vertices")
+    if config.mesh_voxel_size_mm is not None:
+        step, real_voxel = step_size_for_voxel_size(
+            config.mesh_voxel_size_mm, stage1_result.mri_volume.spacing
+        )
+        real_fmt = "x".join(f"{v:.3g}" for v in real_voxel)
+        print(f"Mesh density: step_size {step} -> real voxel {real_fmt} mm")
+    if config.mesh_density_percent < 100.0:
+        print(f"Mesh density: keeping {config.mesh_density_percent:.3g}% of the mesh")
     if ese_mesh is not None:
         print(f"Stage 2: ESE mesh with {len(ese_mesh.vertices)} vertices")
     if electrodes is not None:

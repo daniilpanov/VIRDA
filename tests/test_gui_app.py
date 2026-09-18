@@ -11,10 +11,16 @@ import os
 from types import SimpleNamespace
 from typing import cast
 
+import nibabel as nib
+import numpy as np
 import pytest
-from PySide6.QtWidgets import QTreeWidgetItem
+from PySide6.QtWidgets import QApplication, QTreeWidgetItem
 
+from virda.io.fiducial_helpers import save_fiducials
+from virda.main import run
+from virda.models.fiducial import Fiducial, Fiducials
 from virda_gui.constants import ADVANCED_FIELD_DEFAULTS, CONFIG_KEY_TO_ADVANCED
+from virda_gui.state import AppState
 from virda_gui.tabs.config_tab import ConfigTab
 from virda_gui.tabs.results_tab import ResultsTab
 
@@ -33,14 +39,144 @@ class _FakeRow:
         return self._color
 
 
+class _FakeSelector:
+    """Duck-typed stand-in for ``FileSelector`` / ``LabeledField`` accessors."""
+
+    def __init__(self, value: str = "") -> None:
+        self._value = value
+
+    def get(self) -> str:
+        return self._value
+
+    def set(self, value: str) -> None:
+        self._value = value
+
+
+def _config_tab_stub(tmp_path, advanced: dict[str, str]) -> SimpleNamespace:
+    nifti = tmp_path / "head.nii.gz"
+    nifti.write_bytes(b"\x00")
+    return SimpleNamespace(
+        _state=SimpleNamespace(
+            advanced=dict(advanced),
+            coordsystem=None,
+            electrode_rows=[],
+            palette_index=0,
+        ),
+        _nifti=_FakeSelector(str(nifti)),
+        _project_dir=_FakeSelector(str(tmp_path / "out")),
+        _fiducials=_FakeSelector(""),
+        _auto_detect_fid=_FakeSelector("false"),
+    )
+
+
+def test_collect_config_wires_mesh_density(tmp_path) -> None:
+    advanced = dict(ADVANCED_FIELD_DEFAULTS)
+    advanced["mesh_voxel_size_mm"] = "2"
+    advanced["mesh_density_percent"] = "50"
+
+    config = ConfigTab.collect_config(cast("ConfigTab", _config_tab_stub(tmp_path, advanced)))
+
+    assert config.mesh_voxel_size_mm == 2.0
+    assert config.mesh_density_percent == 50.0
+
+
+def test_collect_config_mesh_voxel_empty_means_native(tmp_path) -> None:
+    config = ConfigTab.collect_config(
+        cast("ConfigTab", _config_tab_stub(tmp_path, dict(ADVANCED_FIELD_DEFAULTS)))
+    )
+
+    assert config.mesh_voxel_size_mm is None
+    assert config.mesh_density_percent == 100.0
+
+
+def test_collect_config_rejects_nonpositive_voxel_size(tmp_path) -> None:
+    advanced = dict(ADVANCED_FIELD_DEFAULTS)
+    advanced["mesh_voxel_size_mm"] = "0"
+
+    with pytest.raises(ValueError, match="mesh_voxel_size_mm"):
+        ConfigTab.collect_config(cast("ConfigTab", _config_tab_stub(tmp_path, advanced)))
+
+
+def test_collect_config_rejects_out_of_range_density(tmp_path) -> None:
+    advanced = dict(ADVANCED_FIELD_DEFAULTS)
+    advanced["mesh_density_percent"] = "150"
+
+    with pytest.raises(ValueError, match="mesh_density_percent"):
+        ConfigTab.collect_config(cast("ConfigTab", _config_tab_stub(tmp_path, advanced)))
+
+
+def test_gui_end_to_end_mesh_density(tmp_path) -> None:
+    """The dialog value reaches the pipeline and the exported mesh artifact.
+
+    Builds a real :class:`ConfigTab`, feeds the advanced values through
+    :meth:`collect_config`, runs the pipeline exactly like the GUI does and
+    asserts that the resulting mesh (and the ``final_mesh.ply`` artifact the
+    3D viewer loads) has roughly half the vertices at 50% density.
+    """
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    QApplication.instance() or QApplication([])
+
+    shape = np.zeros((40, 40, 40), dtype=np.float32)
+    grid = np.indices((40, 40, 40))
+    shape[np.sum((grid - 20) ** 2, axis=0) <= 16**2] = 100
+    nifti = tmp_path / "head.nii.gz"
+    nib.save(nib.Nifti1Image(shape, np.eye(4)), nifti)
+    fiducials = Fiducials(
+        items=[
+            Fiducial(
+                fiducial_id="NAS",
+                name="Nasion",
+                coordinates=np.array([0.0, 10.0, -10.0]),
+                coordinate_system="world",
+                definition_method="manual",
+            )
+        ]
+    )
+    fid_path = tmp_path / "fiducials.json"
+    save_fiducials(fid_path, fiducials)
+
+    def _render(density: str) -> int:
+        advanced = dict(ADVANCED_FIELD_DEFAULTS)
+        advanced["mesh_voxel_size_mm"] = ""
+        advanced["mesh_density_percent"] = density
+        tab = ConfigTab(AppState(advanced=advanced))
+        tab._nifti.set(str(nifti))
+        tab._project_dir.set(str(tmp_path / f"out_{density}"))
+        tab._fiducials.set(str(fid_path))
+        config = tab.collect_config()
+        assert config.mesh_density_percent == float(density)
+        result, _, _ = run(config)
+        return len(result.mesh.vertices)
+
+    import trimesh
+
+    full_vertices = _render("100")
+    half_vertices = _render("50")
+    assert full_vertices > half_vertices * 1.5
+
+    loaded = trimesh.load(tmp_path / "out_50" / "mesh" / "final_mesh.ply")
+    assert isinstance(loaded, trimesh.Trimesh)
+    assert len(loaded.vertices) == half_vertices
+
+
 def test_advanced_defaults_cover_stage3() -> None:
     assert ADVANCED_FIELD_DEFAULTS["residual_threshold_mm"] == "10.0"
     assert ADVANCED_FIELD_DEFAULTS["calibrate_ese_offset"] == "true"
 
 
+def test_advanced_defaults_cover_mesh_density() -> None:
+    assert ADVANCED_FIELD_DEFAULTS["mesh_voxel_size_mm"] == ""
+    assert ADVANCED_FIELD_DEFAULTS["mesh_density_percent"] == "100"
+
+
 def test_config_keys_map_stage3_fields() -> None:
     assert CONFIG_KEY_TO_ADVANCED["residual_threshold_mm"] == "residual_threshold_mm"
     assert CONFIG_KEY_TO_ADVANCED["calibrate_ese_offset"] == "calibrate_ese_offset"
+
+
+def test_config_keys_map_mesh_density_fields() -> None:
+    assert CONFIG_KEY_TO_ADVANCED["mesh_voxel_size_mm"] == "mesh_voxel_size_mm"
+    assert CONFIG_KEY_TO_ADVANCED["mesh_density_percent"] == "mesh_density_percent"
 
 
 def test_collect_electrode_specs_skips_empty_and_duplicates(tmp_path) -> None:

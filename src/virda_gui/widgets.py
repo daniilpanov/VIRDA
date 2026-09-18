@@ -235,6 +235,12 @@ class LabeledField(QFrame):
             return "true" if self._check.isChecked() else "false"
         return self._entry.text()
 
+    def entry(self) -> QLineEdit:
+        """The underlying line edit of an ``entry`` field."""
+        if self._widget_type != "entry":
+            raise RuntimeError(f"{self._widget_type!r} field has no line edit")
+        return self._entry
+
     def set(self, value: str) -> None:
         if self._widget_type == "combo":
             self._combo.setCurrentText(value)
