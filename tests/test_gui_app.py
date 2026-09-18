@@ -1,9 +1,9 @@
 """Unit tests for the PySide6 application logic that does not need a display.
 
-These tests exercise the pure helper logic of :mod:`virda_gui.app` by calling
+These tests exercise the pure helper logic of :mod:`virda_gui` by calling
 the methods unbound against lightweight stubs, so no ``QApplication`` is
 created (CI runners have no display).  The one exception is the offscreen
-smoke test below, which constructs the real :class:`VirdaApp` to catch signal
+smoke tests, which construct the real :class:`IdeWindow` to catch signal
 wiring regressions that the stubs cannot.
 """
 
@@ -83,12 +83,12 @@ def test_ensure_stage3_group_already_present(tmp_path) -> None:
     assert ConfigTab.ensure_stage3_electrodes_group(cast("ConfigTab", stub)) is None
 
 
-def test_viewer_widget_importable_from_app() -> None:
+def test_viewer_widget_importable_from_main_window() -> None:
     """The 3D viewer tab embeds ``ViewerWidget`` from ``virda_gui.viewer.viewer``."""
-    import virda_gui.app as app_module
+    import virda_gui.main_window as main_window_module
     from virda_gui.viewer.viewer import ViewerWidget
 
-    assert vars(app_module)["ViewerWidget"] is ViewerWidget
+    assert vars(main_window_module)["ViewerWidget"] is ViewerWidget
 
 
 class _FakeViewer:
@@ -187,10 +187,10 @@ def test_double_click_directory_does_not_load(tmp_path) -> None:
     assert viewer.load_calls == []
 
 
-def test_virda_app_constructs_offscreen() -> None:
-    """The full widget tree builds, so every connected slot exists.
+def test_ide_window_runs_pipeline_tab_offscreen(tmp_path: Path) -> None:
+    """Opening a project shows the Run Pipeline tab; the sidebar can reopen it.
 
-    Builds the real ``VirdaApp`` under the offscreen Qt platform to catch
+    Builds the real ``IdeWindow`` under the offscreen Qt platform to catch
     ``AttributeError`` wiring regressions the stub-based tests cannot see
     (e.g. a ``Signal.connect`` target that was dropped during a refactor).
     Skips when the headless Qt platform is unavailable.
@@ -201,16 +201,33 @@ def test_virda_app_constructs_offscreen() -> None:
 
     try:
         from PySide6.QtWidgets import QApplication
-
-        from virda_gui.app import VirdaApp
     except Exception as exc:  # pragma: no cover - depends on local Qt install
         pytest.skip(f"Qt platform unavailable: {exc}")
 
     app = QApplication.instance() or QApplication([])
+    window = IdeWindow()
     try:
-        window = VirdaApp()
-        assert window._notebook.count() == 3
-        assert window._notebook.isTabEnabled(window._viewer_tab_index) is False
+        assert window._tabs.count() == 0
+
+        project = tmp_path / "sample-project"
+        (project / "mesh").mkdir(parents=True)
+        (project / "mesh" / "final_mesh.ply").write_bytes(b"ply\n")
+
+        window.open_project(project)
+        assert window._tabs.count() == 1
+        assert window._tabs.tabText(0) == "Run Pipeline"
+        assert window._config_tab.project_dir() == str(project)
+        assert window._sidebar._tree.topLevelItemCount() == 1
+
+        window._close_tab(0)
+        assert window._tabs.count() == 0
+        window._sidebar.runPipelineRequested.emit()
+        assert window._tabs.count() == 1
+        assert window._tabs.tabText(0) == "Run Pipeline"
+
+        window.close_project()
+        assert window._project is None
+        assert window._tabs.count() == 0
     finally:
         window._on_close()
         app.quit()
@@ -251,9 +268,9 @@ def test_ide_window_constructs_and_manages_project_offscreen(
 
         tab = QWidget()
         window._tabs.addTab(tab, "Untitled")
+        assert window._tabs.count() == 2  # run pipeline tab + embedded test tab
+        window._close_tab(1)
         assert window._tabs.count() == 1
-        window._close_tab(0)
-        assert window._tabs.count() == 0
         assert window.project() == project
 
         window.close_project()

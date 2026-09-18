@@ -277,6 +277,9 @@ class ConfigTab(QWidget):
     def project_dir(self) -> str:
         return self._project_dir.get().strip()
 
+    def set_project_dir(self, project: str | Path) -> None:
+        self._project_dir.set(str(project))
+
     def collect_config(self) -> Config:
         nifti = self._nifti.get() or None
         project = self._project_dir.get() or None
