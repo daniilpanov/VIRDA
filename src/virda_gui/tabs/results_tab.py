@@ -72,6 +72,7 @@ class ResultsTab(QWidget):
         row_layout.setContentsMargins(0, 0, 0, 0)
 
         row_layout.addWidget(self._results_project_dir, 1)
+        self._results_project_dir.directory_changed.connect(self.refresh)
 
         refresh_btn = QPushButton("Refresh")
         refresh_btn.clicked.connect(self.refresh)

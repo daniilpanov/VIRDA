@@ -94,6 +94,8 @@ class FileSelector(QFrame):
 class DirectorySelector(QFrame):
     """A label + line edit + *Browse* button row for selecting a directory."""
 
+    directory_changed = Signal(str)
+
     def __init__(
         self,
         parent: QWidget | None = None,
@@ -123,6 +125,7 @@ class DirectorySelector(QFrame):
         path = QFileDialog.getExistingDirectory(self, "Select directory")
         if path:
             self._edit.setText(path)
+            self.directory_changed.emit(path)
 
     def get(self) -> str:
         return self._edit.text()
