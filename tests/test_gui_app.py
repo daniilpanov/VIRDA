@@ -18,6 +18,10 @@ from PySide6.QtCore import QSettings, Signal
 from PySide6.QtWidgets import QWidget
 
 from virda_gui.constants import ADVANCED_FIELD_DEFAULTS, CONFIG_KEY_TO_ADVANCED
+from virda_gui.dialogs.project_dialog import (
+    ProjectStartDialog,
+    ask_create_project_folder,
+)
 from virda_gui.main_window import IdeWindow
 from virda_gui.preferences import Preferences
 from virda_gui.tabs.config_tab import ConfigTab
@@ -213,8 +217,8 @@ def test_ide_window_constructs_and_manages_project_offscreen(
         app.quit()
 
 
-def test_ide_window_restores_last_project_offscreen(tmp_path: Path) -> None:
-    """A fresh IdeWindow reopens the last project remembered via QSettings."""
+def test_ide_window_does_not_auto_restore_offscreen(tmp_path: Path) -> None:
+    """A fresh IdeWindow starts empty — auto-restore now lives in the dialog."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     if os.environ.get("PYVISTA_OFF_SCREEN") is None:
         os.environ["PYVISTA_OFF_SCREEN"] = "true"
@@ -235,14 +239,68 @@ def test_ide_window_restores_last_project_offscreen(tmp_path: Path) -> None:
         first.open_project(project)
     finally:
         first.close()
+    assert project in prefs.recent_projects()
 
     second = IdeWindow(prefs=prefs)
     try:
-        assert second.project() == project
-        recent = second._prefs.recent_projects()
-        assert project in recent
+        assert second.project() is None
     finally:
         second.close()
+    app.quit()
+
+
+def test_project_start_dialog_picks_path_offscreen(tmp_path: Path) -> None:
+    """The startup dialog returns the project the user accepted."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    if os.environ.get("PYVISTA_OFF_SCREEN") is None:
+        os.environ["PYVISTA_OFF_SCREEN"] = "true"
+
+    try:
+        from PySide6.QtWidgets import QApplication
+    except Exception as exc:  # pragma: no cover - depends on local Qt install
+        pytest.skip(f"Qt platform unavailable: {exc}")
+
+    app = QApplication.instance() or QApplication([])
+    prefs = _make_prefs(tmp_path)
+    chosen = tmp_path / "published"
+    (chosen / "note.txt").parent.mkdir(parents=True)
+    (chosen / "note.txt").write_text("x", encoding="utf-8")
+    prefs.note_project_opened(chosen)
+
+    dialog = ProjectStartDialog(prefs=prefs)
+    try:
+        dialog._accept(chosen)
+        assert dialog.project() == chosen
+    finally:
+        dialog.close()
+    app.quit()
+
+
+def test_ask_create_project_folder_warns_if_non_empty(tmp_path: Path, monkeypatch) -> None:
+    """Creating a project in a non-empty folder asks before opening it."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    if os.environ.get("PYVISTA_OFF_SCREEN") is None:
+        os.environ["PYVISTA_OFF_SCREEN"] = "true"
+
+    try:
+        from PySide6.QtWidgets import QApplication
+    except Exception as exc:  # pragma: no cover - depends on local Qt install
+        pytest.skip(f"Qt platform unavailable: {exc}")
+
+    from PySide6.QtWidgets import QFileDialog, QMessageBox
+
+    app = QApplication.instance() or QApplication([])
+    target = tmp_path / "wanted"
+    (target / "existing.txt").parent.mkdir(parents=True)
+    (target / "existing.txt").write_text("y", encoding="utf-8")
+
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a, **k: str(target))
+
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+    assert ask_create_project_folder(parent=None) == target
+
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.No)
+    assert ask_create_project_folder(parent=None) is None
     app.quit()
 
 
