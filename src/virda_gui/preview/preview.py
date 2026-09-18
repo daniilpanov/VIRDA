@@ -1,8 +1,8 @@
-"""Preview helpers for the Saved Results tab.
+"""Preview helpers for the project file preview tabs.
 
 Pure data helpers are kept free of Qt so they can be unit-tested without a
-display; the QThread worker and the tab widgets live in
-:mod:`virda_gui.preview.preview_worker` and :mod:`virda_gui.tabs.results_tab`.
+display; the QThread worker and the tab widget live in
+:mod:`virda_gui.preview.preview_worker` and :mod:`virda_gui.tabs.preview_tab`.
 """
 
 from __future__ import annotations

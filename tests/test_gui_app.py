@@ -15,13 +15,12 @@ from typing import cast
 
 import pytest
 from PySide6.QtCore import QSettings, Signal
-from PySide6.QtWidgets import QTreeWidgetItem, QWidget
+from PySide6.QtWidgets import QWidget
 
 from virda_gui.constants import ADVANCED_FIELD_DEFAULTS, CONFIG_KEY_TO_ADVANCED
 from virda_gui.main_window import IdeWindow
 from virda_gui.preferences import Preferences
 from virda_gui.tabs.config_tab import ConfigTab
-from virda_gui.tabs.results_tab import ResultsTab
 
 
 def _make_prefs(tmp_path: Path) -> Preferences:
@@ -116,102 +115,6 @@ def test_viewer_widget_importable_from_main_window() -> None:
     from virda_gui.viewer.viewer import ViewerWidget
 
     assert vars(main_window_module)["ViewerWidget"] is ViewerWidget
-
-
-class _FakeViewer:
-    def __init__(self) -> None:
-        self.load_calls: list[dict[str, str]] = []
-
-    def load(self, **kwargs: str) -> None:
-        self.load_calls.append(dict(kwargs))
-
-
-class _FakeStack:
-    def setCurrentWidget(self, widget: object) -> None:  # noqa: N802 - Qt naming
-        self.current = widget
-
-
-class _FakeItem:
-    def __init__(self, path: object) -> None:
-        self._path = path
-
-    def data(self, _role: object, _value: object) -> object:
-        return self._path
-
-
-def _double_click_stub(viewer: _FakeViewer) -> SimpleNamespace:
-    return SimpleNamespace(
-        _results_viewer_widget=viewer,
-        _preview_stack=_FakeStack(),
-        _preview_load_seq=0,
-        _preview_worker=None,
-        _ensure_results_viewer=lambda: viewer,
-    )
-
-
-def test_double_click_mesh_loads_interactive_preview(tmp_path) -> None:
-    mesh = tmp_path / "final_mesh.ply"
-    mesh.write_bytes(b"ply\n")
-    viewer = _FakeViewer()
-    stub = _double_click_stub(viewer)
-    item = _FakeItem(mesh)
-
-    ResultsTab._on_results_artifact_double_clicked(
-        cast("ResultsTab", stub),
-        cast("QTreeWidgetItem", item),
-        0,
-    )
-
-    assert viewer.load_calls == [{"mesh_path": str(mesh)}]
-    assert stub._preview_stack.current is viewer
-
-
-def test_double_click_nifti_loads_interactive_preview(tmp_path) -> None:
-    nifti = tmp_path / "head.nii.gz"
-    nifti.write_bytes(b"\x00")
-    viewer = _FakeViewer()
-    stub = _double_click_stub(viewer)
-    item = _FakeItem(nifti)
-
-    ResultsTab._on_results_artifact_double_clicked(
-        cast("ResultsTab", stub),
-        cast("QTreeWidgetItem", item),
-        0,
-    )
-
-    assert viewer.load_calls == [{"nifti_path": str(nifti)}]
-
-
-def test_double_click_non_visual_file_does_not_load(tmp_path) -> None:
-    csv_file = tmp_path / "electrode_coords.csv"
-    csv_file.write_text("id\n1\n", encoding="utf-8")
-    viewer = _FakeViewer()
-    stub = _double_click_stub(viewer)
-    item = _FakeItem(csv_file)
-
-    ResultsTab._on_results_artifact_double_clicked(
-        cast("ResultsTab", stub),
-        cast("QTreeWidgetItem", item),
-        0,
-    )
-
-    assert viewer.load_calls == []
-
-
-def test_double_click_directory_does_not_load(tmp_path) -> None:
-    directory = tmp_path / "mesh"
-    directory.mkdir()
-    viewer = _FakeViewer()
-    stub = _double_click_stub(viewer)
-    item = _FakeItem(directory)
-
-    ResultsTab._on_results_artifact_double_clicked(
-        cast("ResultsTab", stub),
-        cast("QTreeWidgetItem", item),
-        0,
-    )
-
-    assert viewer.load_calls == []
 
 
 def test_ide_window_runs_pipeline_tab_offscreen(tmp_path: Path) -> None:
