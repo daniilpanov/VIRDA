@@ -19,8 +19,8 @@ dependencies = [
 
 [project.scripts]
 virda-gui = "virda_gui.app:main"
-virda-gui-viewer = "virda_gui.viewer_cli:main"
-virda-gui-html = "virda_gui.html_export:main"
+virda-gui-viewer = "virda_gui.viewer.viewer_cli:main"
+virda-gui-html = "virda_gui.export.html_export:main"
 
 [dependency-groups]
 # Used only to build the frozen executables (see .github/workflows/build-exe.yml).

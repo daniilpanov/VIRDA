@@ -5,7 +5,7 @@ lives here so it can be tested without a display: mesh loading, MRI volume
 loading and downsampling, fiducial points, normal glyphs, electrode loading
 (Stage 3 JSON or tabular cRAS files) with automatic frame detection, and the
 QC report.  :class:`SceneData` is the plain-data result consumed by
-:class:`virda_gui.viewer.ViewerWidget` on the GUI thread.
+:class:`virda_gui.viewer.viewer.ViewerWidget` on the GUI thread.
 """
 
 import colorsys
@@ -21,7 +21,7 @@ import trimesh
 from nibabel import aff2axcodes
 from scipy.spatial import cKDTree
 
-from virda_gui.scene import (
+from .scene import (
     compute_normal_lines,
     downsample,
     load_fiducial_points,
@@ -425,7 +425,7 @@ class SceneData:
     """Fully resolved scene data, ready to be rendered.
 
     Produced off the GUI thread by :func:`collect_scene_data` and consumed on
-    the GUI thread by :meth:`virda_gui.viewer.ViewerWidget.set_scene`.
+    the GUI thread by :meth:`virda_gui.viewer.viewer.ViewerWidget.set_scene`.
     Contains only data objects (NumPy arrays and PyVista meshes), never actors
     or windows, so the collection step is testable without a display.
     """

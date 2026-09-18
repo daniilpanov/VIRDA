@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 from PySide6.QtCore import QObject, Signal
 
-from virda_gui.preview import (
+from .preview import (
     npy_table_rows_chunked,
     open_npy_memmap,
     parse_csv_tsv_chunked,

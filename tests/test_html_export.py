@@ -6,7 +6,7 @@ from pathlib import Path
 import nibabel as nib
 import numpy as np
 
-from virda_gui.html_export import (
+from virda_gui.export.html_export import (
     _encode_float16,
     _encode_float32,
     _encode_uint32,
@@ -14,7 +14,7 @@ from virda_gui.html_export import (
     export_project,
     render_html,
 )
-from virda_gui.scene import transform_points
+from virda_gui.viewer.scene import transform_points
 
 
 def _decode_float16(payload_field: str) -> np.ndarray:

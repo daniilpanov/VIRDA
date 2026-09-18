@@ -24,8 +24,8 @@ from collections.abc import Callable
 
 from PySide6.QtWidgets import QApplication, QMainWindow
 
-from virda_gui.viewer import ViewerWidget
-from virda_gui.viewer_loaders import parse_electrode_specs
+from .viewer import ViewerWidget
+from .viewer_loaders import parse_electrode_specs
 
 
 def show_viewer(
@@ -46,7 +46,7 @@ def show_viewer(
     Parameters map directly to the CLI flags of ``virda-gui-viewer``.  At
     least one of *nifti_path* or *mesh_path* must be provided.
     *electrode_specs* is a list of ``(path, color)`` pairs as produced by
-    :func:`virda_gui.viewer_loaders.parse_electrode_specs`; pass
+    :func:`virda_gui.viewer.viewer_loaders.parse_electrode_specs`; pass
     ``electrodes_cras=True`` to force the FreeSurfer cRAS -> scanner RAS
     conversion of tabular electrode files.  *log* receives progress and QC
     messages.  The call blocks until the viewer window is closed.

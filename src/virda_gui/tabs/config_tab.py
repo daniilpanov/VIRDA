@@ -24,12 +24,12 @@ from virda.config import load_config_file
 from virda.io.fiducial_helpers import load_fiducials
 from virda.models.config import Config
 from virda.models.coordsystem import Coordsystem
-from virda_gui.advanced_settings import AdvancedSettingsDialog
 from virda_gui.constants import (
     CONFIG_KEY_TO_ADVANCED,
     CONFIG_KEY_TO_INPUT,
     ELECTRODE_PALETTE,
 )
+from virda_gui.dialogs.advanced_settings import AdvancedSettingsDialog
 from virda_gui.state import AppState
 from virda_gui.widgets import (
     DirectorySelector,

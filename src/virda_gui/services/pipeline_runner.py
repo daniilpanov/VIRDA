@@ -73,7 +73,7 @@ class PipelineRunner(QObject):
 
         def _export() -> None:
             try:
-                from .html_export import export_project
+                from virda_gui.export.html_export import export_project
 
                 export_project(str(project), output)
                 self._state.log_queue.put(f"HTML exported: {output}")

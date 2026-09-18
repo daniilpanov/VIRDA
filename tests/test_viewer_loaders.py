@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 import pyvista as pv
 
-from virda_gui.viewer_loaders import (
+from virda_gui.viewer.viewer_loaders import (
     _cras_decision_message,
     _cras_to_scanner_ras_offset,
     _detect_cras_conversion,
@@ -219,7 +219,7 @@ class TestElectrodeSpecs:
 
 class TestIntensifyColor:
     def test_returns_valid_distinct_color(self) -> None:
-        from virda_gui.viewer_loaders import intensify_color
+        from virda_gui.viewer.viewer_loaders import intensify_color
 
         for base in ("yellow", "lime", "magenta", "cyan", "orange", "white", "#34eb89"):
             boosted = intensify_color(base)
@@ -229,7 +229,7 @@ class TestIntensifyColor:
     def test_preserves_hue(self) -> None:
         import colorsys
 
-        from virda_gui.viewer_loaders import intensify_color
+        from virda_gui.viewer.viewer_loaders import intensify_color
 
         base = pv.Color("orange").float_rgb
         boosted = pv.Color(intensify_color("orange")).float_rgb

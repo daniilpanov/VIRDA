@@ -6,10 +6,10 @@ using three.js (loaded from a CDN). Mesh and fiducials are embedded in the
 file, so the viewer needs no server and runs on desktop and mobile alike.
 MRI volume rendering is currently disabled.
 
-The scene placement matches ``virda_gui.viewer`` exactly: an axis-aligned
+The scene placement matches ``virda_gui.viewer.viewer`` exactly: an axis-aligned
 affine keeps world millimeters (the volume box is placed at the affine origin
 with its spacing), any other affine moves the mesh and fiducials into voxel
-index space. Both cases reuse the helpers from ``virda_gui.scene``.
+index space. Both cases reuse the helpers from ``virda_gui.viewer.scene``.
 
 Usage
 -----
@@ -28,7 +28,7 @@ from typing import Any
 
 import numpy as np
 
-from virda_gui.scene import (
+from virda_gui.viewer.scene import (
     compute_normal_lines,
     load_fiducial_points,
     load_normals,

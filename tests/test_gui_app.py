@@ -14,9 +14,9 @@ from typing import cast
 import pytest
 from PySide6.QtWidgets import QTreeWidgetItem
 
-from virda_gui.config_tab import ConfigTab
 from virda_gui.constants import ADVANCED_FIELD_DEFAULTS, CONFIG_KEY_TO_ADVANCED
-from virda_gui.results_tab import ResultsTab
+from virda_gui.tabs.config_tab import ConfigTab
+from virda_gui.tabs.results_tab import ResultsTab
 
 
 class _FakeRow:
@@ -82,9 +82,9 @@ def test_ensure_stage3_group_already_present(tmp_path) -> None:
 
 
 def test_viewer_widget_importable_from_app() -> None:
-    """The 3D viewer tab embeds ``ViewerWidget`` from ``virda_gui.viewer``."""
+    """The 3D viewer tab embeds ``ViewerWidget`` from ``virda_gui.viewer.viewer``."""
     import virda_gui.app as app_module
-    from virda_gui.viewer import ViewerWidget
+    from virda_gui.viewer.viewer import ViewerWidget
 
     assert vars(app_module)["ViewerWidget"] is ViewerWidget
 

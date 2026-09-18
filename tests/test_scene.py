@@ -4,7 +4,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from virda_gui.scene import compute_normal_lines, load_fiducial_points, load_normals, sample_normals
+from virda_gui.viewer.scene import (
+    compute_normal_lines,
+    load_fiducial_points,
+    load_normals,
+    sample_normals,
+)
 
 
 class TestLoadFiducialPoints:

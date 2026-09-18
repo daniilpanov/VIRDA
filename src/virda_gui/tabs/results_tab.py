@@ -2,7 +2,7 @@
 
 Lists the artifact files produced by a run, streams a lightweight preview for
 the selected item on a background worker and embeds an interactive
-:class:`~virda_gui.viewer.ViewerWidget` preview when a visual artifact
+:class:`~virda_gui.viewer.viewer.ViewerWidget` preview when a visual artifact
 (mesh/NIfTI) is double-clicked.
 """
 
@@ -30,10 +30,10 @@ from PySide6.QtWidgets import (
 )
 
 from virda_gui.constants import PROJECT_ARTIFACT_DIRS
-from virda_gui.file_manager import open_in_file_manager
-from virda_gui.preview_worker import _PreviewBundle, _PreviewWorker
+from virda_gui.preview.preview_worker import _PreviewBundle, _PreviewWorker
+from virda_gui.services.file_manager import open_in_file_manager
 from virda_gui.state import AppState
-from virda_gui.viewer import ViewerWidget
+from virda_gui.viewer.viewer import ViewerWidget
 from virda_gui.widgets import DirectorySelector
 
 

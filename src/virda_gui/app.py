@@ -33,12 +33,12 @@ from PySide6.QtWidgets import (
 
 from virda.logging_setup import add_log_handler, remove_log_handler
 
-from .config_tab import ConfigTab
 from .constants import ADVANCED_FIELD_DEFAULTS
-from .pipeline_runner import PipelineRunner
-from .results_tab import ResultsTab
+from .services.pipeline_runner import PipelineRunner
 from .state import AppState
-from .viewer import ViewerWidget
+from .tabs.config_tab import ConfigTab
+from .tabs.results_tab import ResultsTab
+from .viewer.viewer import ViewerWidget
 
 
 class _VirdaMainWindow(QMainWindow):

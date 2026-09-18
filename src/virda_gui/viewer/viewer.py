@@ -6,7 +6,7 @@ affine, so the mesh overlays the actual scalp in all three views. Qt
 checkboxes toggle the visibility of the mesh, the MRI, the fiducial points,
 the normal glyphs and per-electrode labels, and a "Boost contrast" checkbox
 sharpens the MRI and the mesh.  :class:`ViewerWidget` wraps the same scene
-that the standalone ``virda-gui-viewer`` CLI (module ``virda_gui.viewer_cli``)
+that the standalone ``virda-gui-viewer`` CLI (module ``virda_gui.viewer.viewer_cli``)
 shows in a blocking window; the GUI embeds it on its 3D Viewer tab.
 """
 
@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
 )
 from pyvistaqt import QtInteractor
 
-from virda_gui.viewer_loaders import (
+from .viewer_loaders import (
     SceneData,
     build_electrode_links,
     collect_scene_data,
