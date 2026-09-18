@@ -39,6 +39,16 @@ class TestVirdaSettings:
         with pytest.raises(ValidationError, match="otsu_threshold_scale"):
             VirdaSettings(otsu_threshold_scale=0)
 
+    def test_rejects_nonpositive_mesh_voxel_size(self) -> None:
+        with pytest.raises(ValidationError, match="mesh_voxel_size_mm"):
+            VirdaSettings(mesh_voxel_size_mm=0)
+
+    def test_rejects_out_of_range_mesh_density(self) -> None:
+        with pytest.raises(ValidationError, match="mesh_density_percent"):
+            VirdaSettings(mesh_density_percent=0)
+        with pytest.raises(ValidationError, match="mesh_density_percent"):
+            VirdaSettings(mesh_density_percent=101)
+
     def test_loads_from_environment(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("OTSU_THRESHOLD_SCALE", raising=False)
         monkeypatch.setenv("OTSU_THRESHOLD_SCALE", "0.42")
@@ -106,6 +116,12 @@ class TestLoadConfigFile:
 
 
 class TestBuildConfig:
+    def test_mesh_density_defaults(self) -> None:
+        config = Config()
+
+        assert config.mesh_voxel_size_mm is None
+        assert config.mesh_density_percent == 100.0
+
     def test_coordsystem_file_maps_ese_params(self, tmp_path) -> None:
         config_file = tmp_path / "coordsystem.json"
         config_file.write_text(json.dumps(sample_coordsystem_dict()))
