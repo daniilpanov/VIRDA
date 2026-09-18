@@ -155,7 +155,7 @@ class VirdaApp(QObject):
                 "Measurements error",
                 f"Measurements file not found:\n{measurements_path}",
             )
-            self._on_pipeline_error()
+            self._config_tab.run_btn.setEnabled(True)
             return
 
         self._pipe_runner.submit(config, measurements_path)
