@@ -133,6 +133,7 @@ class ViewerWidget(QWidget):
         seq = self._load_seq
         self.clear_scene()
         self._log("Loading 3D scene...")
+        self._cancel_running_load()
 
         self._thread = QThread(self)
         self._worker = _SceneLoader(self._log, kwargs, seq)
@@ -166,6 +167,34 @@ class ViewerWidget(QWidget):
             self._thread.wait()
             self._thread.deleteLater()
             self._thread = None
+        self._worker = None
+
+    def _cancel_running_load(self) -> None:
+        """Stop an in-flight scene load so a newer request replaces it.
+
+        A previous ``load`` may still be collecting scene data on its worker
+        thread; retiring it here prevents the abandoned thread (and its
+        ``loaded``/``failed`` emissions) from lingering after ``load`` is
+        called again.
+        """
+        thread = self._thread
+        if thread is None:
+            return
+        worker = self._worker
+        if worker is not None:
+            worker.loaded.disconnect(self._on_scene_loaded)
+            worker.failed.disconnect(self._on_scene_failed)
+            # deleteLater() must be posted while the worker's event loop is
+            # still live, otherwise the DeferredDelete event is never processed.
+            worker.deleteLater()
+        thread.quit()
+        thread.wait(3000)
+        # Never delete a thread that is still running (wait timed out);
+        # destroying a live QThread is undefined behaviour.  In that case the
+        # thread keeps running under its parent until it finishes.
+        if thread.isFinished():
+            thread.deleteLater()
+        self._thread = None
         self._worker = None
 
     def clear_scene(self) -> None:
