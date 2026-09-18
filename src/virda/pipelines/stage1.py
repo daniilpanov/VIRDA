@@ -12,6 +12,7 @@ from virda.io.providers.stage1_exporter import Stage1Exporter
 from virda.mesh import MeshExtractor, MeshPostprocessor
 from virda.mesh.laplacian_smoother import LaplacianSmoother
 from virda.mesh.mesh_cleaner import TrimeshCleaner
+from virda.mesh.mesh_decimator import QuadraticDecimator
 from virda.mesh.mesh_extractor import MarchingCubesExtractor
 from virda.mesh.taubin_smoother import TaubinSmoother
 from virda.models.config import Config
@@ -151,7 +152,7 @@ class Stage1PipelineBuilder:
                     otsu_scope=config.otsu_scope,
                     threshold_scale=config.otsu_threshold_scale,
                 ),
-                extractor=MarchingCubesExtractor(),
+                extractor=MarchingCubesExtractor(voxel_size_mm=config.mesh_voxel_size_mm),
                 project_dir=project_dir_path_inst,
                 logger=logger,
                 fiducials_path=fiducials_path_inst,
@@ -167,6 +168,7 @@ class Stage1PipelineBuilder:
                         merge_digits=config.cleaner_merge_digits,
                     ),
                     smoother,
+                    QuadraticDecimator(density_percent=config.mesh_density_percent),
                 ]
             )
         )
