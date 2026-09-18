@@ -13,8 +13,8 @@ from types import SimpleNamespace
 from typing import cast
 
 import pytest
-from PySide6.QtCore import QSettings
-from PySide6.QtWidgets import QTreeWidgetItem
+from PySide6.QtCore import QSettings, Signal
+from PySide6.QtWidgets import QTreeWidgetItem, QWidget
 
 from virda_gui.constants import ADVANCED_FIELD_DEFAULTS, CONFIG_KEY_TO_ADVANCED
 from virda_gui.main_window import IdeWindow
@@ -26,6 +26,25 @@ from virda_gui.tabs.results_tab import ResultsTab
 def _make_prefs(tmp_path: Path) -> Preferences:
     """Preferences backed by an isolated INI file so user config stays clean."""
     return Preferences(QSettings(str(tmp_path / "prefs.ini"), QSettings.Format.IniFormat))
+
+
+class _StubViewer(QWidget):
+    """Stand-in for ``ViewerWidget`` used by the offscreen file-tab tests."""
+
+    sceneLoaded = Signal(object)  # noqa: N815
+    sceneFailed = Signal(str)  # noqa: N815
+
+    def __init__(self, log: object | None = None) -> None:
+        super().__init__()
+        self.log = log
+        self.load_calls: list[dict[str, str]] = []
+        self.shut_down = False
+
+    def load(self, **kwargs: str) -> None:
+        self.load_calls.append(dict(kwargs))
+
+    def shutdown(self) -> None:
+        self.shut_down = True
 
 
 class _FakeRow:
@@ -321,3 +340,62 @@ def test_ide_window_restores_last_project_offscreen(tmp_path: Path) -> None:
     finally:
         second.close()
     app.quit()
+
+
+def test_ide_window_opens_project_files_in_tabs_offscreen(tmp_path: Path, monkeypatch) -> None:
+    """Double-clicking a sidebar artifact opens a viewer/preview tab."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    if os.environ.get("PYVISTA_OFF_SCREEN") is None:
+        os.environ["PYVISTA_OFF_SCREEN"] = "true"
+
+    import virda_gui.main_window as main_window_module
+
+    monkeypatch.setattr(main_window_module, "ViewerWidget", _StubViewer)
+
+    try:
+        from PySide6.QtWidgets import QApplication
+    except Exception as exc:  # pragma: no cover - depends on local Qt install
+        pytest.skip(f"Qt platform unavailable: {exc}")
+
+    app = QApplication.instance() or QApplication([])
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
+    try:
+        project = tmp_path / "sample-project"
+        mesh = project / "mesh" / "final_mesh.ply"
+        mesh.parent.mkdir(parents=True)
+        mesh.write_bytes(b"ply\n")
+        (project / "note.txt").write_text("hello", encoding="utf-8")
+        window.open_project(project)
+
+        window._sidebar.fileActivated.emit(mesh)
+        mesh_tab = window._tabs.widget(window._tabs.count() - 1)
+        assert isinstance(mesh_tab, _StubViewer)
+        assert mesh_tab.load_calls == [{"mesh_path": str(mesh)}]
+
+        window._sidebar.fileActivated.emit(mesh)
+        assert window._tabs.count() == 2  # run pipeline tab + one mesh tab
+
+        window._sidebar.fileActivated.emit(project / "note.txt")
+        from virda_gui.tabs.preview_tab import PreviewTab
+
+        preview_index = next(
+            i for i in range(window._tabs.count()) if isinstance(window._tabs.widget(i), PreviewTab)
+        )
+        assert window._tabs.tabText(preview_index) == "note.txt"
+
+        window._close_tab(preview_index)
+        assert not any(
+            isinstance(window._tabs.widget(i), PreviewTab) for i in range(window._tabs.count())
+        )
+
+        mesh_index = next(
+            i
+            for i in range(window._tabs.count())
+            if isinstance(window._tabs.widget(i), _StubViewer)
+        )
+        window._close_tab(mesh_index)
+        assert mesh_tab.shut_down
+    finally:
+        window._on_close()
+        app.quit()

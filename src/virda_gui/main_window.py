@@ -19,11 +19,12 @@ from virda.logging_setup import add_log_handler, remove_log_handler
 
 from .constants import ADVANCED_FIELD_DEFAULTS
 from .preferences import Preferences
-from .project import create_project
+from .project import classify_artifact, create_project
 from .services.pipeline_runner import PipelineRunner
 from .sidebar import ProjectSidebar
 from .state import AppState
 from .tabs.config_tab import ConfigTab
+from .tabs.preview_tab import PreviewTab
 from .viewer.viewer import ViewerWidget
 
 _TAB_RUN = "run-pipeline"
@@ -44,6 +45,7 @@ class IdeWindow(QMainWindow):
         super().__init__()
         self._project: Path | None = None
         self._viewer_widget: ViewerWidget | None = None
+        self._file_tabs: dict[str, QWidget] = {}
         self._prefs = prefs or Preferences()
 
         self.setWindowTitle("VIRDA — Electrode Localization System")
@@ -70,6 +72,7 @@ class IdeWindow(QMainWindow):
         self._sidebar = ProjectSidebar(self)
         self._sidebar.openViewerRequested.connect(self._on_open_viewer)
         self._sidebar.runPipelineRequested.connect(self._show_run_tab)
+        self._sidebar.fileActivated.connect(self._open_file_tab)
 
         self._tabs = QTabWidget(self)
         self._tabs.setTabsClosable(True)
@@ -203,12 +206,76 @@ class IdeWindow(QMainWindow):
         self._tabs.setCurrentIndex(index)
 
     def _close_tab(self, index: int) -> None:
-        # The widget is intentionally kept alive so its state (e.g. the run
-        # form contents) survives closing and reopening the tab.
+        widget = self._tabs.widget(index)
         self._tabs.removeTab(index)
+        if widget is self._config_tab:
+            # The run form keeps its state across closes via the sidebar.
+            return
+        self._discard_tab_widget(widget)
+
+    def _discard_tab_widget(self, widget: QWidget) -> None:
+        """Release per-file tabs and tear down interactive widgets on close."""
+        for key, memo in list(self._file_tabs.items()):
+            if memo is widget:
+                del self._file_tabs[key]
+                break
+        if widget is self._viewer_widget:
+            self._viewer_widget.shutdown()
+            self._viewer_widget = None
+        elif isinstance(widget, (ViewerWidget, PreviewTab)):
+            widget.shutdown()
 
     def _show_run_tab(self) -> None:
         self._add_tab(self._config_tab, "Run Pipeline")
+
+    # ------------------------------------------------------------------
+    # Project file tabs
+    # ------------------------------------------------------------------
+
+    def _open_file_tab(self, path: Path) -> None:
+        if not path.is_file():
+            return
+        kind = classify_artifact(path)
+        if kind == "mesh":
+            self._open_visual_file_tab(path, {"mesh_path": str(path)})
+        elif kind == "nifti":
+            self._open_visual_file_tab(path, {"nifti_path": str(path)})
+        else:
+            self._open_preview_tab(path)
+
+    def _open_visual_file_tab(self, path: Path, kwargs: dict[str, Any]) -> None:
+        key = str(path)
+        widget = self._file_tabs.get(key)
+        if widget is None:
+            widget = ViewerWidget(log=self._state.log_queue.put)
+            widget.sceneLoaded.connect(lambda _scene, tab=widget: self._on_scene_tab_loaded(tab))
+            widget.sceneFailed.connect(
+                lambda message, tab=widget: self._on_scene_tab_failed(tab, message)
+            )
+            self._file_tabs[key] = widget
+        if self._tabs.indexOf(widget) < 0:
+            self._add_tab(widget, path.name)
+            self._tabs.setTabToolTip(self._tabs.indexOf(widget), str(path))
+        self._tabs.setCurrentWidget(widget)
+        widget.load(**kwargs)
+
+    def _open_preview_tab(self, path: Path) -> None:
+        key = str(path)
+        widget = self._file_tabs.get(key)
+        if widget is None:
+            widget = PreviewTab()
+            self._file_tabs[key] = widget
+        if self._tabs.indexOf(widget) < 0:
+            self._add_tab(widget, path.name)
+            self._tabs.setTabToolTip(self._tabs.indexOf(widget), str(path))
+        self._tabs.setCurrentWidget(widget)
+        widget.open(path)
+
+    def _on_scene_tab_loaded(self, _tab: ViewerWidget) -> None:
+        self._config_tab.log_viewer.append("3D viewer scene loaded.")
+
+    def _on_scene_tab_failed(self, _tab: ViewerWidget, message: str) -> None:
+        self._config_tab.log_viewer.append(f"3D viewer failed: {message}")
 
     # ------------------------------------------------------------------
     # Pipeline execution (background thread)
@@ -405,6 +472,9 @@ class IdeWindow(QMainWindow):
     def _on_close(self) -> None:
         self._state.closed = True
         self._poll_timer.stop()
+        for widget in self._file_tabs.values():
+            if isinstance(widget, (PreviewTab, ViewerWidget)):
+                widget.shutdown()
         if self._viewer_widget is not None:
             self._viewer_widget.shutdown()
         self._pipe_runner.shutdown()

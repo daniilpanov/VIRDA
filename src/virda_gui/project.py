@@ -86,3 +86,13 @@ def format_file_size(path: str | Path) -> str:
 def format_mtime(path: str | Path) -> str:
     """Human-readable modification timestamp for a project artifact file."""
     return datetime.fromtimestamp(Path(path).stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+
+
+def classify_artifact(path: str | Path) -> str:
+    """Classify a project artifact for tab opening: ``mesh``, ``nifti`` or ``text``."""
+    name = Path(path).name.lower()
+    if name.endswith(".nii.gz") or name.endswith(".nii"):
+        return "nifti"
+    if Path(path).suffix.lower() == ".ply":
+        return "mesh"
+    return "text"

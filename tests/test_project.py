@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from virda_gui.project import (
+    classify_artifact,
     create_project,
     format_file_size,
     format_mtime,
@@ -93,3 +94,25 @@ def test_format_mtime_reports_iso_datetime(tmp_path: Path) -> None:
     formatted = format_mtime(artifact)
     assert len(formatted) == 16
     assert formatted[4] == "-" and formatted[10] == " " and formatted[13] == ":"
+
+
+def test_classify_artifact_recognises_visual_files(tmp_path: Path) -> None:
+    mesh = tmp_path / "final_mesh.ply"
+    mesh.write_bytes(b"ply\n")
+    assert classify_artifact(mesh) == "mesh"
+
+    nifti_gz = tmp_path / "head.nii.gz"
+    nifti_gz.write_bytes(b"\x00")
+    assert classify_artifact(nifti_gz) == "nifti"
+
+    nifti = tmp_path / "head.nii"
+    nifti.write_bytes(b"\x00")
+    assert classify_artifact(nifti) == "nifti"
+
+    assert classify_artifact(tmp_path / "large.PLY") == "mesh"
+
+
+def test_classify_artifact_falls_back_to_text(tmp_path: Path) -> None:
+    note = tmp_path / "README.txt"
+    note.write_text("hi", encoding="utf-8")
+    assert classify_artifact(note) == "text"
