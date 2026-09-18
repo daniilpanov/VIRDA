@@ -7,6 +7,7 @@ smoke tests, which construct the real :class:`IdeWindow` to catch signal
 wiring regressions that the stubs cannot.
 """
 
+import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -396,6 +397,51 @@ def test_ide_window_opens_project_files_in_tabs_offscreen(tmp_path: Path, monkey
         )
         window._close_tab(mesh_index)
         assert mesh_tab.shut_down
+    finally:
+        window._on_close()
+        app.quit()
+
+
+def test_ide_window_prefills_run_tab_from_artifacts_offscreen(
+    tmp_path: Path,
+) -> None:
+    """Opening a project fills the Run Pipeline fields from its artifacts."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    if os.environ.get("PYVISTA_OFF_SCREEN") is None:
+        os.environ["PYVISTA_OFF_SCREEN"] = "true"
+
+    try:
+        from PySide6.QtWidgets import QApplication
+    except Exception as exc:  # pragma: no cover - depends on local Qt install
+        pytest.skip(f"Qt platform unavailable: {exc}")
+
+    app = QApplication.instance() or QApplication([])
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
+    try:
+        project = tmp_path / "ready-project"
+        inputs = project / "input"
+        inputs.mkdir(parents=True)
+        (inputs / "head.nii.gz").write_bytes(b"\x00")
+        (inputs / "fiducials.json").write_text('{"fiducials": []}', encoding="utf-8")
+        (inputs / "measurements.json").write_text("{}", encoding="utf-8")
+        (inputs / "config.json").write_text(
+            json.dumps(
+                {
+                    "nifti_path": str(inputs / "head.nii.gz"),
+                    "project_dir": str(project),
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        window.open_project(project)
+
+        assert window._config_tab.nifti_path() == str(inputs / "head.nii.gz")
+        assert window._config_tab.project_dir() == str(project)
+        assert window._config_tab.measurements.get() == str(inputs / "measurements.json")
+        assert window._config_tab._fiducials.get() == str(inputs / "fiducials.json")
+        assert window._config_tab._config_file.get() == str(inputs / "config.json")
     finally:
         window._on_close()
         app.quit()

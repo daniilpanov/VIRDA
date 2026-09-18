@@ -159,7 +159,7 @@ class IdeWindow(QMainWindow):
         self._sidebar.set_project(project)
         self._close_action.setEnabled(True)
         self._state.last_project_dir = str(project)
-        self._config_tab.set_project_dir(project)
+        self._config_tab.prefill_from_project(project)
         self._prefs.note_project_opened(project)
         self._refresh_recent_menu()
         self.setWindowTitle(f"VIRDA — {project.name}")
