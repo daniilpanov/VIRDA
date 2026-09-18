@@ -156,6 +156,8 @@ class VirdaApp(QObject):
                 f"Measurements file not found:\n{measurements_path}",
             )
             self._config_tab.run_btn.setEnabled(True)
+            self._config_tab.viewer_btn.setEnabled(True)
+            self._config_tab.export_btn.setEnabled(True)
             return
 
         self._pipe_runner.submit(config, measurements_path)
