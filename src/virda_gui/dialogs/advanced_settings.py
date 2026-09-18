@@ -10,17 +10,33 @@ from PySide6.QtWidgets import (
     QFrame,
     QGroupBox,
     QHBoxLayout,
+    QLabel,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
     QWidget,
 )
 
+from virda.mesh.density import step_size_for_voxel_size
 from virda_gui.constants import (
     ADVANCED_COMBO_FIELDS,
     ADVANCED_FIELD_DEFAULTS,
 )
 from virda_gui.widgets import LabeledField
+
+
+def _nifti_spacing_mm(nifti_path: str | None) -> tuple[float, float, float] | None:
+    """Read the per-axis voxel spacing (mm) of a NIfTI file, if possible."""
+    if not nifti_path:
+        return None
+    try:
+        import nibabel as nib
+
+        header = nib.load(nifti_path).header
+        zooms = header.get_zooms()
+        return tuple(float(zoom) for zoom in zooms[:3])
+    except Exception:
+        return None
 
 
 class AdvancedSettingsDialog(QDialog):
@@ -30,6 +46,7 @@ class AdvancedSettingsDialog(QDialog):
         self,
         parent: QWidget | None,
         values: dict[str, str],
+        nifti_path: str | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Advanced Settings")
@@ -39,6 +56,8 @@ class AdvancedSettingsDialog(QDialog):
         self.confirmed: bool = False
 
         self._fields: dict[str, LabeledField] = {}
+        self._nifti_spacing: tuple[float, float, float] | None = _nifti_spacing_mm(nifti_path)
+        self._voxel_readout: QLabel | None = None
 
         self._build_ui()
 
@@ -89,13 +108,46 @@ class AdvancedSettingsDialog(QDialog):
         layout = QVBoxLayout(box)
         self._add_field(box, layout, "seal_enabled", "Seal mask gaps", "check")
         self._add_field(box, layout, "seal_radius", "Seal radius", "entry")
+        self._add_field(box, layout, "mesh_voxel_size_mm", "Voxel size (mm)", "entry")
+        self._voxel_readout = QLabel()
+        self._voxel_readout.setWordWrap(True)
+        self._voxel_readout.setStyleSheet("color: gray;")
+        layout.addWidget(self._voxel_readout)
+        self._add_field(box, layout, "mesh_density_percent", "Mesh density (%)", "entry")
         self._add_field(box, layout, "cleaner_min_vertices", "Min component vertices", "entry")
         self._add_field(box, layout, "cleaner_merge_digits", "Merge digits", "entry")
         self._add_field(box, layout, "smoother_type", "Smoother type", "combo")
         self._add_field(box, layout, "smoother_iterations", "Iterations", "entry")
         self._add_field(box, layout, "smoother_lamb", "Lambda", "entry")
         self._add_field(box, layout, "smoother_nu", "Nu (Taubin)", "entry")
+
+        voxel_field = self._fields["mesh_voxel_size_mm"]
+        voxel_field.entry().textChanged.connect(self._update_voxel_readout)
+        self._update_voxel_readout()
         outer.addWidget(box)
+
+    def _update_voxel_readout(self, _text: str = "") -> None:
+        """Show the effective marching-cubes step / real voxel for the field."""
+        if self._voxel_readout is None:
+            return
+        raw = self._fields["mesh_voxel_size_mm"].get().strip()
+        if not raw:
+            if self._nifti_spacing is None:
+                self._voxel_readout.setText("empty = native NIfTI spacing")
+                return
+            native = " x ".join(f"{size:.3g}" for size in self._nifti_spacing)
+            self._voxel_readout.setText(f"empty = native NIfTI spacing ({native} mm)")
+            return
+        if self._nifti_spacing is None:
+            self._voxel_readout.setText("select a NIfTI scan to preview the real voxel size")
+            return
+        try:
+            step, real = step_size_for_voxel_size(float(raw), self._nifti_spacing)
+        except ValueError:
+            self._voxel_readout.setText("invalid voxel size")
+            return
+        real_fmt = " x ".join(f"{size:.3g}" for size in real)
+        self._voxel_readout.setText(f"step_size {step} -> real voxel {real_fmt} mm")
 
     def _build_ese_section(self, parent: QWidget, outer: QVBoxLayout) -> None:
         box = QGroupBox("Stage 2: ESE Parameters", parent)
