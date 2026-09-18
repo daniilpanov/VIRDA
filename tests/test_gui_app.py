@@ -8,6 +8,7 @@ wiring regressions that the stubs cannot.
 """
 
 import os
+from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
@@ -15,6 +16,7 @@ import pytest
 from PySide6.QtWidgets import QTreeWidgetItem
 
 from virda_gui.constants import ADVANCED_FIELD_DEFAULTS, CONFIG_KEY_TO_ADVANCED
+from virda_gui.main_window import IdeWindow
 from virda_gui.tabs.config_tab import ConfigTab
 from virda_gui.tabs.results_tab import ResultsTab
 
@@ -211,4 +213,52 @@ def test_virda_app_constructs_offscreen() -> None:
         assert window._notebook.isTabEnabled(window._viewer_tab_index) is False
     finally:
         window._on_close()
+        app.quit()
+
+
+def test_ide_window_constructs_and_manages_project_offscreen(
+    tmp_path: Path,
+) -> None:
+    """IdeWindow builds, opens/closes a project and closes tabs."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    if os.environ.get("PYVISTA_OFF_SCREEN") is None:
+        os.environ["PYVISTA_OFF_SCREEN"] = "true"
+
+    try:
+        from PySide6.QtWidgets import QApplication, QWidget
+    except Exception as exc:  # pragma: no cover - depends on local Qt install
+        pytest.skip(f"Qt platform unavailable: {exc}")
+
+    app = QApplication.instance() or QApplication([])
+    window = IdeWindow()
+    try:
+        assert window.project() is None
+        assert window._sidebar.project is None
+        assert window._sidebar._tree.topLevelItemCount() == 0
+
+        project = tmp_path / "sample-project"
+        (project / "mesh").mkdir(parents=True)
+        (project / "mesh" / "final_mesh.ply").write_bytes(b"ply\n")
+        (project / "note.txt").write_text("x", encoding="utf-8")
+
+        window.open_project(project)
+        assert window.project() == project
+        assert window._sidebar.project == project
+        assert window._sidebar._tree.topLevelItemCount() == 1
+        root = window._sidebar._tree.topLevelItem(0)
+        assert root.text(0) == "sample-project"
+        assert root.childCount() == 2  # mesh group + loose note.txt
+
+        tab = QWidget()
+        window._tabs.addTab(tab, "Untitled")
+        assert window._tabs.count() == 1
+        window._close_tab(0)
+        assert window._tabs.count() == 0
+        assert window.project() == project
+
+        window.close_project()
+        assert window.project() is None
+        assert window._sidebar._tree.topLevelItemCount() == 0
+    finally:
+        window.close()
         app.quit()

@@ -8,6 +8,7 @@ are unit-testable headless and can be shared by every part of the GUI
 """
 
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from virda_gui.constants import PROJECT_ARTIFACT_DIRS
@@ -70,3 +71,18 @@ def scan_project(path: str | Path, artifact_dirs: list[str] | None = None) -> Pr
         extra_dirs=[project / name for name in extra],
         loose_files=sorted(entry for entry in project.iterdir() if entry.is_file()),
     )
+
+
+def format_file_size(path: str | Path) -> str:
+    """Human-readable file size for a project artifact file."""
+    size = float(Path(path).stat().st_size)
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024 or unit == "GB":
+            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} GB"
+
+
+def format_mtime(path: str | Path) -> str:
+    """Human-readable modification timestamp for a project artifact file."""
+    return datetime.fromtimestamp(Path(path).stat().st_mtime).strftime("%Y-%m-%d %H:%M")

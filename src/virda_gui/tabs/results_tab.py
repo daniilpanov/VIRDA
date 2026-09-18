@@ -7,7 +7,6 @@ the selected item on a background worker and embeds an interactive
 """
 
 import subprocess
-from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, Signal
@@ -29,8 +28,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from virda_gui.constants import PROJECT_ARTIFACT_DIRS
 from virda_gui.preview.preview_worker import _PreviewBundle, _PreviewWorker
+from virda_gui.project import format_file_size, format_mtime, scan_project
 from virda_gui.services.file_manager import open_in_file_manager
 from virda_gui.state import AppState
 from virda_gui.viewer.viewer import ViewerWidget
@@ -157,39 +156,29 @@ class ResultsTab(QWidget):
             self._results_summary_label.setText("Select a valid project directory.")
             return
 
+        scan = scan_project(project)
         root_item = QTreeWidgetItem([project.name, "<dir>", ""])
         root_item.setExpanded(True)
         root_item.setData(0, Qt.ItemDataRole.UserRole, project)
         tree.addTopLevelItem(root_item)
 
-        known = [name for name in PROJECT_ARTIFACT_DIRS if (project / name).is_dir()]
-        extra_dirs = sorted(
-            entry.name
-            for entry in project.iterdir()
-            if entry.is_dir() and entry.name not in PROJECT_ARTIFACT_DIRS
-        )
-        loose_files = sorted(entry for entry in project.iterdir() if entry.is_file())
-
         n_files = 0
-        for subdir in known + extra_dirs:
-            node = project / subdir
-            group_item = QTreeWidgetItem([subdir, "<dir>", ""])
+        for node in scan.groups + scan.extra_dirs:
+            group_item = QTreeWidgetItem([node.name, "<dir>", ""])
             group_item.setData(0, Qt.ItemDataRole.UserRole, node)
             root_item.addChild(group_item)
             for file_path in sorted(node.rglob("*")):
                 if not file_path.is_file():
                     continue
                 rel = file_path.relative_to(node).as_posix()
-                child = QTreeWidgetItem(
-                    [rel, self._format_file_size(file_path), self._format_mtime(file_path)]
-                )
+                child = QTreeWidgetItem([rel, format_file_size(file_path), format_mtime(file_path)])
                 child.setData(0, Qt.ItemDataRole.UserRole, file_path)
                 group_item.addChild(child)
                 n_files += 1
 
-        for file_path in loose_files:
+        for file_path in scan.loose_files:
             child = QTreeWidgetItem(
-                [file_path.name, self._format_file_size(file_path), self._format_mtime(file_path)]
+                [file_path.name, format_file_size(file_path), format_mtime(file_path)]
             )
             child.setData(0, Qt.ItemDataRole.UserRole, file_path)
             root_item.addChild(child)
@@ -366,16 +355,3 @@ class ResultsTab(QWidget):
         self._results_table.clear()
         self._results_table.setRowCount(0)
         self._preview_stack.setCurrentWidget(self._results_preview)
-
-    @staticmethod
-    def _format_file_size(path: Path) -> str:
-        size = float(path.stat().st_size)
-        for unit in ("B", "KB", "MB", "GB"):
-            if size < 1024 or unit == "GB":
-                return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
-            size /= 1024
-        return f"{size:.1f} GB"
-
-    @staticmethod
-    def _format_mtime(path: Path) -> str:
-        return datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M")

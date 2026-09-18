@@ -4,7 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from virda_gui.project import create_project, is_project, scan_project
+from virda_gui.project import (
+    create_project,
+    format_file_size,
+    format_mtime,
+    is_project,
+    scan_project,
+)
 
 
 def test_create_project_makes_directory(tmp_path: Path) -> None:
@@ -69,3 +75,21 @@ def test_scan_project_empty_project(tmp_path: Path) -> None:
 def test_scan_project_missing_directory_raises(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         scan_project(tmp_path / "missing")
+
+
+def test_format_file_size_scales_units(tmp_path: Path) -> None:
+    small = tmp_path / "small.bin"
+    small.write_bytes(b"x" * 512)
+    assert format_file_size(small) == "512 B"
+
+    big = tmp_path / "big.bin"
+    big.write_bytes(b"x" * (1500 * 1024))
+    assert format_file_size(big) == "1.5 MB"
+
+
+def test_format_mtime_reports_iso_datetime(tmp_path: Path) -> None:
+    artifact = tmp_path / "note.txt"
+    artifact.write_text("hi", encoding="utf-8")
+    formatted = format_mtime(artifact)
+    assert len(formatted) == 16
+    assert formatted[4] == "-" and formatted[10] == " " and formatted[13] == ":"
