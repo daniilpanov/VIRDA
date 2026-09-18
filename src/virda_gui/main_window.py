@@ -18,9 +18,10 @@ from PySide6.QtWidgets import (
 from virda.logging_setup import add_log_handler, remove_log_handler
 
 from .constants import ADVANCED_FIELD_DEFAULTS
+from .dialogs.project_dialog import ask_create_project_folder, ask_open_project_folder
 from .importing import ImportRole, import_file, import_target
 from .preferences import Preferences
-from .project import classify_artifact, create_project
+from .project import classify_artifact
 from .services.pipeline_runner import PipelineRunner
 from .sidebar import ProjectSidebar
 from .state import AppState
@@ -97,8 +98,6 @@ class IdeWindow(QMainWindow):
         self._poll_timer.timeout.connect(self._poll_log_queue)
         self._poll_timer.start()
 
-        self._restore_last_project()
-
     def _build_menu(self) -> None:
         file_menu = self.menuBar().addMenu("&File")
 
@@ -142,11 +141,6 @@ class IdeWindow(QMainWindow):
             action = self._recent_menu.addAction(str(project))
             action.triggered.connect(lambda _checked=False, path=project: self.open_project(path))
 
-    def _restore_last_project(self) -> None:
-        last = self._prefs.last_project()
-        if last is not None and last.is_dir():
-            self.open_project(last)
-
     # ------------------------------------------------------------------
     # Project management
     # ------------------------------------------------------------------
@@ -178,21 +172,14 @@ class IdeWindow(QMainWindow):
         self.setWindowTitle("VIRDA — Electrode Localization System")
 
     def _create_project(self) -> None:
-        directory = QFileDialog.getExistingDirectory(self, "Create new project")
-        if not directory:
-            return
-        project = create_project(Path(directory))
-        self.open_project(project)
+        project = ask_create_project_folder(self)
+        if project is not None:
+            self.open_project(project)
 
     def _open_project_dialog(self) -> None:
-        directory = QFileDialog.getExistingDirectory(self, "Open project")
-        if not directory:
-            return
-        project = Path(directory)
-        if not project.is_dir():
-            QMessageBox.warning(self, "Project error", f"Not a directory:\n{project}")
-            return
-        self.open_project(project)
+        project = ask_open_project_folder(self)
+        if project is not None:
+            self.open_project(project)
 
     # ------------------------------------------------------------------
     # Tabs
