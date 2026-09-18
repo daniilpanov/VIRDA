@@ -8,6 +8,7 @@ from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QFileDialog,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QSplitter,
     QTabWidget,
@@ -17,6 +18,7 @@ from PySide6.QtWidgets import (
 from virda.logging_setup import add_log_handler, remove_log_handler
 
 from .constants import ADVANCED_FIELD_DEFAULTS
+from .preferences import Preferences
 from .project import create_project
 from .services.pipeline_runner import PipelineRunner
 from .sidebar import ProjectSidebar
@@ -38,10 +40,11 @@ class IdeWindow(QMainWindow):
     :class:`AppState` and the log stream forwarded to the active run tab.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, prefs: Preferences | None = None) -> None:
         super().__init__()
         self._project: Path | None = None
         self._viewer_widget: ViewerWidget | None = None
+        self._prefs = prefs or Preferences()
 
         self.setWindowTitle("VIRDA — Electrode Localization System")
         self.resize(1100, 720)
@@ -89,6 +92,8 @@ class IdeWindow(QMainWindow):
         self._poll_timer.timeout.connect(self._poll_log_queue)
         self._poll_timer.start()
 
+        self._restore_last_project()
+
     def _build_menu(self) -> None:
         file_menu = self.menuBar().addMenu("&File")
 
@@ -101,6 +106,9 @@ class IdeWindow(QMainWindow):
         open_action.setShortcut(QKeySequence.StandardKey.Open)
         open_action.triggered.connect(self._open_project_dialog)
         file_menu.addAction(open_action)
+
+        self._recent_menu = QMenu("&Recent Projects", self)
+        file_menu.addMenu(self._recent_menu)
 
         file_menu.addSeparator()
 
@@ -115,6 +123,24 @@ class IdeWindow(QMainWindow):
         exit_action.setShortcut(QKeySequence.StandardKey.Quit)
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
+
+        self._refresh_recent_menu()
+
+    def _refresh_recent_menu(self) -> None:
+        self._recent_menu.clear()
+        recent = [p for p in self._prefs.recent_projects() if p.is_dir()]
+        if not recent:
+            placeholder = self._recent_menu.addAction("No recent projects")
+            placeholder.setEnabled(False)
+            return
+        for project in recent:
+            action = self._recent_menu.addAction(str(project))
+            action.triggered.connect(lambda _checked=False, path=project: self.open_project(path))
+
+    def _restore_last_project(self) -> None:
+        last = self._prefs.last_project()
+        if last is not None and last.is_dir():
+            self.open_project(last)
 
     # ------------------------------------------------------------------
     # Project management
@@ -131,6 +157,8 @@ class IdeWindow(QMainWindow):
         self._close_action.setEnabled(True)
         self._state.last_project_dir = str(project)
         self._config_tab.set_project_dir(project)
+        self._prefs.note_project_opened(project)
+        self._refresh_recent_menu()
         self.setWindowTitle(f"VIRDA — {project.name}")
         self._show_run_tab()
         self.statusBar().showMessage(f"Project opened: {project}", 5000)

@@ -13,12 +13,19 @@ from types import SimpleNamespace
 from typing import cast
 
 import pytest
+from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QTreeWidgetItem
 
 from virda_gui.constants import ADVANCED_FIELD_DEFAULTS, CONFIG_KEY_TO_ADVANCED
 from virda_gui.main_window import IdeWindow
+from virda_gui.preferences import Preferences
 from virda_gui.tabs.config_tab import ConfigTab
 from virda_gui.tabs.results_tab import ResultsTab
+
+
+def _make_prefs(tmp_path: Path) -> Preferences:
+    """Preferences backed by an isolated INI file so user config stays clean."""
+    return Preferences(QSettings(str(tmp_path / "prefs.ini"), QSettings.Format.IniFormat))
 
 
 class _FakeRow:
@@ -205,7 +212,8 @@ def test_ide_window_runs_pipeline_tab_offscreen(tmp_path: Path) -> None:
         pytest.skip(f"Qt platform unavailable: {exc}")
 
     app = QApplication.instance() or QApplication([])
-    window = IdeWindow()
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
     try:
         assert window._tabs.count() == 0
 
@@ -247,7 +255,8 @@ def test_ide_window_constructs_and_manages_project_offscreen(
         pytest.skip(f"Qt platform unavailable: {exc}")
 
     app = QApplication.instance() or QApplication([])
-    window = IdeWindow()
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
     try:
         assert window.project() is None
         assert window._sidebar.project is None
@@ -279,3 +288,36 @@ def test_ide_window_constructs_and_manages_project_offscreen(
     finally:
         window.close()
         app.quit()
+
+
+def test_ide_window_restores_last_project_offscreen(tmp_path: Path) -> None:
+    """A fresh IdeWindow reopens the last project remembered via QSettings."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    if os.environ.get("PYVISTA_OFF_SCREEN") is None:
+        os.environ["PYVISTA_OFF_SCREEN"] = "true"
+
+    try:
+        from PySide6.QtWidgets import QApplication
+    except Exception as exc:  # pragma: no cover - depends on local Qt install
+        pytest.skip(f"Qt platform unavailable: {exc}")
+
+    app = QApplication.instance() or QApplication([])
+    project = tmp_path / "remembered"
+    (project / "note.txt").parent.mkdir(parents=True)
+    (project / "note.txt").write_text("x", encoding="utf-8")
+
+    prefs = _make_prefs(tmp_path)
+    first = IdeWindow(prefs=prefs)
+    try:
+        first.open_project(project)
+    finally:
+        first.close()
+
+    second = IdeWindow(prefs=prefs)
+    try:
+        assert second.project() == project
+        recent = second._prefs.recent_projects()
+        assert project in recent
+    finally:
+        second.close()
+    app.quit()
