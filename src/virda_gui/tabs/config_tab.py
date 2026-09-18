@@ -304,8 +304,18 @@ class ConfigTab(QWidget):
         if measurements.is_file():
             self.measurements.set(str(measurements))
 
-        config = root / "input" / "config.json"
-        if config.is_file():
+        config = next(
+            (
+                candidate
+                for candidate in (
+                    root / "input" / "pipeline_config.json",
+                    root / "input" / "config.json",
+                )
+                if candidate.is_file()
+            ),
+            None,
+        )
+        if config is not None:
             self._config_file.set(str(config))
 
     def collect_config(self) -> Config:

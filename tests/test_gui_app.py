@@ -434,6 +434,15 @@ def test_ide_window_prefills_run_tab_from_artifacts_offscreen(
             ),
             encoding="utf-8",
         )
+        (inputs / "pipeline_config.json").write_text(
+            json.dumps(
+                {
+                    "nifti_path": str(inputs / "head.nii.gz"),
+                    "project_dir": str(project),
+                }
+            ),
+            encoding="utf-8",
+        )
 
         window.open_project(project)
 
@@ -441,7 +450,7 @@ def test_ide_window_prefills_run_tab_from_artifacts_offscreen(
         assert window._config_tab.project_dir() == str(project)
         assert window._config_tab.measurements.get() == str(inputs / "measurements.json")
         assert window._config_tab._fiducials.get() == str(inputs / "fiducials.json")
-        assert window._config_tab._config_file.get() == str(inputs / "config.json")
+        assert window._config_tab._config_file.get() == str(inputs / "pipeline_config.json")
     finally:
         window._on_close()
         app.quit()
