@@ -1,6 +1,7 @@
 """Shared scene-placement helpers for the pyvista viewer and the HTML export.
 
-Both the interactive ``virda_gui.viewer`` and the ``virda_gui.html_export``
+Both the interactive ``virda_gui.viewer.viewer`` and the
+``virda_gui.export.html_export``
 tool place the scalp mesh and the MRI volume into one coordinate frame using
 the NIfTI affine:
 

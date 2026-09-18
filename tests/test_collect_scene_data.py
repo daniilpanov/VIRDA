@@ -1,4 +1,4 @@
-"""Unit tests for :func:`virda_gui.viewer.collect_scene_data`.
+"""Unit tests for :func:`virda_gui.viewer.viewer_loaders.collect_scene_data`.
 
 ``collect_scene_data`` performs all file IO and scene preparation off the GUI
 thread and returns plain data objects (NumPy arrays, PyVista meshes), so these
@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 import trimesh
 
-from virda_gui.viewer import SceneData, collect_scene_data
+from virda_gui.viewer.viewer_loaders import SceneData, collect_scene_data
 
 
 def _write_tsv(path: Path, rows: list[tuple[str, float, float, float]]) -> None:

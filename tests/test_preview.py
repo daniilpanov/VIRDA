@@ -1,11 +1,11 @@
-"""Unit tests for :mod:`virda_gui.preview` pure helpers (no QApplication)."""
+"""Unit tests for :mod:`virda_gui.preview.preview` pure helpers (no QApplication)."""
 
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-from virda_gui.preview import (
+from virda_gui.preview.preview import (
     load_npy_table,
     npy_columns_for,
     npy_table_rows,
