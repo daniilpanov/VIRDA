@@ -137,8 +137,6 @@ class Stage1PipelineBuilder:
 
         contract = MeshPipelineContract(
             nifti_path=nifti_path_inst,
-            fiducials_path=fiducials_path_inst,
-            auto_detect_fiducials=config.auto_detect_fiducials,
             closing_radius=config.closing_radius,
             otsu_scope=config.otsu_scope,
             otsu_threshold_scale=config.otsu_threshold_scale,
@@ -185,6 +183,11 @@ class Stage1PipelineBuilder:
 
     def build(self) -> PipelineController:
         if self._atomic_mesh is not None:
+            if self._mask_postprocessors or self._mesh_postprocessors:
+                raise ValueError(
+                    "Custom postprocessors cannot be combined with an atomic mesh pipeline: "
+                    "mesh cleaning and smoothing are governed by the pipeline contract options."
+                )
             return self._build_atomic()
         return self._build_manual()
 
@@ -284,3 +287,4 @@ class Stage1PipelineBuilder:
             )
 
         return controller
+

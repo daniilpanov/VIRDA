@@ -39,8 +39,6 @@ class MeshPipelineContract(PipelineContract):
     """Input contract and options for the scalp-mesh generation pipeline."""
 
     nifti_path: Path | None = None
-    fiducials_path: Path | None = None
-    auto_detect_fiducials: bool = False
 
     closing_radius: int = Field(default=5, ge=0)
     otsu_scope: OtsuScope = "all"

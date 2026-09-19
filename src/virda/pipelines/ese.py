@@ -83,7 +83,8 @@ class ESEPipeline(AtomicPipeline[ESEPipelineContract]):
         contract = self.contract
         if contract.scalp_mesh is None:
             raise ValueError("Missing mandatory input: 'scalp_mesh'")
-        assert contract.ese_offset_mm is not None
+        if contract.ese_offset_mm is None:
+            raise ValueError("Missing mandatory input: 'ese_offset_mm'")
 
         ese_builder: ESEBuilder = PCAESEBuilder(
             config=contract.to_stage2_config(),

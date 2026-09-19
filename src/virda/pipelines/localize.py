@@ -74,13 +74,6 @@ class LocalizationPipelineContract(PipelineContract):
             residual_threshold_mm=self.residual_threshold_mm,
         )
 
-    def _surface(self) -> ESEMesh | ScalpMesh:
-        if self.ese_mesh is not None:
-            return self.ese_mesh
-        if self.scalp_mesh is not None:
-            return self.scalp_mesh
-        raise ValueError("Localization requires a surface input: 'ese_mesh' or 'scalp_mesh'")
-
 
 class LocalizationPipeline(AtomicPipeline[LocalizationPipelineContract]):
     """Localize real electrodes on an ESE or scalp surface (spec Stage 3)."""
