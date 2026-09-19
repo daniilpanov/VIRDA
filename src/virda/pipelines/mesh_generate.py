@@ -6,7 +6,8 @@ extract the scalp mesh with marching cubes.
 
 Stage 1 functions (called separately, without parameters, reusing the pipeline
 options): ``clean`` removes small components and merges duplicate vertices,
-``smooth`` applies the configured smoother to the current mesh.
+``smooth`` applies the configured smoother to the current mesh and
+``decimate`` reduces the mesh density when requested.
 """
 
 from logging import Logger
@@ -19,6 +20,7 @@ from virda.io.loader.nifti_loader import NiftiLoader
 from virda.mesh.contracts import MeshPostprocessor
 from virda.mesh.laplacian_smoother import LaplacianSmoother
 from virda.mesh.mesh_cleaner import TrimeshCleaner
+from virda.mesh.mesh_decimator import QuadraticDecimator
 from virda.mesh.mesh_extractor import MarchingCubesExtractor
 from virda.mesh.taubin_smoother import TaubinSmoother
 from virda.models.mri_volume import MRIVolume
@@ -47,6 +49,9 @@ class MeshPipelineContract(PipelineContract):
     seal_enabled: bool = True
     seal_radius: int = Field(default=4, ge=0)
 
+    voxel_size_mm: float | None = Field(default=None, gt=0)
+    mesh_density_percent: float = Field(default=100.0, ge=1, le=100)
+
     cleaner_min_vertices: int = Field(default=100, ge=1)
     cleaner_merge_digits: int = Field(default=7, ge=0)
 
@@ -59,11 +64,11 @@ class MeshPipelineContract(PipelineContract):
 
 
 class MeshPipeline(AtomicPipeline[MeshPipelineContract]):
-    """Scalp-mesh generation: stage-0 processing plus cleaning/smoothing extras.
+    """Scalp-mesh generation: stage-0 processing plus cleaning/smoothing/decimation extras.
 
-    Additional postprocessing is intentionally *not* part of stage 0: ``clean``
-    and ``smooth`` are stage-1 functions and can be invoked one by one on the
-    produced mesh, or left out entirely.
+    Additional postprocessing is intentionally *not* part of stage 0: ``clean``,
+    ``smooth`` and ``decimate`` are stage-1 functions and can be invoked one by
+    one on the produced mesh, or left out entirely.
     """
 
     name = "mesh_generate"
@@ -97,7 +102,7 @@ class MeshPipeline(AtomicPipeline[MeshPipelineContract]):
         )
         if contract.seal_enabled:
             controller.register_step(MaskSealer(radius=contract.seal_radius))
-        controller.register_step(MarchingCubesExtractor())
+        controller.register_step(MarchingCubesExtractor(voxel_size_mm=contract.voxel_size_mm))
 
         return controller
 
@@ -108,6 +113,7 @@ class MeshPipeline(AtomicPipeline[MeshPipelineContract]):
         return {
             "clean": self._clean,
             "smooth": self._smooth,
+            "decimate": self._decimate,
         }
 
     def _clean(self, context: PipelineContext) -> ScalpMesh:
@@ -131,6 +137,12 @@ class MeshPipeline(AtomicPipeline[MeshPipelineContract]):
                 lamb=contract.smoother_lamb,
             )
         return self._replace_mesh(context, smoother)
+
+    def _decimate(self, context: PipelineContext) -> ScalpMesh:
+        decimator: MeshPostprocessor = QuadraticDecimator(
+            density_percent=self.contract.mesh_density_percent
+        )
+        return self._replace_mesh(context, decimator)
 
     @staticmethod
     def _replace_mesh(context: PipelineContext, postprocessor: MeshPostprocessor) -> ScalpMesh:

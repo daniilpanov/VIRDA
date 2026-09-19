@@ -142,6 +142,8 @@ class Stage1PipelineBuilder:
             otsu_threshold_scale=config.otsu_threshold_scale,
             seal_enabled=config.seal_enabled,
             seal_radius=config.seal_radius,
+            voxel_size_mm=config.mesh_voxel_size_mm,
+            mesh_density_percent=config.mesh_density_percent,
             cleaner_min_vertices=config.cleaner_min_vertices,
             cleaner_merge_digits=config.cleaner_merge_digits,
             smoother_type=cast(SMOOTHER_TYPES, config.smoother_type),
@@ -195,7 +197,7 @@ class Stage1PipelineBuilder:
         assert self._atomic_mesh is not None
         controller = self._atomic_mesh.build_stage0()
 
-        for function_name in ("clean", "smooth"):
+        for function_name in ("clean", "smooth", "decimate"):
             controller.register_step(MeshStage1Step(self._atomic_mesh, function_name))
 
         if self._fiducials_path:
