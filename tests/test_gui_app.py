@@ -65,6 +65,36 @@ class _FakeRow:
         return self._color
 
 
+class _FakeSelector:
+    """Duck-typed stand-in for ``FileSelector`` / ``LabeledField`` accessors."""
+
+    def __init__(self, value: str = "") -> None:
+        self._value = value
+
+    def get(self) -> str:
+        return self._value
+
+    def set(self, value: str) -> None:
+        self._value = value
+
+
+def _config_tab_stub(tmp_path: Path, advanced: dict[str, str]) -> SimpleNamespace:
+    nifti = tmp_path / "head.nii.gz"
+    nifti.write_bytes(b"\x00")
+    return SimpleNamespace(
+        _state=SimpleNamespace(
+            advanced=dict(advanced),
+            coordsystem=None,
+            electrode_rows=[],
+            palette_index=0,
+        ),
+        _nifti=_FakeSelector(str(nifti)),
+        _project_dir=_FakeSelector(str(tmp_path / "out")),
+        _fiducials=_FakeSelector(""),
+        _auto_detect_fid=_FakeSelector("false"),
+    )
+
+
 def test_advanced_defaults_cover_stage3() -> None:
     assert ADVANCED_FIELD_DEFAULTS["residual_threshold_mm"] == "10.0"
     assert ADVANCED_FIELD_DEFAULTS["calibrate_ese_offset"] == "true"
@@ -73,6 +103,52 @@ def test_advanced_defaults_cover_stage3() -> None:
 def test_config_keys_map_stage3_fields() -> None:
     assert CONFIG_KEY_TO_ADVANCED["residual_threshold_mm"] == "residual_threshold_mm"
     assert CONFIG_KEY_TO_ADVANCED["calibrate_ese_offset"] == "calibrate_ese_offset"
+
+
+def test_advanced_defaults_cover_mesh_density() -> None:
+    assert ADVANCED_FIELD_DEFAULTS["mesh_voxel_size_mm"] == ""
+    assert ADVANCED_FIELD_DEFAULTS["mesh_density_percent"] == "100"
+
+
+def test_config_keys_map_mesh_density_fields() -> None:
+    assert CONFIG_KEY_TO_ADVANCED["mesh_voxel_size_mm"] == "mesh_voxel_size_mm"
+    assert CONFIG_KEY_TO_ADVANCED["mesh_density_percent"] == "mesh_density_percent"
+
+
+def test_collect_config_wires_mesh_density(tmp_path) -> None:
+    advanced = dict(ADVANCED_FIELD_DEFAULTS)
+    advanced["mesh_voxel_size_mm"] = "2"
+    advanced["mesh_density_percent"] = "50"
+
+    config = ConfigTab.collect_config(cast("ConfigTab", _config_tab_stub(tmp_path, advanced)))
+
+    assert config.mesh_voxel_size_mm == 2.0
+    assert config.mesh_density_percent == 50.0
+
+
+def test_collect_config_mesh_voxel_empty_means_native(tmp_path) -> None:
+    config = ConfigTab.collect_config(
+        cast("ConfigTab", _config_tab_stub(tmp_path, dict(ADVANCED_FIELD_DEFAULTS)))
+    )
+
+    assert config.mesh_voxel_size_mm is None
+    assert config.mesh_density_percent == 100.0
+
+
+def test_collect_config_rejects_nonpositive_voxel_size(tmp_path) -> None:
+    advanced = dict(ADVANCED_FIELD_DEFAULTS)
+    advanced["mesh_voxel_size_mm"] = "0"
+
+    with pytest.raises(ValueError, match="mesh_voxel_size_mm"):
+        ConfigTab.collect_config(cast("ConfigTab", _config_tab_stub(tmp_path, advanced)))
+
+
+def test_collect_config_rejects_out_of_range_density(tmp_path) -> None:
+    advanced = dict(ADVANCED_FIELD_DEFAULTS)
+    advanced["mesh_density_percent"] = "150"
+
+    with pytest.raises(ValueError, match="mesh_density_percent"):
+        ConfigTab.collect_config(cast("ConfigTab", _config_tab_stub(tmp_path, advanced)))
 
 
 def test_collect_electrode_specs_skips_empty_and_duplicates(tmp_path) -> None:
