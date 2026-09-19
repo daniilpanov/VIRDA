@@ -38,11 +38,8 @@ research = [
     "pyvista>=0.44",
 ]
 
-[project.scripts]
-virda = "virda_cli.main:main"
-
 [tool.hatch.build.targets.wheel]
-packages = ["src/virda", "src/virda_cli"]
+packages = ["src/virda"]
 
 [tool.uv.workspace]
 members = ["src/virda_gui"]

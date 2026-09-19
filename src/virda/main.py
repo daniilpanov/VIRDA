@@ -1,10 +1,7 @@
 """Pipeline orchestration for VIRDA.
 
 Keeps the reusable pipeline entry points (:func:`run`, :func:`run_stage3`)
-that the GUI imports as ``from virda.main import run``.  The CLI argument
-parsing and the console ``main()`` entry point live in :mod:`virda_cli`;
-they are re-exported here so ``python -m virda`` and the existing
-``from virda.main import ...`` call sites keep working.
+that the GUI imports as ``from virda.main import run``.
 """
 
 from pathlib import Path
@@ -16,21 +13,8 @@ from virda.models.ese_mesh import ESEMesh
 from virda.models.stage1_result import Stage1Result
 from virda.pipelines.stage1 import Stage1PipelineBuilder
 from virda.pipelines.stage2 import Stage2PipelineBuilder
-from virda_cli.main import (
-    _ESE_PARAMS,
-    _validate_required_group,
-    _warn_partial_neighborhood,
-    main,
-)
 
-__all__ = [
-    "main",
-    "run",
-    "run_stage3",
-    "_ESE_PARAMS",
-    "_validate_required_group",
-    "_warn_partial_neighborhood",
-]
+__all__ = ["run", "run_stage3"]
 
 
 def run(
