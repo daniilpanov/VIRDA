@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pyvista as pv
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
@@ -17,6 +18,8 @@ from PySide6.QtWidgets import (
 )
 
 from virda.logging_setup import add_log_handler, remove_log_handler
+from virda.models.ese_mesh import ESEMesh
+from virda.models.scalp_mesh import ScalpMesh
 
 from .constants import ADVANCED_FIELD_DEFAULTS
 from .dialogs.project_dialog import ask_create_project_folder, ask_open_project_folder
@@ -28,7 +31,9 @@ from .sidebar import ProjectSidebar
 from .state import AppState
 from .tabs.config_tab import ConfigTab
 from .tabs.editors_tab import EditorsTab
+from .tabs.mesh_processing_tab import MeshProcessingTab
 from .tabs.preview_tab import PreviewTab
+from .viewer.scene import scene_placement
 from .viewer.viewer import ViewerWidget
 
 _TAB_RUN = "run-pipeline"
@@ -74,6 +79,11 @@ class IdeWindow(QMainWindow):
         self._config_tab.exportHtml.connect(self._on_export_html)
 
         self._editors_tab = EditorsTab(self._state)
+        self._mesh_processing_tab = MeshProcessingTab(self._state)
+        self._mesh_processing_tab.previewMesh.connect(self._on_mesh_preview)
+        self._mesh_processing_tab.eseMesh.connect(self._on_ese_mesh)
+        self._mesh_processing_tab.saved.connect(self._on_mesh_saved)
+        self._mesh_processing_tab.status.connect(self._config_tab.log_viewer.append)
 
         self._fiducial_overlay_timer = QTimer(self)
         self._fiducial_overlay_timer.setSingleShot(True)
@@ -130,6 +140,10 @@ class IdeWindow(QMainWindow):
         live_action.triggered.connect(self._show_editors_tab)
         file_menu.addAction(live_action)
 
+        mesh_action = QAction("&Mesh processing", self)
+        mesh_action.triggered.connect(self._show_mesh_processing_tab)
+        file_menu.addAction(mesh_action)
+
         file_menu.addSeparator()
 
         self._close_action = QAction("&Close project", self)
@@ -173,6 +187,7 @@ class IdeWindow(QMainWindow):
         self._state.last_project_dir = str(project)
         self._config_tab.prefill_from_project(project)
         self._editors_tab.prefill_from_project(project)
+        self._mesh_processing_tab.prefill_from_project(project)
         self._prefs.note_project_opened(project)
         self._refresh_recent_menu()
         self.setWindowTitle(f"VIRDA — {project.name}")
@@ -187,7 +202,9 @@ class IdeWindow(QMainWindow):
         self._state.last_project_dir = None
         self._tabs.removeTab(self._tabs.indexOf(self._config_tab))
         self._tabs.removeTab(self._tabs.indexOf(self._editors_tab))
+        self._tabs.removeTab(self._tabs.indexOf(self._mesh_processing_tab))
         self._editors_tab.clear()
+        self._mesh_processing_tab.clear()
         self.setWindowTitle("VIRDA — Electrode Localization System")
 
     def _create_project(self) -> None:
@@ -238,6 +255,9 @@ class IdeWindow(QMainWindow):
 
     def _show_editors_tab(self) -> None:
         self._add_tab(self._editors_tab, "Live Editing")
+
+    def _show_mesh_processing_tab(self) -> None:
+        self._add_tab(self._mesh_processing_tab, "Mesh Processing")
 
     # ------------------------------------------------------------------
     # Project file tabs
@@ -509,6 +529,40 @@ class IdeWindow(QMainWindow):
             )
         except (ValueError, np.linalg.LinAlgError) as exc:
             self._config_tab.log_viewer.append(f"Live fiducials skipped: {exc}")
+
+    # ------------------------------------------------------------------
+    # Mesh processing overlay + save
+    # ------------------------------------------------------------------
+
+    def _mesh_to_scene_poly(self, vertices: np.ndarray, faces: np.ndarray) -> pv.PolyData:
+        """Build a pyvista mesh whose points live in the viewer's scene frame."""
+        faces_ravel = np.column_stack(
+            [np.full(len(faces), 3, dtype=np.int64), np.asarray(faces, dtype=np.int64)]
+        ).ravel()
+        poly = pv.PolyData(np.asarray(vertices, dtype=np.float64), faces_ravel)
+        _, _, transform, mm_scene = scene_placement(self._viewer_widget.scene_frame_params[0])
+        if not mm_scene and self._viewer_widget.scene_frame_params[0] is not None:
+            poly.transform(transform, inplace=True)
+        return poly
+
+    def _on_mesh_preview(self, mesh: ScalpMesh) -> None:
+        if self._viewer_widget is None:
+            return
+        self._viewer_widget.set_extra_mesh(
+            self._mesh_to_scene_poly(mesh.vertices, mesh.faces)
+        )
+
+    def _on_ese_mesh(self, ese: ESEMesh) -> None:
+        if self._viewer_widget is None:
+            return
+        self._viewer_widget.set_extra_mesh(self._mesh_to_scene_poly(ese.vertices, ese.faces))
+
+    def _on_mesh_saved(self) -> None:
+        if self._state.last_project_dir:
+            self._sidebar.set_project(Path(self._state.last_project_dir))
+        self._config_tab.log_viewer.append(
+            "Mesh saved. Re-open the 3D viewer to inspect the persisted surface."
+        )
 
     def _on_viewer_scene_failed(self, message: str) -> None:
         self._state.viewer_loading = False
