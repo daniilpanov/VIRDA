@@ -1,5 +1,8 @@
 """IDE-style main window: file sidebar, closable tabs and project management."""
 
+import json
+import queue
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +41,8 @@ from .tabs.mesh_processing_tab import MeshProcessingTab
 from .tabs.preview_tab import PreviewTab
 from .viewer.frames import (
     FRAME_SCANNER,
+    frame_available,
+    frame_label,
     frame_to_scene_matrix,
     scene_to_world_matrix,
 )
@@ -106,6 +111,15 @@ class IdeWindow(QMainWindow):
         self._localize_timer.setInterval(200)
         self._localize_timer.timeout.connect(self._run_localize_auto)
         self._localized_electrodes: Electrodes | None = None
+        self._localize_queue = queue.Queue()
+        self._localize_thread: threading.Thread | None = None
+        self._localize_generation = 0
+        self._localize_rerun_pending = False
+        self._localize_last_auto_skip = ""
+        self._localize_poll = QTimer(self)
+        self._localize_poll.setInterval(80)
+        self._localize_poll.timeout.connect(self._drain_localize_queue)
+        self._localize_poll.start()
 
         self._sidebar = ProjectSidebar(self)
         self._sidebar.openViewerRequested.connect(self._on_open_viewer)
@@ -518,6 +532,8 @@ class IdeWindow(QMainWindow):
         self._config_tab.log_viewer.append("3D viewer scene loaded.")
         self._config_tab.viewer_btn.setEnabled(True)
         self._refresh_live_fiducials()
+        if self._localized_electrodes is not None:
+            self._show_localized_electrodes(self._localized_electrodes)
 
     def _on_fiducials_edited(self) -> None:
         """Debounce fast table edits before pushing rows to the viewer."""
@@ -565,17 +581,39 @@ class IdeWindow(QMainWindow):
         self._run_localize(interactive=False)
 
     def _localize_warning(self, message: str, interactive: bool) -> None:
+        if not interactive:
+            if message == self._localize_last_auto_skip:
+                return
+            self._localize_last_auto_skip = message
+            self._config_tab.log_viewer.append(f"Localization skipped: {message}")
+            return
+        self._localize_last_auto_skip = ""
         self._config_tab.log_viewer.append(f"Localization skipped: {message}")
-        if interactive:
-            QMessageBox.warning(self, "Localize", message)
+        QMessageBox.warning(self, "Localize", message)
+
+    def _localize_contract_kwargs(self) -> dict[str, Any]:
+        """The Stage 3 options the full pipeline would use, from the config tab."""
+        advanced = self._state.advanced
+        calibrate = str(advanced.get("calibrate_ese_offset", "true")).lower() == "true"
+        try:
+            threshold = float(advanced.get("residual_threshold_mm", 10.0))
+        except (TypeError, ValueError):
+            threshold = 10.0
+        return {"calibrate_ese_offset": calibrate, "residual_threshold_mm": threshold}
 
     def _run_localize(self, *, interactive: bool) -> None:
-        """Run Stage 3 localization on the current scalp mesh and overlay it.
+        """Snapshot the table inputs and localize on a background thread.
 
-        Fiducial rows typed in the editor's input coordinate system are
-        converted into the mesh's world frame before the localizer runs, using
-        the exact inverse the viewer uses internally.
+        The brute-force search is heavy, so it runs on a daemon thread (the
+        same pattern as :class:`PipelineRunner`); the result is applied back on
+        the main thread by :meth:`_drain_localize_queue`.  Only the latest
+        snapshot is rendered, so an in-flight run can never overwrite a newer
+        one (a follow-up run is queued instead of overlapping).
         """
+        if self._localize_thread is not None and self._localize_thread.is_alive():
+            self._localize_rerun_pending = True
+            return
+
         mesh = self._mesh_processing_tab.current_scalp_mesh()
         if mesh is None:
             self._localize_warning(
@@ -608,6 +646,12 @@ class IdeWindow(QMainWindow):
             else (None, None, True)
         )
         frame = self._editors_tab.fiducials.input_frame()
+        if not frame_available(frame, affine, cras_offset):
+            self._localize_warning(
+                f"The {frame_label(frame)} frame is not available for this scene.", interactive
+            )
+            return
+
         to_world = scene_to_world_matrix(affine, mm_scene) @ frame_to_scene_matrix(
             frame, affine, cras_offset, mm_scene
         )
@@ -632,28 +676,67 @@ class IdeWindow(QMainWindow):
             electrodes = Electrodes(
                 items=[
                     Electrode(
-                        electrode_id=row.electrode_id,
+                        electrode_id=row.electrode_id or None,
                         measured_distances=dict(row.measured_distances),
                     )
                     for row in measurement_rows
                 ]
             )
             contract = LocalizationPipelineContract(
-                scalp_mesh=mesh, electrodes=electrodes, fiducials=fiducials
+                scalp_mesh=mesh,
+                electrodes=electrodes,
+                fiducials=fiducials,
+                **self._localize_contract_kwargs(),
             )
-            context = LocalizationPipeline(contract).run_stage0()
-            localized = context.get_store_notnull(Electrodes)
-        except Exception as exc:  # noqa: BLE001 - surfaced to the user
-            self._localize_warning(f"Localization failed:\n{exc}", interactive)
+        except ValueError as exc:
+            self._localize_warning(f"Invalid table:\n{exc}", interactive)
             return
 
-        self._localized_electrodes = localized
-        self._show_localized_electrodes(localized)
-        localized_count = sum(1 for electrode in localized.items if electrode.is_localized)
-        self._config_tab.log_viewer.append(
-            f"Localized {localized_count}/{len(localized.items)} electrodes "
-            f"(offset shift {localized.calibrated_offset_shift_mm or 0.0:g} mm)."
+        self._localize_generation += 1
+        generation = self._localize_generation
+        thread = threading.Thread(
+            target=self._localize_worker_thread,
+            args=(contract, generation),
+            daemon=True,
         )
+        self._localize_thread = thread
+        thread.start()
+
+    def _localize_worker_thread(
+        self, contract: LocalizationPipelineContract, generation: int
+    ) -> None:
+        """Background thread: run the localizer and post the outcome via queue."""
+        try:
+            context = LocalizationPipeline(contract).run_stage0()
+            result = context.get_store_notnull(Electrodes)
+            self._localize_queue.put((generation, result))
+        except Exception as exc:  # noqa: BLE001 - surfaced on the main thread
+            self._localize_queue.put((generation, exc))
+
+    def _drain_localize_queue(self) -> None:
+        """Apply finished localization results on the main thread."""
+        if self._localize_thread is not None and not self._localize_thread.is_alive():
+            self._localize_thread = None
+        while True:
+            try:
+                generation, payload = self._localize_queue.get_nowait()
+            except queue.Empty:
+                break
+            if generation != self._localize_generation:
+                continue
+            if isinstance(payload, Exception):
+                self._localize_warning(f"Localization failed:\n{payload}", interactive=False)
+                continue
+            self._localized_electrodes = payload
+            self._show_localized_electrodes(payload)
+            localized_count = sum(1 for electrode in payload.items if electrode.is_localized)
+            self._config_tab.log_viewer.append(
+                f"Localized {localized_count}/{len(payload.items)} electrodes "
+                f"(offset shift {payload.calibrated_offset_shift_mm or 0.0:g} mm)."
+            )
+        if self._localize_rerun_pending:
+            self._localize_rerun_pending = False
+            self._localize_timer.start()
 
     def _show_localized_electrodes(self, localized: Electrodes) -> None:
         viewer = self._viewer_widget
@@ -695,6 +778,7 @@ class IdeWindow(QMainWindow):
         self._viewer_widget.set_extra_mesh(
             self._mesh_to_scene_poly(mesh.vertices, mesh.faces)
         )
+        self._schedule_localization()
 
     def _on_ese_mesh(self, ese: ESEMesh) -> None:
         if self._viewer_widget is None:
