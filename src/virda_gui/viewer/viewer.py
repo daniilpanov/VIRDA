@@ -148,7 +148,6 @@ class ViewerWidget(QWidget):
         self._live_electrode_ids: list[str] = []
         self._live_electrode_points: np.ndarray | None = None
         self._live_electrode_flags: np.ndarray | None = None
-        self._live_links_actor: Any = None
         self._live_electrode_actor: Any = None
         self._live_electrode_label_actor: Any = None
         self._extra_mesh: pv.PolyData | None = None
@@ -266,7 +265,6 @@ class ViewerWidget(QWidget):
         self._live_electrode_ids = []
         self._live_electrode_points = None
         self._live_electrode_flags = None
-        self._live_links_actor = None
         self._live_electrode_actor = None
         self._live_electrode_label_actor = None
         self._extra_mesh = None
@@ -444,13 +442,35 @@ class ViewerWidget(QWidget):
             self._link_actors_per_group.append(l_actors)
             self._label_actors_per_group.append(n_actors)
 
-        # ---- live editing overlay (independent of the loaded SceneData) ----
-        # Rows typed into the editors are re-rendered here every time the
-        # display frame changes; the underlying points stay in scene frame and
-        # only the actor pass is re-transformed.
+        self._rebuild_live_overlay(matrix)
+
+        self._apply_visibility_states()
+
+    def _rebuild_live_overlay(self, matrix: np.ndarray) -> None:
+        """(Re)render only the live overlay: fiducials, electrodes, extra mesh.
+
+        The scene-data actors are left untouched, so editing the fiducials
+        table does not recreate the scalp mesh on every keystroke.  The live
+        points stay in the scene frame; *matrix* maps them into the selected
+        display frame.
+        """
+        for actor in (
+            self._live_fiducial_actor,
+            self._live_fiducial_label_actor,
+            self._live_electrode_actor,
+            self._live_electrode_label_actor,
+            self._extra_mesh_actor,
+        ):
+            if actor is not None:
+                self._plotter.remove_actor(actor)
         self._live_fiducial_actor = None
         self._live_fiducial_label_actor = None
         if self._live_fiducial_points is not None and len(self._live_fiducial_points) > 0:
+            if len(self._live_fiducial_ids) != len(self._live_fiducial_points):
+                raise ValueError(
+                    f"got {len(self._live_fiducial_ids)} fiducial ids for "
+                    f"{len(self._live_fiducial_points)} points"
+                )
             pts = transform_points(self._live_fiducial_points, matrix)
             self._live_fiducial_actor = self._plotter.add_points(
                 pts, color="deeppink", point_size=10, render_points_as_spheres=True
@@ -469,9 +489,13 @@ class ViewerWidget(QWidget):
             self._point_actors.extend([self._live_fiducial_actor, self._live_fiducial_label_actor])
 
         self._live_electrode_actor = None
-        self._live_links_actor = None
         self._live_electrode_label_actor = None
         if self._live_electrode_points is not None and len(self._live_electrode_points) > 0:
+            if len(self._live_electrode_ids) != len(self._live_electrode_points):
+                raise ValueError(
+                    f"got {len(self._live_electrode_ids)} electrode ids for "
+                    f"{len(self._live_electrode_points)} points"
+                )
             pts = transform_points(self._live_electrode_points, matrix)
             flags = self._live_electrode_flags
             if flags is None or len(flags) != len(pts):
@@ -489,11 +513,9 @@ class ViewerWidget(QWidget):
                     pts[~healthy], color="red", point_size=17, render_points_as_spheres=True
                 )
                 self._point_actors.append(flagged_actor)
-            ids = list(self._live_electrode_ids[: len(pts)])
-            ids.extend(f"E{index + 1:03d}" for index in range(len(ids), len(pts)))
             self._live_electrode_label_actor = self._plotter.add_point_labels(
                 pts,
-                ids,
+                self._live_electrode_ids,
                 font_size=12,
                 text_color="white",
                 show_points=False,
@@ -512,8 +534,6 @@ class ViewerWidget(QWidget):
                 poly, color="royalblue", opacity=0.55, name="extra_mesh"
             )
             self._point_actors.append(self._extra_mesh_actor)
-
-        self._apply_visibility_states()
 
     def _apply_visibility_states(self) -> None:
         """Restore the layer visibility after a frame-switch actor rebuild."""
@@ -866,7 +886,7 @@ class ViewerWidget(QWidget):
     def _rerender_overlay(self) -> None:
         if self._scene is None:
             return
-        self._rebuild_point_actors(self.current_display_matrix())
+        self._rebuild_live_overlay(self.current_display_matrix())
         self._plotter.render()
 
     def closeEvent(self, event: Any) -> None:  # noqa: N802 - Qt naming

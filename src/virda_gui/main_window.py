@@ -496,18 +496,18 @@ class IdeWindow(QMainWindow):
         viewer = self._viewer_widget
         if viewer is None:
             return
-        rows = self._editors_tab.fiducials.fiducial_rows()
-        ids = [row.fiducial_id for row in rows]
-        points = (
-            np.asarray([row.coordinates for row in rows], dtype=np.float64)
-            if rows
-            else np.empty((0, 3))
-        )
         try:
+            rows = self._editors_tab.fiducials.fiducial_rows()
+            ids = [row.fiducial_id for row in rows]
+            points = (
+                np.asarray([row.coordinates for row in rows], dtype=np.float64)
+                if rows
+                else np.empty((0, 3))
+            )
             viewer.set_live_fiducials(
                 ids, points, frame=self._editors_tab.fiducials.input_frame()
             )
-        except ValueError as exc:
+        except (ValueError, np.linalg.LinAlgError) as exc:
             self._config_tab.log_viewer.append(f"Live fiducials skipped: {exc}")
 
     def _on_viewer_scene_failed(self, message: str) -> None:
