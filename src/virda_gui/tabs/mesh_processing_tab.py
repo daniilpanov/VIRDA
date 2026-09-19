@@ -14,17 +14,19 @@ NIfTI scan ("Generate scalp mesh from NIfTI...") through the pure atoms
 :func:`virda.ops.atoms.generate_scalp_surface` + :func:`virda.ops.atoms.clean`.
 
 The tab is host-agnostic: everything the host needs to render or persist
-travels through Qt signals carrying domain objects.  Scalp-mesh generation
-from NIfTI runs on a dedicated worker thread (see
-:meth:`MeshProcessingTab.generate_from_nifti`); only the pure atoms execute on
-the thread, the resulting :class:`~virda.models.scalp_mesh.ScalpMesh` is
-applied to the tab and signalled to the host on the GUI thread.
+travels through Qt signals carrying domain objects.  Mesh generation runs on a
+dedicated worker thread (see :meth:`MeshProcessingTab.generate_from_nifti` and
+:meth:`MeshProcessingTab.generate_ese`); only the pure atoms execute on the
+thread, the resulting
+:class:`~virda.models.scalp_mesh.ScalpMesh` /
+:class:`~virda.models.ese_mesh.ESEMesh` is applied to the tab and signalled to
+the host on the GUI thread.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from PySide6.QtCore import QObject, QThread, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
@@ -45,6 +47,7 @@ from PySide6.QtWidgets import (
 from virda.io.exporters.scalp_mesh import export_scalp_mesh
 from virda.io.importers.nifti import import_nifti
 from virda.io.importers.scalp_mesh import import_scalp_mesh
+from virda.models.ese_mesh import ESEMesh
 from virda.models.scalp_mesh import ScalpMesh
 from virda.ops.atoms import clean, decimate, generate_ese, generate_scalp_surface, smooth
 from virda.ops.options import (
@@ -77,43 +80,35 @@ def generate_mesh_from_nifti(
     Runs :func:`virda.io.importers.nifti.import_nifti`,
     :func:`virda.ops.atoms.generate_scalp_surface` and
     :func:`virda.ops.atoms.clean` in sequence.  Qt-free; meant to run on a
-    worker thread (see :class:`_MeshSourceWorker`).
+    worker thread (see :class:`_BackgroundWorker`).
     """
     mri = import_nifti(path)
     surface = generate_scalp_surface(mri, sealing)
     return clean(surface.mesh, cleaning)
 
 
-class _MeshSourceWorker(QObject):
-    """Generate a scalp mesh off the GUI thread.
+class _BackgroundWorker(QObject):
+    """Run a pure callable off the GUI thread.
 
     Lives on a dedicated :class:`QThread`; ``done``/``failed`` are delivered
     back to the main thread because the tab (the receiver) lives there.
     """
 
-    done = Signal(int, object)  # noqa: N815 - seq, ScalpMesh
+    done = Signal(int, object)  # noqa: N815 - seq, result
     failed = Signal(int, str)  # noqa: N815 - seq, error message
 
-    def __init__(
-        self,
-        path: Path,
-        sealing: SealingOptions,
-        cleaning: CleanOptions,
-        seq: int,
-    ) -> None:
+    def __init__(self, fn: Callable[[], object], seq: int) -> None:
         super().__init__()
-        self._path = path
-        self._sealing = sealing
-        self._cleaning = cleaning
+        self._fn = fn
         self._seq = seq
 
     def run(self) -> None:
         try:
-            mesh = generate_mesh_from_nifti(self._path, self._sealing, self._cleaning)
+            result = self._fn()
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
             self.failed.emit(self._seq, str(exc))
         else:
-            self.done.emit(self._seq, mesh)
+            self.done.emit(self._seq, result)
 
 
 class MeshProcessingTab(QWidget):
@@ -131,10 +126,12 @@ class MeshProcessingTab(QWidget):
         self._base_path: Path | None = None
         self._preview_mesh: ScalpMesh | None = None
         self._mesh_generation_btn: QPushButton | None = None
-        self._mesh_thread: QThread | None = None
-        self._mesh_worker: _MeshSourceWorker | None = None
-        self._mesh_generation_seq = 0
-        self._mesh_loading = False
+        self._generate_ese_btn: QPushButton | None = None
+        self._generation_thread: QThread | None = None
+        self._generation_worker: _BackgroundWorker | None = None
+        self._generation_seq = 0
+        self._generation_busy = False
+        self._pending_kind: str | None = None
         self._mesh_source_path: Path | None = None
 
         layout = QVBoxLayout(self)
@@ -236,9 +233,9 @@ class MeshProcessingTab(QWidget):
         self._mesh_generation_btn.clicked.connect(self._on_generate_from_nifti)
         row.addWidget(self._mesh_generation_btn)
 
-        ese_btn = QPushButton("Generate ESE mesh", box)
-        ese_btn.clicked.connect(self._on_generate_ese)
-        row.addWidget(ese_btn)
+        self._generate_ese_btn = QPushButton("Generate ESE mesh", box)
+        self._generate_ese_btn.clicked.connect(self._on_generate_ese)
+        row.addWidget(self._generate_ese_btn)
 
         save_btn = QPushButton("Save to project", box)
         save_btn.clicked.connect(self._on_save)
@@ -367,7 +364,7 @@ class MeshProcessingTab(QWidget):
 
     def _on_generate_from_nifti(self) -> None:
         """Pick a NIfTI scan and start generating the scalp mesh in the background."""
-        if self._mesh_loading:
+        if self._generation_busy:
             return
         path, _selected_filter = QFileDialog.getOpenFileName(
             self,
@@ -389,33 +386,76 @@ class MeshProcessingTab(QWidget):
 
         The worker thread only runs the pure atoms; the resulting mesh is
         applied to the tab and emitted to the host on the GUI thread.  A new
-        request retires any in-flight generation; stale results are dropped via
-        the generation counter.
+        generation request retires any in-flight one; stale results are dropped
+        via the generation counter.
         """
-        if self._mesh_loading:
+        if self._generation_busy:
             return
         path = Path(path)
-        self._mesh_generation_seq += 1
-        seq = self._mesh_generation_seq
-        self._cancel_running_generation()
-        self._mesh_loading = True
-        self._mesh_source_path = path
-        self._set_generation_enabled(False)
-
         sealing, cleaning = options
-        self._mesh_thread = QThread(self)
-        self._mesh_worker = _MeshSourceWorker(path, sealing, cleaning, seq)
-        self._mesh_worker.moveToThread(self._mesh_thread)
-        self._mesh_thread.started.connect(self._mesh_worker.run)
-        self._mesh_worker.done.connect(self._on_mesh_generated)
-        self._mesh_worker.failed.connect(self._on_mesh_generation_failed)
-        self._mesh_thread.start()
-        self.status.emit(f"Generating scalp mesh from {name or path.name}...")
 
-    def _on_mesh_generated(self, seq: int, mesh: ScalpMesh) -> None:
-        if seq != self._mesh_generation_seq:
+        def _run() -> ScalpMesh:
+            return generate_mesh_from_nifti(path, sealing, cleaning)
+
+        self._start_generation(
+            _run,
+            kind="nifti",
+            source_path=path,
+            start_message=f"Generating scalp mesh from {name or path.name}...",
+        )
+
+    def generate_ese(self, base: ScalpMesh, offset_mm: float) -> None:
+        """Offset *base* into an ESE mesh on a background thread."""
+        if self._generation_busy:
             return
+        offset_mm = round(offset_mm, 6)
+
+        def _run() -> ESEMesh:
+            return generate_ese(base, EseOptions(ese_offset_mm=offset_mm))
+
+        self._start_generation(
+            _run,
+            kind="ese",
+            start_message=f"Generating ESE mesh at {offset_mm:g} mm offset...",
+        )
+
+    def _start_generation(
+        self,
+        fn: Callable[[], object],
+        kind: str,
+        start_message: str,
+        source_path: Path | None = None,
+    ) -> None:
+        if self._generation_busy:
+            return
+        self._generation_seq += 1
+        seq = self._generation_seq
+        self._cancel_running_generation()
+        self._generation_busy = True
+        self._pending_kind = kind
+        self._mesh_source_path = source_path
+        self._set_generation_buttons_enabled(False)
+
+        self._generation_thread = QThread(self)
+        self._generation_worker = _BackgroundWorker(fn, seq)
+        self._generation_worker.moveToThread(self._generation_thread)
+        self._generation_thread.started.connect(self._generation_worker.run)
+        self._generation_worker.done.connect(self._on_generation_done)
+        self._generation_worker.failed.connect(self._on_generation_failed)
+        self._generation_thread.start()
+        self.status.emit(start_message)
+
+    def _on_generation_done(self, seq: int, result: object) -> None:
+        if seq != self._generation_seq:
+            return
+        kind = self._pending_kind
         self._finish_generation()
+        if kind == "ese":
+            ese: ESEMesh = result  # type: ignore[assignment]
+            self.status.emit(f"ESE mesh generated: {len(ese.vertices)} vertices.")
+            self.eseMesh.emit(ese)
+            return
+        mesh: ScalpMesh = result  # type: ignore[assignment]
         assert self._mesh_source_path is not None
         self._base_mesh = mesh
         self._base_path = self._mesh_source_path
@@ -425,51 +465,59 @@ class MeshProcessingTab(QWidget):
         self.previewMesh.emit(mesh)
         self.status.emit(f"Scalp mesh generated: {len(mesh.vertices)} vertices.")
 
-    def _on_mesh_generation_failed(self, seq: int, message: str) -> None:
-        if seq != self._mesh_generation_seq:
+    def _on_generation_failed(self, seq: int, message: str) -> None:
+        if seq != self._generation_seq:
             return
-        name = (
-            self._mesh_source_path.name
-            if self._mesh_source_path is not None
-            else "NIfTI scan"
-        )
+        kind = self._pending_kind
+        if kind == "ese":
+            title = "Generate ESE"
+            subject = "ESE mesh"
+            detail = f"ESE generation failed:\n{message}"
+        else:
+            title = "Generate scalp mesh"
+            subject = "Scalp mesh"
+            name = (
+                self._mesh_source_path.name
+                if self._mesh_source_path is not None
+                else "NIfTI scan"
+            )
+            detail = f"Generation failed for {name}:\n{message}"
         self._finish_generation()
-        QMessageBox.critical(
-            self, "Generate scalp mesh", f"Generation failed for {name}:\n{message}"
-        )
-        self.status.emit(f"Scalp mesh generation failed: {message}")
+        QMessageBox.critical(self, title, detail)
+        self.status.emit(f"{subject} generation failed: {message}")
 
     def _finish_generation(self) -> None:
         """Retire the finished generation thread and re-enable the UI."""
         # deleteLater() must be posted while the worker's event loop is still
         # live, otherwise the DeferredDelete event is never processed.
-        if self._mesh_worker is not None:
-            self._mesh_worker.deleteLater()
-        if self._mesh_thread is not None:
-            self._mesh_thread.quit()
-            self._mesh_thread.wait()
-            if self._mesh_thread.isFinished():
-                self._mesh_thread.deleteLater()
-            self._mesh_thread = None
-        self._mesh_worker = None
+        if self._generation_worker is not None:
+            self._generation_worker.deleteLater()
+        if self._generation_thread is not None:
+            self._generation_thread.quit()
+            self._generation_thread.wait()
+            if self._generation_thread.isFinished():
+                self._generation_thread.deleteLater()
+            self._generation_thread = None
+        self._generation_worker = None
         self._mesh_source_path = None
-        self._mesh_loading = False
-        self._set_generation_enabled(True)
+        self._pending_kind = None
+        self._generation_busy = False
+        self._set_generation_buttons_enabled(True)
 
     def _cancel_running_generation(self) -> None:
         """Stop an in-flight generation so a newer request replaces it.
 
-        A previous ``generate_from_nifti`` may still be running its atoms on a
-        worker thread; retiring it here prevents the abandoned thread (and its
+        A previous generation may still be running its atoms on a worker
+        thread; retiring it here prevents the abandoned thread (and its
         ``done``/``failed`` emissions) from lingering after a new call.
         """
-        thread = self._mesh_thread
+        thread = self._generation_thread
         if thread is None:
             return
-        worker = self._mesh_worker
+        worker = self._generation_worker
         if worker is not None:
-            worker.done.disconnect(self._on_mesh_generated)
-            worker.failed.disconnect(self._on_mesh_generation_failed)
+            worker.done.disconnect(self._on_generation_done)
+            worker.failed.disconnect(self._on_generation_failed)
             # deleteLater() must be posted while the worker's event loop is
             # still live, otherwise the DeferredDelete event is never processed.
             worker.deleteLater()
@@ -480,15 +528,17 @@ class MeshProcessingTab(QWidget):
         # the thread keeps running under its parent until it finishes.
         if thread.isFinished():
             thread.deleteLater()
-        self._mesh_thread = None
-        self._mesh_worker = None
+        self._generation_thread = None
+        self._generation_worker = None
         self._mesh_source_path = None
-        self._mesh_loading = False
-        self._set_generation_enabled(True)
+        self._pending_kind = None
+        self._generation_busy = False
+        self._set_generation_buttons_enabled(True)
 
-    def _set_generation_enabled(self, enabled: bool) -> None:
-        if self._mesh_generation_btn is not None:
-            self._mesh_generation_btn.setEnabled(enabled)
+    def _set_generation_buttons_enabled(self, enabled: bool) -> None:
+        for button in (self._mesh_generation_btn, self._generate_ese_btn):
+            if button is not None:
+                button.setEnabled(enabled)
 
     def shutdown(self) -> None:
         """Stop the generation thread, if any.
@@ -503,18 +553,7 @@ class MeshProcessingTab(QWidget):
         if base is None:
             QMessageBox.warning(self, "Generate ESE", "Load a base mesh first.")
             return
-        try:
-            ese = generate_ese(
-                base, EseOptions(ese_offset_mm=round(self._ese_offset_spin.value(), 6))
-            )
-        except Exception as exc:  # noqa: BLE001 - surfaced to the user
-            QMessageBox.critical(self, "Generate ESE", f"ESE generation failed:\n{exc}")
-            return
-        self.status.emit(
-            f"ESE mesh generated: {len(ese.vertices)} vertices at "
-            f"{self._ese_offset_spin.value():g} mm offset."
-        )
-        self.eseMesh.emit(ese)
+        self.generate_ese(base, self._ese_offset_spin.value())
 
     def _on_save(self) -> None:
         project = self._state.last_project_dir
