@@ -459,9 +459,11 @@ class MeshProcessingTab(QWidget):
         mesh: ScalpMesh = result  # type: ignore[assignment]
         assert source_path is not None
         self._base_mesh = mesh
-        self._base_path = source_path
+        self._base_path = None  # generated in memory; gains a path only on Save
         self._preview_mesh = None
-        self._base_label.setText(str(source_path))
+        self._base_label.setText(
+            f"Generated from {source_path.name}: {len(mesh.vertices)} vertices (unsaved)"
+        )
         self._preview_label.setText(f"Base mesh: {len(mesh.vertices)} vertices")
         self.previewMesh.emit(mesh)
         self.status.emit(f"Scalp mesh generated: {len(mesh.vertices)} vertices.")
@@ -575,6 +577,8 @@ class MeshProcessingTab(QWidget):
             QMessageBox.critical(self, "Save mesh", f"Could not save mesh:\n{exc}")
             return
         self.status.emit(f"Saved working mesh ({len(target.vertices)} vertices) to {mesh_path}.")
+        self._base_path = mesh_path
+        self._base_label.setText(str(mesh_path))
         self.saved.emit()
 
     def _on_reset(self) -> None:
