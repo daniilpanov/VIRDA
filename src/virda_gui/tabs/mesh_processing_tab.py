@@ -19,7 +19,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QTimer, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
@@ -200,7 +200,7 @@ class MeshProcessingTab(QWidget):
             smoother_iterations=self._iterations_spin.value(),
             smoother_lamb=round(self._lamb_spin.value(), 6),
             smoother_nu=round(self._nu_spin.value(), 6),
-            density_percent=self._density_slider.value(),
+            mesh_density_percent=self._density_slider.value(),
         )
 
     # ---- preview / actions ----
@@ -319,12 +319,25 @@ class MeshProcessingTab(QWidget):
         path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
     def _on_reset(self) -> None:
+        widgets = (
+            self._smoother_combo,
+            self._iterations_spin,
+            self._lamb_spin,
+            self._nu_spin,
+            self._density_slider,
+            self._ese_offset_spin,
+        )
+        for widget in widgets:
+            widget.blockSignals(True)
         self._smoother_combo.setCurrentIndex(0)
         self._iterations_spin.setValue(5)
         self._lamb_spin.setValue(0.5)
         self._nu_spin.setValue(-0.53)
         self._density_slider.setValue(100)
         self._ese_offset_spin.setValue(2.0)
+        for widget in widgets:
+            widget.blockSignals(False)
+        self._density_label.setText("100%")
         self._recompute_preview()
 
     # ---- project lifecycle ----
