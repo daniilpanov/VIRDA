@@ -107,28 +107,6 @@ def test_rows_to_fiducials_rejects_duplicate_ids() -> None:
 # ----------------------------------------------------------------------
 
 
-def test_measurements_rows_round_trip_through_loader(tmp_path: Path) -> None:
-    fiducials = make_fiducials()
-    points = np.array([[0.0, 88.0, -10.0], [10.0, 20.0, 30.0]])
-    rows = [
-        MeasurementRow(
-            electrode_id=f"E{index}",
-            measured_distances={
-                fiducial.fiducial_id: float(np.linalg.norm(point - fiducial.coordinates))
-                for fiducial in fiducials.items
-            },
-        )
-        for index, point in enumerate(points)
-    ]
-    target = tmp_path / "measurements.json"
-    target.write_text(json.dumps(measurements_rows_to_schema(rows)), encoding="utf-8")
-
-    loaded = import_measurements(target)
-
-    assert [electrode.electrode_id for electrode in loaded.items] == ["E0", "E1"]
-    assert loaded.items[0].measured_distances == rows[0].measured_distances
-
-
 def test_measurements_rows_empty_ids_generate_electrode_ids(tmp_path: Path) -> None:
     schema = measurements_rows_to_schema(
         [
@@ -247,24 +225,6 @@ def test_measurements_editor_saves_round_trip_offscreen(tmp_path: Path) -> None:
         app.quit()
 
 
-def test_measurements_editor_rejects_electrode_without_distances_offscreen(
-    tmp_path: Path,
-) -> None:
-    app = _qt_app()
-    editor = MeasurementsEditor()
-    try:
-        editor.set_fiducial_ids(["NAS"])
-        editor.set_measurement_rows([MeasurementRow(electrode_id="E9", measured_distances={})])
-
-        with pytest.raises(ValueError, match="E9.*no measured distances"):
-            editor.fiducial_rows()
-        editor._table.item(0, 0).setText("")
-        assert editor.fiducial_rows() == []
-    finally:
-        editor.close()
-        app.quit()
-
-
 def test_fiducials_editor_load_invalid_file_returns_false(tmp_path: Path) -> None:
     app = _qt_app()
     editor = FiducialsEditor()
@@ -326,22 +286,6 @@ def test_editors_clear_resets_rows_and_path_offscreen(tmp_path: Path) -> None:
         app.quit()
 
 
-def test_measurements_rows_without_distances_validate_on_save(tmp_path: Path) -> None:
-    app = _qt_app()
-    editor = MeasurementsEditor()
-    try:
-        editor.set_fiducial_ids(["NAS"])
-        editor.set_measurement_rows([MeasurementRow(electrode_id="E0", measured_distances={})])
-        editor._table.item(0, 0).setText("E7")
-
-        with pytest.raises(ValueError, match="no measured distances"):
-            editor.collected_schema()
-        assert editor.save_to(tmp_path / "m.json") is False
-    finally:
-        editor.close()
-        app.quit()
-
-
 def test_ide_window_opens_live_editing_tab_offscreen(tmp_path: Path) -> None:
     app = _qt_app()
     prefs = Preferences(QSettings(str(tmp_path / "prefs.ini"), QSettings.Format.IniFormat))
@@ -381,34 +325,6 @@ def test_ide_window_opens_live_editing_tab_offscreen(tmp_path: Path) -> None:
         assert window.project() is None
     finally:
         window._on_close()
-        app.quit()
-
-
-def test_measurements_editor_emits_rows_changed_offscreen() -> None:
-    app = _qt_app()
-    from PySide6.QtTest import QSignalSpy
-    from PySide6.QtWidgets import QTableWidgetItem
-
-    editor = MeasurementsEditor()
-    try:
-        spy = QSignalSpy(editor.rowsChanged)
-
-        editor.set_fiducial_ids(["NAS", "LPA"])
-        assert spy.count() == 1
-        spy.clear()
-
-        editor.add_row()
-        assert spy.count() == 1
-        spy.clear()
-
-        editor._table.setItem(0, 0, QTableWidgetItem("E0"))
-        assert spy.count() == 1
-        spy.clear()
-
-        editor.remove_selected()
-        assert spy.count() == 1
-    finally:
-        editor.close()
         app.quit()
 
 

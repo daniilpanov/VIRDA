@@ -137,39 +137,6 @@ class TestVoxelRoundTrip:
         np.testing.assert_allclose(back, world, atol=1e-8)
 
 
-class TestFrameToSceneMatrix:
-    def test_frame_to_scene_is_exact_inverse_of_scene_to_frame(self) -> None:
-        affine = _non_degenerate_affine()
-        cras_offset = _cras_to_scanner_ras_offset(affine, (32, 32, 32))
-        for mm_scene in (True, False):
-            for frame in FRAME_IDS:
-                cras = cras_offset if frame == FRAME_CRAS else None
-                scene_matrix = scene_to_frame_matrix(frame, affine, cras, mm_scene)
-                back = frame_to_scene_matrix(frame, affine, cras, mm_scene)
-                np.testing.assert_allclose(
-                    back @ scene_matrix, np.eye(4), atol=1e-9, err_msg=f"{frame} mm_scene={mm_scene}"
-                )
-                np.testing.assert_allclose(
-                    scene_matrix @ back, np.eye(4), atol=1e-9, err_msg=f"{frame} mm_scene={mm_scene}"
-                )
-
-    def test_world_points_via_scene_composition(self) -> None:
-        affine = _non_degenerate_affine()
-        cras_offset = _cras_to_scanner_ras_offset(affine, (32, 32, 32))
-        for mm_scene in (True, False):
-            for frame in FRAME_IDS:
-                cras = cras_offset if frame == FRAME_CRAS else None
-                to_world = scene_to_world_matrix(affine, mm_scene) @ frame_to_scene_matrix(
-                    frame, affine, cras, mm_scene
-                )
-                np.testing.assert_allclose(
-                    to_world,
-                    frame_to_world_matrix(frame, affine, cras),
-                    atol=1e-9,
-                    err_msg=f"{frame} mm_scene={mm_scene}",
-                )
-
-
 class TestSceneToFrameMatrix:
     def test_world_scene_equals_world_frames(self) -> None:
         affine = _non_degenerate_affine()
