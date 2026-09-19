@@ -127,6 +127,31 @@ def scene_to_frame_matrix(
     )
 
 
+def frame_to_scene_matrix(
+    frame: str, affine: np.ndarray | None, cras_offset: np.ndarray | None, mm_scene: bool
+) -> np.ndarray:
+    """Return the inverse of :func:`scene_to_frame_matrix`.
+
+    Maps points typed in a user-selected frame (scanner RAS, voxel or cRAS)
+    back into the scene's natural frame so live-edit rows and localization
+    inputs land on the same mesh that the viewer renders.  Computed as the
+    exact inverse so ``frame_to_scene @ scene_to_frame == I`` holds.
+    """
+    _validate_frame(frame)
+    return np.linalg.inv(scene_to_frame_matrix(frame, affine, cras_offset, mm_scene))
+
+
+def frame_to_scene_points(
+    points: np.ndarray,
+    frame: str,
+    affine: np.ndarray | None,
+    cras_offset: np.ndarray | None,
+    mm_scene: bool,
+) -> np.ndarray:
+    """Map (N, 3) *points* expressed in *frame* into the scene's natural frame."""
+    return transform_points(points, frame_to_scene_matrix(frame, affine, cras_offset, mm_scene))
+
+
 def world_to_frame_points(
     frame: str, points: np.ndarray, affine: np.ndarray | None, cras_offset: np.ndarray | None
 ) -> np.ndarray:
