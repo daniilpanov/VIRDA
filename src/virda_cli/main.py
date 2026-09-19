@@ -192,7 +192,7 @@ def main() -> None:
 
     _warn_partial_neighborhood(args, config)
 
-    from virda.main import run  # local import avoids a config/main import cycle
+    from virda.main import run
 
     stage1_result, ese_mesh, electrodes = run(config, measurements_path=args.measurements_path)
     print(f"Stage 1: mesh with {len(stage1_result.mesh.vertices)} vertices")
