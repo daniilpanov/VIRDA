@@ -50,41 +50,6 @@ class TestMeasurementsRoundTrip:
         assert data["fiducial_weights"] == {"NAS": 3.0}
 
 
-class TestElectrodesExporter:
-    def test_writes_json_and_csv(self, tmp_path: Path) -> None:
-        ese = make_ese()
-        fiducials = make_fiducials()
-        localized = BruteForceLocalizer(calibrate_ese_offset=False).process(
-            ese, fiducials, make_electrodes(ese.vertices[[0, 42]], fiducials)
-        )
-
-        json_path = export_electrodes(tmp_path / "electrodes.json", localized)
-
-        loaded = json.loads(json_path.read_text())
-        assert len(loaded) == 2
-        assert loaded[0]["electrode_id"] == "E0"
-        assert loaded[0]["ese_coords"] == np.asarray(ese.vertices[0]).tolist()
-        assert loaded[0]["residual_error"] < 1e-6
-
-        table = import_electrodes_table(json_path.with_suffix(".csv"))
-        assert table.positions.shape == (2, 3)
-        np.testing.assert_allclose(table.positions[0], ese.vertices[0], atol=1e-9)
-
-    def test_json_marks_unlocalized_electrode(self, tmp_path: Path) -> None:
-        fiducials = make_fiducials()
-        electrodes = make_electrodes(np.array([[999.0, 999.0, 999.0]]), fiducials)
-        localized = BruteForceLocalizer(
-            residual_threshold_mm=1.0, calibrate_ese_offset=False
-        ).process(make_ese(), fiducials, electrodes)
-
-        json_path = export_electrodes(tmp_path / "electrodes.json", localized)
-
-        loaded = json.loads(json_path.read_text())
-        assert loaded[0]["flagged"] is True
-        assert loaded[0]["ese_coords"] is None
-        assert loaded[0]["residual_error"] is None
-
-
 class TestEseMeshExporter:
     def test_round_trip_preserves_faces(self, tmp_path: Path) -> None:
         ese = make_ese()

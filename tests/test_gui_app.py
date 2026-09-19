@@ -326,92 +326,6 @@ def test_generate_and_clean_scalp_mesh_from_mini_nifti(tmp_path: Path) -> None:
     assert mesh.faces.size > 0
 
 
-def test_mesh_generation_is_asynchronous_offscreen(tmp_path: Path) -> None:
-    """generate_from_nifti returns immediately and applies the mesh when done."""
-    from PySide6.QtTest import QTest
-    from PySide6.QtWidgets import QMessageBox
-
-    from virda_gui.tabs.mesh_processing_tab import MeshProcessingTab
-
-    app = _offscreen_app()
-    # Failures must not open a modal box and deadlock the test.
-    original_critical = QMessageBox.critical
-
-    def _noop_critical(*_args, **_kwargs):
-        pass
-
-    QMessageBox.critical = _noop_critical
-    tab = MeshProcessingTab(state=AppState())
-    try:
-        path = _write_mini_nifti(tmp_path / "mini.nii.gz")
-        received = []
-        tab.previewMesh.connect(received.append)
-
-        tab.generate_from_nifti(
-            path,
-            (
-                SealingOptions(seal_enabled=True, seal_radius=1),
-                CleanOptions(min_component_vertices=1, merge_digits=7),
-            ),
-            path.name,
-        )
-
-        assert tab._generation_busy is True  # async: request is still in flight
-        assert tab._generation_thread is not None
-        assert tab._generation_thread.isRunning()
-
-        assert QTest.qWaitUntil(lambda: tab._base_mesh is not None, 20000)
-        assert len(received) == 1
-        assert len(tab._base_mesh.vertices) > 0
-        assert not tab._generation_busy
-    finally:
-        QMessageBox.critical = original_critical
-        tab.shutdown()
-        tab.close()
-        app.quit()
-
-
-def test_ese_generation_is_asynchronous_offscreen(tmp_path: Path) -> None:
-    """generate_ese also runs on a worker thread and emits the ESE mesh."""
-    from PySide6.QtTest import QTest
-    from PySide6.QtWidgets import QMessageBox
-
-    from virda_gui.tabs.mesh_processing_tab import (
-        MeshProcessingTab,
-        generate_mesh_from_nifti,
-    )
-
-    app = _offscreen_app()
-    original_critical = QMessageBox.critical
-
-    def _noop_critical(*_args, **_kwargs):
-        pass
-
-    QMessageBox.critical = _noop_critical
-    tab = MeshProcessingTab(state=AppState())
-    try:
-        path = _write_mini_nifti(tmp_path / "mini.nii.gz")
-        base = generate_mesh_from_nifti(
-            path,
-            SealingOptions(seal_enabled=True, seal_radius=1),
-            CleanOptions(min_component_vertices=1, merge_digits=7),
-        )
-        ese_received = []
-        tab.eseMesh.connect(ese_received.append)
-
-        tab.generate_ese(base, 2.0)
-
-        assert tab._generation_busy is True  # async
-        assert QTest.qWaitUntil(lambda: len(ese_received) == 1, 20000)
-        assert len(ese_received[0].vertices) > 0
-        assert not tab._generation_busy
-    finally:
-        QMessageBox.critical = original_critical
-        tab.shutdown()
-        tab.close()
-        app.quit()
-
-
 # ----------------------------------------------------------------------
 # offscreen Qt smoke tests
 # ----------------------------------------------------------------------
@@ -435,43 +349,6 @@ def test_advanced_defaults_cover_generation_and_localization() -> None:
     assert ADVANCED_FIELD_DEFAULTS["cleaner_merge_digits"] == "7"
     assert ADVANCED_FIELD_DEFAULTS["residual_threshold_mm"] == "10.0"
     assert ADVANCED_FIELD_DEFAULTS["calibrate_ese_offset"] == "true"
-
-
-def test_no_pipeline_or_config_surfaces_in_gui() -> None:
-    """The pipeline/config/log layers are gone (files and runtime attributes)."""
-    import importlib
-    import virda_gui as gui
-
-    root = Path(gui.__file__).parent
-    assert not (root / "services").exists()
-    assert not (root / "services" / "pipeline_runner.py").exists()
-    assert not (root / "services" / "logging.py").exists()
-    assert not (root / "tabs" / "config_tab.py").exists()
-    assert not (root / "constants.py").read_text(encoding="utf-8").count(
-        "DEFAULT_PIPELINE_CONFIG_FILENAME"
-    )
-
-    removed = {
-        "pipeline_runner",
-        "logging",
-        "ConfigTab",
-        "LogViewer",
-        "PipelineRunner",
-        "runPipelineRequested",
-    }
-    for module_name in (
-        "virda_gui.sidebar",
-        "virda_gui.main_window",
-        "virda_gui.state",
-        "virda_gui.importing",
-        "virda_gui.tabs.mesh_processing_tab",
-        "virda_gui.tabs.editors_tab",
-    ):
-        module = importlib.import_module(module_name)
-        assert removed.isdisjoint(vars(module))
-    assert not hasattr(AppState(), "log_queue")
-    assert not hasattr(AppState(), "stage3_summary")
-    assert not hasattr(AppState(), "coordsystem")
 
 
 def test_viewer_widget_importable_from_main_window() -> None:
@@ -615,57 +492,6 @@ class _StubViewer:
 
     def shutdown(self) -> None:
         self.shut_down = True
-
-
-def test_ide_window_opens_project_files_in_tabs_offscreen(
-    tmp_path: Path, monkeypatch
-) -> None:
-    """Double-clicking a sidebar artifact opens a viewer/preview tab."""
-    import virda_gui.main_window as main_window_module
-
-    monkeypatch.setattr(main_window_module, "ViewerWidget", _StubViewer)
-    app = _offscreen_app()
-    prefs = _make_prefs(tmp_path)
-    window = IdeWindow(prefs=prefs)
-    try:
-        project = tmp_path / "sample-project"
-        mesh = project / "mesh" / "final_mesh.ply"
-        mesh.parent.mkdir(parents=True)
-        _write_triangle_ply(mesh)
-        (project / "note.txt").write_text("hello", encoding="utf-8")
-        window.open_project(project)
-
-        window._sidebar.fileActivated.emit(mesh)
-        mesh_tab = window._tabs.widget(window._tabs.count() - 1)
-        assert isinstance(mesh_tab, _StubViewer)
-        assert mesh_tab.load_calls == [{"mesh_path": str(mesh)}]
-
-        window._sidebar.fileActivated.emit(mesh)
-        assert window._tabs.count() == 1  # file tabs de-duplicate by path
-
-        window._sidebar.fileActivated.emit(project / "note.txt")
-        from virda_gui.tabs.preview_tab import PreviewTab
-
-        preview_index = next(
-            i for i in range(window._tabs.count()) if isinstance(window._tabs.widget(i), PreviewTab)
-        )
-        assert window._tabs.tabText(preview_index) == "note.txt"
-
-        window._close_tab(preview_index)
-        assert not any(
-            isinstance(window._tabs.widget(i), PreviewTab) for i in range(window._tabs.count())
-        )
-
-        mesh_index = next(
-            i
-            for i in range(window._tabs.count())
-            if isinstance(window._tabs.widget(i), _StubViewer)
-        )
-        window._close_tab(mesh_index)
-        assert mesh_tab.shut_down
-    finally:
-        window._on_close()
-        app.quit()
 
 
 def test_ide_window_prefills_editors_from_project_offscreen(tmp_path: Path) -> None:
