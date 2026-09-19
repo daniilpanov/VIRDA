@@ -536,7 +536,7 @@ def test_ide_window_prefills_editors_from_project_offscreen(tmp_path: Path) -> N
         window.open_project(project)
 
         rows = window._editors_tab.fiducials.fiducial_rows()
-        assert [row.fiducial_id for row in rows] == ["nas"]
+        assert [row.fiducial_id for row in rows] == ["NAS"]  # legacy "nas" is canonicalised
         assert window._editors_tab.measurements.measurement_rows()[0].electrode_id == "Cz"
         assert window._tabs.count() == 0  # no tab is forced open
     finally:

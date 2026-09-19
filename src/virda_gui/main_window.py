@@ -1,8 +1,8 @@
 """IDE-style main window: file sidebar, closable tabs and project management.
 
 The window owns the shared :class:`AppState`, the project-aware sidebar and
-the closable tab bar hosting the live editors, the mesh processing tab, the
-3D viewer (with its electrode-overlay panel) and per-file preview tabs.  It
+the closable tab bar hosting the mesh processing tab, the 3D viewer (with the
+live-editing tables floating over it as a HUD) and per-file preview tabs.  It
 has no pipeline runner, no config file and no log viewer: every operation is
 driven from the interface and reported through the status bar or dialogs.
 """
@@ -65,6 +65,7 @@ from .viewer.frames import (
     frame_to_scene_matrix,
     scene_to_world_matrix,
 )
+from .viewer.hud import HUDContainer, HudPanel
 from .viewer.scene import scene_placement, transform_points
 from .viewer.viewer import ViewerWidget
 from .widgets import ElectrodeGroupRow
@@ -84,6 +85,7 @@ class IdeWindow(QMainWindow):
         self._project: Path | None = None
         self._viewer_widget: ViewerWidget | None = None
         self._viewer_tab_widget: QWidget | None = None
+        self._viewer_hud_panel: QWidget | None = None
         self._electrode_group_widgets: list[ElectrodeGroupRow] = []
         self._file_tabs: dict[str, QWidget] = {}
         self._prefs = prefs or Preferences()
@@ -94,7 +96,6 @@ class IdeWindow(QMainWindow):
         self._state = AppState(advanced=dict(ADVANCED_FIELD_DEFAULTS))
 
         self._editors_tab = EditorsTab(self._state)
-        self._editors_tab.localizeRequested.connect(self._on_localize_requested)
         self._editors_tab.advancedRequested.connect(self._on_show_advanced_settings)
         self._editors_tab.measurements.rowsChanged.connect(self._schedule_localization)
         self._editors_tab.fiducials.inputFrameChanged.connect(self._on_fiducial_frame_changed)
@@ -276,12 +277,27 @@ class IdeWindow(QMainWindow):
             self._viewer_widget.shutdown()
             self._viewer_widget = None
             self._viewer_tab_widget = None
+            self._viewer_hud_panel = None
             self._electrode_group_widgets = []
         elif isinstance(widget, (ViewerWidget, PreviewTab)):
             widget.shutdown()
 
     def _show_editors_tab(self) -> None:
-        self._add_tab(self._editors_tab, "Live Editing")
+        """Bring the live-editing HUD over the 3D viewer to the foreground."""
+        if self._viewer_widget is not None and self._viewer_tab_widget is not None:
+            self._tabs.setCurrentWidget(self._viewer_tab_widget)
+            return
+        project = self._project
+        if project is None and self._state.last_project_dir:
+            project = Path(self._state.last_project_dir)
+        if project is not None and self._has_renderable_viewer_data(project):
+            self._open_viewer(project)
+
+    def _has_renderable_viewer_data(self, project: Path) -> bool:
+        """Return whether *project* holds something the 3D viewer can render."""
+        return (project / "mesh" / "final_mesh.ply").is_file() or any(
+            project.glob("input/*.nii*")
+        )
 
     def _show_mesh_processing_tab(self) -> None:
         self._add_tab(self._mesh_processing_tab, "Mesh Processing")
@@ -305,9 +321,7 @@ class IdeWindow(QMainWindow):
         key = str(path)
         widget = self._file_tabs.get(key)
         if widget is None:
-            widget = ViewerWidget(
-                log=lambda message: self.statusBar().showMessage(message, 4000)
-            )
+            widget = ViewerWidget(log=lambda message: self.statusBar().showMessage(message, 4000))
             widget.sceneLoaded.connect(lambda _scene, tab=widget: self._on_scene_tab_loaded(tab))
             widget.sceneFailed.connect(
                 lambda message, tab=widget: self._on_scene_tab_failed(tab, message)
@@ -393,14 +407,23 @@ class IdeWindow(QMainWindow):
     # Live localization overlay
     # ------------------------------------------------------------------
 
-    def _on_localize_requested(self) -> None:
-        """Run localization once from the "Localize measurements" button."""
-        self._run_localize(interactive=True)
-
     def _schedule_localization(self) -> None:
-        """Re-run an existing localization after rows changed (debounced)."""
-        if self._localized_electrodes is not None:
-            self._localize_timer.start()
+        """Re-run live localization after inputs change (debounced by the timer).
+
+        Runs once the prerequisites are in place (scalp mesh, the three
+        canonical fiducials and at least one measurement row) so the read-only
+        preview self-fills without a manual "Localize" trigger.
+        """
+        if self._mesh_processing_tab.current_scalp_mesh() is None:
+            return
+        try:
+            if len(self._editors_tab.fiducials.fiducial_rows()) < 3:
+                return
+            if not self._editors_tab.measurements.measurement_rows():
+                return
+        except ValueError:
+            return
+        self._localize_timer.start()
 
     def _run_localize_auto(self) -> None:
         self._run_localize(interactive=False)
@@ -422,11 +445,9 @@ class IdeWindow(QMainWindow):
         calibrate = str(advanced.get("calibrate_ese_offset", "true")).lower() == "true"
         try:
             threshold = float(advanced.get("residual_threshold_mm", 10.0))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             threshold = 10.0
-        return LocalizeOptions(
-            calibrate_ese_offset=calibrate, residual_threshold_mm=threshold
-        )
+        return LocalizeOptions(calibrate_ese_offset=calibrate, residual_threshold_mm=threshold)
 
     def _run_localize(self, *, interactive: bool) -> None:
         """Snapshot the table inputs and localize on a background thread.
@@ -450,7 +471,6 @@ class IdeWindow(QMainWindow):
         try:
             fiducial_rows = self._editors_tab.fiducials.fiducial_rows()
             measurement_rows = self._editors_tab.measurements.measurement_rows()
-            weights = self._editors_tab.measurements.parsed_weights()
         except (ValueError, np.linalg.LinAlgError) as exc:
             self._localize_warning(f"Invalid table:\n{exc}", interactive)
             return
@@ -494,7 +514,7 @@ class IdeWindow(QMainWindow):
                         coordinates=point,
                         coordinate_system="world",
                         definition_method=row.definition_method,
-                        weight=weights.get(row.fiducial_id, row.weight),
+                        weight=row.weight,
                     )
                     for row, point in zip(fiducial_rows, world_points)
                 ]
@@ -556,6 +576,7 @@ class IdeWindow(QMainWindow):
                 continue
             self._localized_electrodes = payload
             self._show_localized_electrodes(payload)
+            self._refresh_localization_preview()
             localized_count = sum(1 for electrode in payload.items if electrode.is_localized)
             self.statusBar().showMessage(
                 f"Localized {localized_count}/{len(payload.items)} electrodes "
@@ -581,9 +602,18 @@ class IdeWindow(QMainWindow):
         if not ids:
             return
         viewer.set_live_electrodes(
-            ids, np.asarray(points, dtype=np.float64), np.asarray(flags, dtype=bool),
+            ids,
+            np.asarray(points, dtype=np.float64),
+            np.asarray(flags, dtype=bool),
             frame=FRAME_SCANNER,
         )
+
+    def _refresh_localization_preview(self) -> None:
+        """Repopulate the read-only localization table from the cached result."""
+        cras_offset = (
+            self._viewer_widget.scene_frame_params[1] if self._viewer_widget is not None else None
+        )
+        self._editors_tab.localization.set_result(self._localized_electrodes, cras_offset)
 
     # ------------------------------------------------------------------
     # Fiducial frame conversion
@@ -609,22 +639,19 @@ class IdeWindow(QMainWindow):
             matrix = frame_to_frame_matrix(old_frame, new_frame, affine, cras_offset)
             rows = editor.fiducial_rows()
         except (ValueError, np.linalg.LinAlgError) as exc:
-            QMessageBox.warning(
-                self, "Coordinate system", f"Cannot convert coordinates:\n{exc}"
-            )
+            QMessageBox.warning(self, "Coordinate system", f"Cannot convert coordinates:\n{exc}")
             editor.set_input_frame(old_frame)
             return
         if not rows:
             return
         points = np.asarray([row.coordinates for row in rows], dtype=np.float64)
         converted = transform_points(points, matrix)
-        coordinate_system = "voxel" if new_frame == "voxel" else "world"
         new_rows = [
             FiducialRow(
                 fiducial_id=row.fiducial_id,
                 name=row.name,
                 coordinates=tuple(float(value) for value in point),
-                coordinate_system=coordinate_system,
+                coordinate_system="world",
                 definition_method=row.definition_method,
                 weight=row.weight,
             )
@@ -654,20 +681,28 @@ class IdeWindow(QMainWindow):
     def _build_viewer_widget(self) -> None:
         if self._viewer_widget is not None:
             return
-        viewer = ViewerWidget(
-            log=lambda message: self.statusBar().showMessage(message, 4000)
-        )
+        viewer = ViewerWidget(log=lambda message: self.statusBar().showMessage(message, 4000))
         self._viewer_widget = viewer
-        panel = self._build_electrode_overlay_panel()
-        wrapper = QWidget()
-        layout = QVBoxLayout(wrapper)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        layout.addWidget(panel)
-        layout.addWidget(viewer, 1)
-        self._viewer_tab_widget = wrapper
+        overlay_bar = self._build_electrode_overlay_panel()
+
+        hud = HUDContainer()
+        hud.set_base(viewer)
+
+        body = QWidget()
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(0)
+        body_layout.addWidget(overlay_bar)
+        body_layout.addWidget(self._editors_tab, 1)
+
+        panel = HudPanel("Live editing", hud)
+        panel.set_body(body)
+        hud.add_overlay(panel, Qt.AlignmentFlag.AlignLeft, fixed_width=430)
+        self._viewer_hud_panel = panel
+
         viewer.sceneLoaded.connect(self._on_viewer_scene_loaded)
         viewer.sceneFailed.connect(self._on_viewer_scene_failed)
+        self._viewer_tab_widget = hud
 
     def _build_electrode_overlay_panel(self) -> QWidget:
         """Rebuild the electrode-overlay controls from the state's row record."""
@@ -789,6 +824,7 @@ class IdeWindow(QMainWindow):
         self._refresh_live_fiducials()
         if self._localized_electrodes is not None:
             self._show_localized_electrodes(self._localized_electrodes)
+        self._refresh_localization_preview()
 
     def _on_viewer_scene_failed(self, message: str) -> None:
         self._state.viewer_loading = False
@@ -817,9 +853,7 @@ class IdeWindow(QMainWindow):
                 if rows
                 else np.empty((0, 3))
             )
-            viewer.set_live_fiducials(
-                ids, points, frame=self._editors_tab.fiducials.input_frame()
-            )
+            viewer.set_live_fiducials(ids, points, frame=self._editors_tab.fiducials.input_frame())
         except (ValueError, np.linalg.LinAlgError) as exc:
             self.statusBar().showMessage(f"Live fiducials skipped: {exc}", 5000)
 
@@ -841,9 +875,7 @@ class IdeWindow(QMainWindow):
     def _on_mesh_preview(self, mesh: ScalpMesh) -> None:
         if self._viewer_widget is None:
             return
-        self._viewer_widget.set_extra_mesh(
-            self._mesh_to_scene_poly(mesh.vertices, mesh.faces)
-        )
+        self._viewer_widget.set_extra_mesh(self._mesh_to_scene_poly(mesh.vertices, mesh.faces))
         self._schedule_localization()
 
     def _on_ese_mesh(self, ese: ESEMesh) -> None:

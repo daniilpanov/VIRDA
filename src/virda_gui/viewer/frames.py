@@ -1,6 +1,6 @@
 """Coordinate-frame math and frame-scoped exporters for the 3D viewer.
 
-The interactive viewer renders its scene in one of three frames:
+The interactive viewer renders its scene in one of four frames:
 
 * ``scanner_ras`` -- native scanner RAS world coordinates in millimetres
   (the NIfTI affine world frame);
@@ -9,7 +9,10 @@ The interactive viewer renders its scene in one of three frames:
 * ``cras`` -- FreeSurfer surface RAS / centred RAS, i.e. scanner RAS minus
   the volume-centre offset that
   :func:`virda_gui.viewer.viewer_loaders._cras_to_scanner_ras_offset` and the
-  tabular electrode loader use for their cRAS -> scanner RAS conversion.
+  tabular electrode loader use for their cRAS -> scanner RAS conversion;
+* ``head`` -- same shifted coordinate system under a user-facing name: the
+  live-editing tab records fiducials relative to the centre of the head, which
+  is exactly the NIfTI volume centre, so ``head`` shares the cRAS math.
 
 Everything in this module is Qt-free so the transforms and the exporters can
 be unit tested without a display.  The scene data produced by
@@ -33,12 +36,14 @@ from .viewer_loaders import SceneData
 FRAME_SCANNER = "scanner_ras"
 FRAME_VOXEL = "voxel"
 FRAME_CRAS = "cras"
-FRAME_IDS: tuple[str, str, str] = (FRAME_SCANNER, FRAME_VOXEL, FRAME_CRAS)
+FRAME_HEAD = "head"
+FRAME_IDS: tuple[str, ...] = (FRAME_SCANNER, FRAME_VOXEL, FRAME_CRAS, FRAME_HEAD)
 
 _FRAME_LABELS: dict[str, str] = {
     FRAME_SCANNER: "Scanner RAS (world mm)",
     FRAME_VOXEL: "Voxel indices",
     FRAME_CRAS: "FreeSurfer cRAS",
+    FRAME_HEAD: "Head (centred mm)",
 }
 
 
@@ -60,7 +65,7 @@ def frame_available(frame: str, affine: np.ndarray | None, cras_offset: np.ndarr
     """Whether the scene can be shown or exported in *frame*."""
     if frame == FRAME_VOXEL:
         return affine is not None
-    if frame == FRAME_CRAS:
+    if frame in (FRAME_CRAS, FRAME_HEAD):
         return cras_offset is not None
     return True
 
@@ -79,9 +84,11 @@ def world_to_frame_matrix(
         if affine is None:
             raise ValueError("the voxel frame requires the NIfTI affine, which is not loaded")
         return np.asarray(np.linalg.inv(affine), dtype=np.float64)
-    if frame == FRAME_CRAS:
+    if frame in (FRAME_CRAS, FRAME_HEAD):
         if cras_offset is None:
-            raise ValueError("the cRAS frame requires the NIfTI cRAS offset, which is not loaded")
+            raise ValueError(
+                f"the {frame} frame requires the NIfTI cRAS offset, which is not loaded"
+            )
         matrix = np.eye(4)
         matrix[:3, 3] = -np.asarray(cras_offset, dtype=np.float64)
         return matrix
@@ -97,9 +104,11 @@ def frame_to_world_matrix(
         if affine is None:
             raise ValueError("the voxel frame requires the NIfTI affine, which is not loaded")
         return np.asarray(affine, dtype=np.float64)
-    if frame == FRAME_CRAS:
+    if frame in (FRAME_CRAS, FRAME_HEAD):
         if cras_offset is None:
-            raise ValueError("the cRAS frame requires the NIfTI cRAS offset, which is not loaded")
+            raise ValueError(
+                f"the {frame} frame requires the NIfTI cRAS offset, which is not loaded"
+            )
         matrix = np.eye(4)
         matrix[:3, 3] = np.asarray(cras_offset, dtype=np.float64)
         return matrix

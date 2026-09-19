@@ -202,19 +202,21 @@ def test_measurements_editor_saves_round_trip_offscreen(tmp_path: Path) -> None:
     app = _qt_app()
     editor = MeasurementsEditor()
     try:
-        editor.set_fiducial_ids(["NAS", "LPA", "RPA"])
         editor.set_measurement_rows(
             [
                 MeasurementRow(
                     electrode_id="E0",
                     measured_distances={"NAS": 1.0, "LPA": 2.0, "RPA": 3.0},
                 )
-            ],
-            weights={"NAS": 1.5},
+            ]
         )
 
         schema = editor.collected_schema()
-        assert schema["fiducial_weights"] == {"NAS": 1.5}
+        assert schema == {
+            "electrodes": [
+                {"electrode_id": "E0", "measured_distances": {"NAS": 1.0, "LPA": 2.0, "RPA": 3.0}}
+            ]
+        }
 
         target = tmp_path / "out.json"
         assert editor.save_to(target) is True
@@ -261,10 +263,10 @@ def test_editors_clear_resets_rows_and_path_offscreen(tmp_path: Path) -> None:
     app = _qt_app()
     fiducials_editor = FiducialsEditor()
     measurements_editor = MeasurementsEditor()
+    from virda_gui.tabs.editors_tab import MEASUREMENT_HEADERS
     try:
         fiducials_editor.set_rows(fiducials_to_rows(make_fiducials()))
         fiducials_editor.save_to(tmp_path / "f.json")
-        measurements_editor.set_fiducial_ids(["NAS", "LPA", "RPA"])
         measurements_editor.set_measurement_rows(
             [MeasurementRow(electrode_id="E0", measured_distances={"NAS": 1.0})]
         )
@@ -277,9 +279,8 @@ def test_editors_clear_resets_rows_and_path_offscreen(tmp_path: Path) -> None:
         assert fiducials_editor._table.rowCount() == 0
         assert fiducials_editor._path is None
         assert measurements_editor._table.rowCount() == 0
-        assert measurements_editor._table.columnCount() == 1
+        assert measurements_editor._table.columnCount() == len(MEASUREMENT_HEADERS)
         assert measurements_editor._path is None
-        assert measurements_editor._weights == {}
     finally:
         fiducials_editor.close()
         measurements_editor.close()
@@ -315,11 +316,12 @@ def test_ide_window_opens_live_editing_tab_offscreen(tmp_path: Path) -> None:
 
         window.open_project(project)
         window._show_editors_tab()
-        index = window._tabs.indexOf(window._editors_tab)
-        assert index >= 0
-        assert window._tabs.tabText(index) == "Live Editing"
+        assert window._tabs.count() == 0  # no renderable mesh/brain -> no viewer (nor its HUD) is built
         assert window._editors_tab._fiducials.fiducial_ids() == ["NAS", "LPA", "RPA"]
         assert window._editors_tab._measurements._table.rowCount() == 2
+        assert window._editors_tab._localization._table.rowCount() == 0
+        assert window._viewer_hud_panel is None  # the HUD exists only while the 3D viewer is open
+        assert window.project() is project
 
         window.close_project()
         assert window.project() is None
@@ -328,23 +330,47 @@ def test_ide_window_opens_live_editing_tab_offscreen(tmp_path: Path) -> None:
         app.quit()
 
 
-def test_measurements_editor_parsed_weights_offscreen() -> None:
+def test_measurements_editor_lock_unlock_offscreen() -> None:
     app = _qt_app()
     editor = MeasurementsEditor()
     try:
-        editor.set_fiducial_ids(["NAS", "LPA"])
-        editor.set_weights({"NAS": 1.5})
-        assert editor.parsed_weights() == {"NAS": 1.5}
+        assert editor.fiducial_ready is False
+        assert not editor._table.isEnabled()
 
-        editor._weights["LPA"].setText("abc")
-        with pytest.raises(ValueError, match="Invalid weight"):
-            editor.parsed_weights()
+        editor.set_fiducial_ready(True)
+        assert editor.fiducial_ready is True
+        assert editor._table.isEnabled()
+        for control in editor._controls:
+            assert control.isEnabled()
+
+        editor.set_fiducial_ready(False)
+        assert editor.fiducial_ready is False
+        assert not editor._table.isEnabled()
     finally:
         editor.close()
         app.quit()
 
 
-def test_editors_tab_localize_button_emits_signal_offscreen() -> None:
+def test_measurements_rows_emit_canonical_keys_offscreen() -> None:
+    app = _qt_app()
+    editor = MeasurementsEditor()
+    try:
+        editor.set_measurement_rows(
+            [
+                MeasurementRow(
+                    electrode_id="E0",
+                    measured_distances={"nas": 1.0, "LPA": 2.0, "RPA": 3.0},
+                )
+            ]
+        )
+        rows = editor.measurement_rows()
+        assert rows == [MeasurementRow(electrode_id="E0", measured_distances={"LPA": 2.0, "RPA": 3.0, "NAS": 1.0})]
+    finally:
+        editor.close()
+        app.quit()
+
+
+def test_editors_tab_has_no_localize_button_but_keeps_advanced_offscreen() -> None:
     app = _qt_app()
     from PySide6.QtTest import QSignalSpy
     from PySide6.QtWidgets import QPushButton
@@ -355,10 +381,11 @@ def test_editors_tab_localize_button_emits_signal_offscreen() -> None:
     tab = EditorsTab(AppState())
     try:
         labels = [button.text() for button in tab.findChildren(QPushButton)]
-        assert "Localize measurements" in labels
+        assert "Localize measurements" not in labels
+        assert "Localization settings..." in labels
 
-        spy = QSignalSpy(tab.localizeRequested)
-        tab._on_localize_clicked()
+        spy = QSignalSpy(tab.advancedRequested)
+        tab._on_advanced_clicked()
         assert spy.count() == 1
     finally:
         tab.close()
