@@ -1,6 +1,6 @@
 from logging import Logger
 from pathlib import Path
-from typing import Self
+from typing import Self, cast
 
 from virda.fiducials import AutoFiducialsDetector
 from virda.io.loader import MRILoader
@@ -10,10 +10,7 @@ from virda.io.providers.logging_provider import StoreLoggingProvider
 from virda.io.providers.mesh_versioning_provider import ScalpMeshVersioningProvider
 from virda.io.providers.stage1_exporter import Stage1Exporter
 from virda.mesh import MeshExtractor, MeshPostprocessor
-from virda.mesh.laplacian_smoother import LaplacianSmoother
-from virda.mesh.mesh_cleaner import TrimeshCleaner
 from virda.mesh.mesh_extractor import MarchingCubesExtractor
-from virda.mesh.taubin_smoother import TaubinSmoother
 from virda.models.config import Config
 from virda.models.ese_config import ESEConfig
 from virda.models.fiducial import AutoDetectedFiducials, Fiducials, ManualFiducials
@@ -24,19 +21,25 @@ from virda.models.segmentation_mask import SegmentationMask
 from virda.models.stage1_result import Stage1Result
 from virda.pipeline import PipelineController
 from virda.pipeline_context import PipelineContext
+from virda.pipelines.mesh_generate import SMOOTHER_TYPES, MeshPipeline, MeshPipelineContract
 from virda.segmentation import HeadSegmenter, SegmentationMaskPostprocessor
 from virda.segmentation.head_segmenter import OtsuHeadSegmenter
-from virda.segmentation.seal import MaskSealer
 
 from .helpers import get_stage_logger
 
 
-def _build_mask_postprocessors(
-    config: Config,
-) -> list[SegmentationMaskPostprocessor]:
-    if not config.seal_enabled:
-        return []
-    return [MaskSealer(radius=config.seal_radius)]
+class MeshStage1Step:
+    """Run one mesh stage-1 function (e.g. ``clean``, ``smooth``) inside the
+    stage controller, so the resulting mesh store is versioned as usual."""
+
+    def __init__(self, pipeline: MeshPipeline, function_name: str) -> None:
+        self._pipeline = pipeline
+        self._function_name = function_name
+
+    def run(self, context: PipelineContext) -> ScalpMesh:
+        result = cast(ScalpMesh, self._pipeline.run_stage1(self._function_name, context))
+        context.stores[ScalpMesh] = result
+        return result
 
 
 class FiducialsRegistrationStep:
@@ -97,13 +100,16 @@ class Stage1PipelineBuilder:
         self._auto_detect_fiducials: bool = auto_detect_fiducials
         self._ese_config: ESEConfig | None = ese_config
         self._config: Config = config or Config()
+        self._atomic_mesh: MeshPipeline | None = None
 
     @classmethod
     def from_config(cls, config: Config) -> Self:
         """Build a Stage 1 pipeline configured from the merged ``config``.
 
-        Wires the loader, segmenter, mask postprocessors (seal), mesh
-        postprocessors (cleaner + smoother), fiducials handling and ESE config.
+        The mesh generation part is delegated to the atomic mesh pipeline
+        (:class:`~virda.pipelines.mesh_generate.MeshPipeline`); cleaning and
+        smoothing run as its stage-1 functions, preserving the previous default
+        behaviour while keeping them separately invocable.
         """
 
         resolved_nifti_path = config.nifti_path
@@ -127,49 +133,43 @@ class Stage1PipelineBuilder:
         resolved_fiducials_path = config.fiducials_path
         fiducials_path_inst = Path(resolved_fiducials_path) if resolved_fiducials_path else None
 
-        smoother: MeshPostprocessor
-        if config.smoother_type == "taubin":
-            smoother = TaubinSmoother(
-                iterations=config.smoother_iterations,
-                lamb=config.smoother_lamb,
-                nu=config.smoother_nu,
-            )
-        else:
-            smoother = LaplacianSmoother(
-                iterations=config.smoother_iterations,
-                lamb=config.smoother_lamb,
-            )
-
         logger = get_stage_logger(project_dir_path_inst, "stage_1")
 
-        return (
-            cls(
-                nifti_path=nifti_path_inst,
-                mri_loader=NiftiLoader(),
-                segmenter=OtsuHeadSegmenter(
-                    closing_radius=config.closing_radius,
-                    otsu_scope=config.otsu_scope,
-                    threshold_scale=config.otsu_threshold_scale,
-                ),
-                extractor=MarchingCubesExtractor(),
-                project_dir=project_dir_path_inst,
-                logger=logger,
-                fiducials_path=fiducials_path_inst,
-                auto_detect_fiducials=config.auto_detect_fiducials,
-                ese_config=config.to_ese_config(),
-                config=config,
-            )
-            .setup_mask_postprocessors(_build_mask_postprocessors(config))
-            .setup_mesh_postprocessors(
-                [
-                    TrimeshCleaner(
-                        min_component_vertices=config.cleaner_min_vertices,
-                        merge_digits=config.cleaner_merge_digits,
-                    ),
-                    smoother,
-                ]
-            )
+        contract = MeshPipelineContract(
+            nifti_path=nifti_path_inst,
+            fiducials_path=fiducials_path_inst,
+            auto_detect_fiducials=config.auto_detect_fiducials,
+            closing_radius=config.closing_radius,
+            otsu_scope=config.otsu_scope,
+            otsu_threshold_scale=config.otsu_threshold_scale,
+            seal_enabled=config.seal_enabled,
+            seal_radius=config.seal_radius,
+            cleaner_min_vertices=config.cleaner_min_vertices,
+            cleaner_merge_digits=config.cleaner_merge_digits,
+            smoother_type=cast(SMOOTHER_TYPES, config.smoother_type),
+            smoother_iterations=config.smoother_iterations,
+            smoother_lamb=config.smoother_lamb,
+            smoother_nu=config.smoother_nu,
         )
+
+        builder = cls(
+            nifti_path=nifti_path_inst,
+            mri_loader=NiftiLoader(),
+            segmenter=OtsuHeadSegmenter(
+                closing_radius=config.closing_radius,
+                otsu_scope=config.otsu_scope,
+                threshold_scale=config.otsu_threshold_scale,
+            ),
+            extractor=MarchingCubesExtractor(),
+            project_dir=project_dir_path_inst,
+            logger=logger,
+            fiducials_path=fiducials_path_inst,
+            auto_detect_fiducials=config.auto_detect_fiducials,
+            ese_config=config.to_ese_config(),
+            config=config,
+        )
+        builder._atomic_mesh = MeshPipeline(contract=contract, logger=logger)
+        return builder
 
     def setup_mask_postprocessors(
         self, postprocessors: list[SegmentationMaskPostprocessor]
@@ -184,6 +184,52 @@ class Stage1PipelineBuilder:
         return self
 
     def build(self) -> PipelineController:
+        if self._atomic_mesh is not None:
+            return self._build_atomic()
+        return self._build_manual()
+
+    def _build_atomic(self) -> PipelineController:
+        assert self._atomic_mesh is not None
+        controller = self._atomic_mesh.build_stage0()
+
+        for function_name in ("clean", "smooth"):
+            controller.register_step(MeshStage1Step(self._atomic_mesh, function_name))
+
+        if self._fiducials_path:
+            controller.register_store(FiducialsPath, FiducialsPath(self._fiducials_path))
+            controller.register_step(ManualFiducialsLoader())
+
+        if self._auto_detect_fiducials:
+            controller.register_step(AutoFiducialsDetector())
+
+        controller.register_step(FiducialsRegistrationStep())
+        controller.register_step(OutputGenerator())
+
+        controller.register_store(Config, self._config)
+
+        log_provider = StoreLoggingProvider()
+        for store_type in (MRIVolume, SegmentationMask, ScalpMesh, Stage1Result):
+            controller.register_provider(log_provider, on_store=store_type)
+
+        if self._project_dir:
+            controller.register_provider(
+                Stage1Exporter(
+                    project_dir=self._project_dir,
+                    ese_config=self._ese_config,
+                    config=self._config,
+                    nifti_path=self._nifti_path,
+                ),
+                Stage1Result,
+            )
+
+            controller.register_provider(
+                ScalpMeshVersioningProvider(self._project_dir / "mesh" / "versions"),
+                on_store=ScalpMesh,
+            )
+
+        return controller
+
+    def _build_manual(self) -> PipelineController:
         controller = PipelineController(logger=self._logger)
 
         # -- Steps --
