@@ -400,3 +400,68 @@ def test_ide_window_opens_live_editing_tab_offscreen(tmp_path: Path) -> None:
     finally:
         window._on_close()
         app.quit()
+
+
+def test_measurements_editor_emits_rows_changed_offscreen() -> None:
+    app = _qt_app()
+    from PySide6.QtTest import QSignalSpy
+    from PySide6.QtWidgets import QTableWidgetItem
+
+    editor = MeasurementsEditor()
+    try:
+        spy = QSignalSpy(editor.rowsChanged)
+
+        editor.set_fiducial_ids(["NAS", "LPA"])
+        assert spy.count() == 1
+        spy.clear()
+
+        editor.add_row()
+        assert spy.count() == 1
+        spy.clear()
+
+        editor._table.setItem(0, 0, QTableWidgetItem("E0"))
+        assert spy.count() == 1
+        spy.clear()
+
+        editor.remove_selected()
+        assert spy.count() == 1
+    finally:
+        editor.close()
+        app.quit()
+
+
+def test_measurements_editor_parsed_weights_offscreen() -> None:
+    app = _qt_app()
+    editor = MeasurementsEditor()
+    try:
+        editor.set_fiducial_ids(["NAS", "LPA"])
+        editor.set_weights({"NAS": 1.5})
+        assert editor.parsed_weights() == {"NAS": 1.5}
+
+        editor._weights["LPA"].setText("abc")
+        with pytest.raises(ValueError, match="Invalid weight"):
+            editor.parsed_weights()
+    finally:
+        editor.close()
+        app.quit()
+
+
+def test_editors_tab_localize_button_emits_signal_offscreen() -> None:
+    app = _qt_app()
+    from PySide6.QtTest import QSignalSpy
+    from PySide6.QtWidgets import QPushButton
+
+    from virda_gui.state import AppState
+    from virda_gui.tabs.editors_tab import EditorsTab
+
+    tab = EditorsTab(AppState())
+    try:
+        labels = [button.text() for button in tab.findChildren(QPushButton)]
+        assert "Localize measurements" in labels
+
+        spy = QSignalSpy(tab.localizeRequested)
+        tab._on_localize_clicked()
+        assert spy.count() == 1
+    finally:
+        tab.close()
+        app.quit()
