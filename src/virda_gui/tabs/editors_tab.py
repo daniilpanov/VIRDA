@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import numpy as np
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -33,6 +34,7 @@ from PySide6.QtWidgets import (
 from virda.io.fiducial_helpers import load_fiducials, save_fiducials
 from virda.models.fiducial import Fiducial, Fiducials
 from virda_gui.constants import DEFAULT_FIDUCIALS_FILENAME, DEFAULT_MEASUREMENTS_FILENAME
+from virda_gui.state import AppState
 
 FIDUCIAL_HEADERS = ["ID", "Name", "X", "Y", "Z", "Method", "Weight"]
 COL_ID, COL_NAME, COL_X, COL_Y, COL_Z, COL_METHOD, COL_WEIGHT = range(7)
@@ -662,3 +664,38 @@ class MeasurementsEditor(QWidget):
         if default_dir:
             return str(Path(default_dir) / "input" / DEFAULT_MEASUREMENTS_FILENAME)
         return DEFAULT_MEASUREMENTS_FILENAME
+
+
+class EditorsTab(QWidget):
+    """Fiducials and measurements editors stacked vertically in one tab."""
+
+    def __init__(self, state: AppState, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._state = state
+        self._fiducials = FiducialsEditor(self, default_dir=lambda: self._default_dir())
+        self._measurements = MeasurementsEditor(self, default_dir=lambda: self._default_dir())
+        self._fiducials.rowsChanged.connect(self._on_fiducials_changed)
+
+        splitter = QSplitter(Qt.Orientation.Vertical, self)
+        splitter.addWidget(self._fiducials)
+        splitter.addWidget(self._measurements)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.addWidget(splitter)
+
+    def _default_dir(self) -> str | None:
+        return self._state.last_project_dir
+
+    def _on_fiducials_changed(self) -> None:
+        self._measurements.set_fiducial_ids(self._fiducials.fiducial_ids())
+
+    def prefill_from_project(self, project: str | Path) -> None:
+        """Load the project's canonical fiducials and measurements, if any."""
+        root = Path(project)
+        fiducials = root / "input" / DEFAULT_FIDUCIALS_FILENAME
+        if fiducials.is_file():
+            self._fiducials.load(fiducials, interactive=False)
+        measurements = root / "input" / DEFAULT_MEASUREMENTS_FILENAME
+        if measurements.is_file():
+            self._measurements.load(measurements, interactive=False)

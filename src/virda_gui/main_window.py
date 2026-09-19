@@ -26,6 +26,7 @@ from .services.pipeline_runner import PipelineRunner
 from .sidebar import ProjectSidebar
 from .state import AppState
 from .tabs.config_tab import ConfigTab
+from .tabs.editors_tab import EditorsTab
 from .tabs.preview_tab import PreviewTab
 from .viewer.viewer import ViewerWidget
 
@@ -70,6 +71,8 @@ class IdeWindow(QMainWindow):
         self._config_tab.runRequested.connect(self._on_run)
         self._config_tab.openViewer.connect(self._on_open_viewer)
         self._config_tab.exportHtml.connect(self._on_export_html)
+
+        self._editors_tab = EditorsTab(self._state)
 
         self._sidebar = ProjectSidebar(self)
         self._sidebar.openViewerRequested.connect(self._on_open_viewer)
@@ -116,6 +119,12 @@ class IdeWindow(QMainWindow):
 
         file_menu.addSeparator()
 
+        live_action = QAction("&Live editing", self)
+        live_action.triggered.connect(self._show_editors_tab)
+        file_menu.addAction(live_action)
+
+        file_menu.addSeparator()
+
         self._close_action = QAction("&Close project", self)
         self._close_action.setEnabled(False)
         self._close_action.triggered.connect(self.close_project)
@@ -156,6 +165,7 @@ class IdeWindow(QMainWindow):
         self._close_action.setEnabled(True)
         self._state.last_project_dir = str(project)
         self._config_tab.prefill_from_project(project)
+        self._editors_tab.prefill_from_project(project)
         self._prefs.note_project_opened(project)
         self._refresh_recent_menu()
         self.setWindowTitle(f"VIRDA — {project.name}")
@@ -169,6 +179,7 @@ class IdeWindow(QMainWindow):
         self._close_action.setEnabled(False)
         self._state.last_project_dir = None
         self._tabs.removeTab(self._tabs.indexOf(self._config_tab))
+        self._tabs.removeTab(self._tabs.indexOf(self._editors_tab))
         self.setWindowTitle("VIRDA — Electrode Localization System")
 
     def _create_project(self) -> None:
@@ -216,6 +227,9 @@ class IdeWindow(QMainWindow):
 
     def _show_run_tab(self) -> None:
         self._add_tab(self._config_tab, "Run Pipeline")
+
+    def _show_editors_tab(self) -> None:
+        self._add_tab(self._editors_tab, "Live Editing")
 
     # ------------------------------------------------------------------
     # Project file tabs
