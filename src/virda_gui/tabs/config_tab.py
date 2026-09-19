@@ -8,14 +8,16 @@ act through the ``runRequested``/``openViewer``/``exportHtml`` signals.
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QFrame,
     QGroupBox,
     QHBoxLayout,
+    QLabel,
     QMessageBox,
     QPushButton,
+    QSlider,
     QVBoxLayout,
     QWidget,
 )
@@ -38,6 +40,25 @@ from virda_gui.widgets import (
     LabeledField,
     LogViewer,
 )
+
+_MESH_DENSITY_MIN = 1
+_MESH_DENSITY_MAX = 100
+_MESH_DENSITY_DEFAULT = 100
+
+
+def density_percent_from_state(advanced: dict[str, str]) -> int:
+    """Return the clamped slider percent for the advanced density value.
+
+    The string ``AppState.advanced["mesh_density_percent"]`` is the single
+    source of truth for the density slider: this helper parses it (as a
+    number) and clamps the result to ``[1, 100]`` so the widget always shows
+    a valid percentage, falling back to the default on unparseable input.
+    """
+    try:
+        value = int(round(float(advanced.get("mesh_density_percent", ""))))
+    except ValueError:
+        value = _MESH_DENSITY_DEFAULT
+    return max(_MESH_DENSITY_MIN, min(_MESH_DENSITY_MAX, value))
 
 
 class ConfigTab(QWidget):
@@ -79,6 +100,11 @@ class ConfigTab(QWidget):
             default="false",
         )
 
+        self.density_slider = QSlider(Qt.Orientation.Horizontal, self)
+        self.density_slider.setRange(_MESH_DENSITY_MIN, _MESH_DENSITY_MAX)
+        self.density_slider.setValue(_MESH_DENSITY_DEFAULT)
+        self.density_value_label = QLabel(self)
+
         self.run_btn = QPushButton("Run Pipeline")
         self.viewer_btn = QPushButton("Open 3D Viewer")
         self.viewer_btn.setEnabled(False)
@@ -96,9 +122,12 @@ class ConfigTab(QWidget):
 
         self._config_file.textChanged.connect(self._on_config_file_changed)
         self._fiducials.textChanged.connect(self._on_fiducials_path_changed)
+        self.density_slider.valueChanged.connect(self._on_density_changed)
         self.run_btn.clicked.connect(self.runRequested)
         self.viewer_btn.clicked.connect(self.openViewer)
         self.export_btn.clicked.connect(self.exportHtml)
+
+        self._sync_density_from_state()
 
     # ---- UI construction ----
 
@@ -116,6 +145,19 @@ class ConfigTab(QWidget):
         input_layout.addWidget(self.measurements)
         input_layout.addWidget(self._auto_detect_fid)
         outer.addWidget(input_box)
+
+        density_box = QGroupBox("Mesh Density", self)
+        density_layout = QHBoxLayout(density_box)
+        density_label = QLabel("Mesh density:", density_box)
+        density_label.setFixedWidth(100)
+        density_layout.addWidget(density_label)
+        density_layout.addWidget(self.density_slider, 1)
+        self.density_value_label.setFixedWidth(48)
+        self.density_value_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        density_layout.addWidget(self.density_value_label)
+        outer.addWidget(density_box)
 
         groups_box = QGroupBox("Electrode Groups (viewer overlays)", self)
         groups_layout = QVBoxLayout(groups_box)
@@ -189,6 +231,8 @@ class ConfigTab(QWidget):
             if config_key in data and not self._state.advanced.get(adv_key):
                 self._state.advanced[adv_key] = str(data[config_key])
 
+        self._sync_density_from_state()
+
         # Keep the parsed MNE coordsystem (its fiducials feed Stage 1).
         coordsystem = data.get("coordsystem")
         if isinstance(coordsystem, Coordsystem):
@@ -213,10 +257,27 @@ class ConfigTab(QWidget):
 
     # ---- Advanced settings ----
 
+    def _on_density_changed(self, value: int) -> None:
+        """Keep ``AppState.advanced["mesh_density_percent"]`` in sync.
+
+        The advanced dict is the single source of truth for the density value;
+        the slider is a convenience view that writes back to it so
+        :meth:`collect_config` always sees the slider's value.
+        """
+        self._state.advanced["mesh_density_percent"] = str(value)
+        self.density_value_label.setText(f"{value}%")
+
+    def _sync_density_from_state(self) -> None:
+        """Make the slider (and its label) reflect the advanced density value."""
+        value = density_percent_from_state(self._state.advanced)
+        self.density_slider.setValue(value)
+        self.density_value_label.setText(f"{value}%")
+
     def _on_show_advanced(self) -> None:
         dialog = AdvancedSettingsDialog(self, self._state.advanced, nifti_path=self.nifti_path())
         if dialog.exec():
             self._state.advanced = dialog.result_values
+            self._sync_density_from_state()
 
     # ---- Electrode groups ----
 
