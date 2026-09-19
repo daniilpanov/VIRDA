@@ -19,9 +19,11 @@ from PySide6.QtCore import QObject, Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QFileDialog,
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -31,10 +33,15 @@ from pyvistaqt import QtInteractor
 from .frames import (
     FRAME_IDS,
     FRAME_SCANNER,
+    collect_electrodes_export,
+    collect_fiducials_export,
+    collect_mesh_export,
     frame_available,
     frame_label,
     natural_frame,
     scene_to_frame_matrix,
+    write_mesh_obj,
+    write_points_tsv,
 )
 from .scene import transform_points
 from .viewer_loaders import (
@@ -465,6 +472,86 @@ class ViewerWidget(QWidget):
         self._frame_combo = combo
         self._layers_layout.addWidget(box)
 
+    def _add_export_controls(self) -> None:
+        box = QGroupBox("Export to coordinate system", self._layers_panel)
+        export_layout = QVBoxLayout(box)
+        export_layout.setContentsMargins(4, 4, 4, 4)
+        export_layout.setSpacing(4)
+        export_layout.addWidget(
+            QLabel("Writes the loaded data re-expressed in the selected frame.", box)
+        )
+        for text, slot in (
+            ("Export mesh (OBJ)...", self._on_export_mesh),
+            ("Export electrodes (TSV)...", self._on_export_electrodes),
+            ("Export fiducials (TSV)...", self._on_export_fiducials),
+        ):
+            button = QPushButton(text, box)
+            button.clicked.connect(slot)
+            export_layout.addWidget(button)
+        self._layers_layout.addWidget(box)
+
+    def _current_export_matrix(self) -> np.ndarray:
+        return scene_to_frame_matrix(
+            self._current_frame, self._affine, self._cras_offset, self._mm_scene
+        )
+
+    def _on_export_mesh(self) -> None:
+        if self._scene is None:
+            return
+        path, _selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Export scalp mesh",
+            f"scalp_mesh_{self._current_frame}.obj",
+            "OBJ (*.obj);;All files (*)",
+        )
+        if not path:
+            return
+        try:
+            points, faces = collect_mesh_export(self._scene, self._current_export_matrix())
+            write_mesh_obj(path, points, faces, self._current_frame)
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "Export scalp mesh", f"Could not export mesh:\n{exc}")
+            return
+        self._log(f"Exported scalp mesh to {path} in {frame_label(self._current_frame)}")
+
+    def _on_export_electrodes(self) -> None:
+        if self._scene is None:
+            return
+        path, _selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Export electrodes",
+            f"electrodes_{self._current_frame}.tsv",
+            "TSV/CSV (*.tsv *.csv);;All files (*)",
+        )
+        if not path:
+            return
+        try:
+            names, points = collect_electrodes_export(self._scene, self._current_export_matrix())
+            write_points_tsv(path, names, points)
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "Export electrodes", f"Could not export electrodes:\n{exc}")
+            return
+        self._log(f"Exported electrodes to {path} in {frame_label(self._current_frame)}")
+
+    def _on_export_fiducials(self) -> None:
+        if self._scene is None:
+            return
+        path, _selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Export fiducials",
+            f"fiducials_{self._current_frame}.tsv",
+            "TSV/CSV (*.tsv *.csv);;All files (*)",
+        )
+        if not path:
+            return
+        try:
+            names, points = collect_fiducials_export(self._scene, self._current_export_matrix())
+            write_points_tsv(path, names, points)
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "Export fiducials", f"Could not export fiducials:\n{exc}")
+            return
+        self._log(f"Exported fiducials to {path} in {frame_label(self._current_frame)}")
+
     def _build_layers(self, scene: SceneData) -> None:
         if self._mesh_actor is not None:
             self._add_layer_check("Show mesh", True, self._set_mesh_visibility)
@@ -492,6 +579,7 @@ class ViewerWidget(QWidget):
                 )
         self._add_layer_check("Boost contrast", False, self._set_contrast)
         self._add_frame_controls()
+        self._add_export_controls()
         self._layers_layout.addStretch(1)
 
     def _add_layer_check(self, text: str, checked: bool, slot: Callable[[bool], None]) -> None:
