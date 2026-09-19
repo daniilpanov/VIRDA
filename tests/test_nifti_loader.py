@@ -5,14 +5,12 @@ import nibabel as nib
 import numpy as np
 import pytest
 
-from tests.helpers.pipelines import build_context
-from virda.io.loader.nifti_loader import NiftiLoader
+from virda.io.importers.nifti import import_nifti
 from virda.models.mri_volume import MRIVolume
-from virda.models.path import NiftiPath
 
 
-class TestNiftiLoader:
-    def test_load_extracts_data_and_spatial_metadata(self, tmp_path: Path) -> None:
+class TestNiftiImporter:
+    def test_import_extracts_data_and_spatial_metadata(self, tmp_path: Path) -> None:
         volume_data = np.random.rand(10, 10, 10).astype(np.float32)
         voxel_to_world_affine = np.diag([1.5, 1.5, 2.0, 1.0])
 
@@ -20,8 +18,7 @@ class TestNiftiLoader:
         nifti_file_path = tmp_path / "test_diag.nii.gz"
         nib.save(nifti_image, nifti_file_path)
 
-        loader = NiftiLoader()
-        loaded_mri = loader.run(build_context(NiftiPath=NiftiPath(nifti_file_path)))
+        loaded_mri = import_nifti(nifti_file_path)
 
         assert isinstance(loaded_mri, MRIVolume)
         assert loaded_mri.data.shape == (10, 10, 10)
@@ -30,7 +27,7 @@ class TestNiftiLoader:
         np.testing.assert_array_almost_equal(loaded_mri.data, volume_data)
         np.testing.assert_array_almost_equal(loaded_mri.affine, voxel_to_world_affine)
 
-    def test_load_handles_rotated_affine(self, tmp_path: Path) -> None:
+    def test_import_handles_rotated_affine(self, tmp_path: Path) -> None:
         volume_data = np.zeros((5, 5, 5), dtype=np.float32)
 
         theta = math.radians(30)
@@ -55,8 +52,7 @@ class TestNiftiLoader:
         nifti_file_path = tmp_path / "test_rotated.nii.gz"
         nib.save(nifti_image, nifti_file_path)
 
-        loader = NiftiLoader()
-        loaded_mri = loader.run(build_context(NiftiPath=NiftiPath(nifti_file_path)))
+        loaded_mri = import_nifti(nifti_file_path)
 
         # Assert: Spacing must be (1.0, 1.0, 2.0)
         np.testing.assert_array_almost_equal(
@@ -69,7 +65,6 @@ class TestNiftiLoader:
         # Test matrix
         np.testing.assert_array_almost_equal(loaded_mri.affine, affine_rotated)
 
-    def test_load_raises_on_missing_file(self) -> None:
-        loader = NiftiLoader()
+    def test_import_raises_on_missing_file(self) -> None:
         with pytest.raises(FileNotFoundError):
-            loader.run(build_context(NiftiPath=NiftiPath(Path("/nonexistent/path/to/scan.nii.gz"))))
+            import_nifti(Path("/nonexistent/path/to/scan.nii.gz"))

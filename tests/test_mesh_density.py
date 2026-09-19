@@ -6,17 +6,15 @@ import numpy as np
 import pytest
 import trimesh
 
-from tests.helpers.pipelines import build_context, save_test_fiducials
+from virda.io.importers.nifti import import_nifti
 from virda.mesh.adjacency import build_scalp_mesh
 from virda.mesh.density import step_size_for_voxel_size
 from virda.mesh.mesh_decimator import QuadraticDecimator
 from virda.mesh.mesh_extractor import MarchingCubesExtractor
-from virda.models.config import Config
 from virda.models.mri_volume import MRIVolume
 from virda.models.scalp_mesh import ScalpMesh
 from virda.models.segmentation_mask import SegmentationMask
-from virda.models.stage1_result import Stage1Result
-from virda.pipelines.stage1 import Stage1PipelineBuilder
+from virda.segmentation.head_segmenter import OtsuHeadSegmenter
 
 
 @pytest.fixture
@@ -111,12 +109,8 @@ class TestMarchingCubesDensity:
     def test_no_voxel_size_is_default_step_one(
         self, sphere_mask: SegmentationMask, sphere_volume: MRIVolume
     ) -> None:
-        default_mesh = MarchingCubesExtractor().run(
-            build_context(SegmentationMask=sphere_mask, MRIVolume=sphere_volume)
-        )
-        native_mesh = MarchingCubesExtractor(voxel_size_mm=1.0).run(
-            build_context(SegmentationMask=sphere_mask, MRIVolume=sphere_volume)
-        )
+        default_mesh = MarchingCubesExtractor().process(sphere_mask, sphere_volume)
+        native_mesh = MarchingCubesExtractor(voxel_size_mm=1.0).process(sphere_mask, sphere_volume)
 
         assert np.array_equal(default_mesh.vertices, native_mesh.vertices)
         assert np.array_equal(default_mesh.faces, native_mesh.faces)
@@ -124,12 +118,8 @@ class TestMarchingCubesDensity:
     def test_larger_voxel_size_reduces_vertices(
         self, sphere_mask: SegmentationMask, sphere_volume: MRIVolume
     ) -> None:
-        native = MarchingCubesExtractor(voxel_size_mm=1.0).run(
-            build_context(SegmentationMask=sphere_mask, MRIVolume=sphere_volume)
-        )
-        coarse = MarchingCubesExtractor(voxel_size_mm=3.0).run(
-            build_context(SegmentationMask=sphere_mask, MRIVolume=sphere_volume)
-        )
+        native = MarchingCubesExtractor(voxel_size_mm=1.0).process(sphere_mask, sphere_volume)
+        coarse = MarchingCubesExtractor(voxel_size_mm=3.0).process(sphere_mask, sphere_volume)
 
         assert coarse.vertices.shape[0] < native.vertices.shape[0]
         assert coarse.faces.shape[0] < native.faces.shape[0]
@@ -146,17 +136,11 @@ class TestMarchingCubesDensity:
             ]
         )
 
-        mesh_world = MarchingCubesExtractor(voxel_size_mm=3.0).run(
-            build_context(
-                SegmentationMask=sphere_mask,
-                MRIVolume=replace(sphere_volume, affine=voxel_to_world),
-            )
+        mesh_world = MarchingCubesExtractor(voxel_size_mm=3.0).process(
+            sphere_mask, replace(sphere_volume, affine=voxel_to_world)
         )
-        mesh_voxel = MarchingCubesExtractor(voxel_size_mm=3.0).run(
-            build_context(
-                SegmentationMask=sphere_mask,
-                MRIVolume=replace(sphere_volume, affine=np.eye(4)),
-            )
+        mesh_voxel = MarchingCubesExtractor(voxel_size_mm=3.0).process(
+            sphere_mask, replace(sphere_volume, affine=np.eye(4))
         )
 
         expected_world = mesh_voxel.vertices @ voxel_to_world[:3, :3].T + voxel_to_world[:3, 3]
@@ -165,9 +149,7 @@ class TestMarchingCubesDensity:
 
 class TestQuadraticDecimator:
     def test_density_100_is_a_noop(self, icosphere_mesh: ScalpMesh) -> None:
-        decimated = QuadraticDecimator(density_percent=100.0).run(
-            build_context(ScalpMesh=icosphere_mesh)
-        )
+        decimated = QuadraticDecimator(density_percent=100.0).process(icosphere_mesh)
 
         assert decimated.vertices is icosphere_mesh.vertices
         assert decimated.faces is icosphere_mesh.faces
@@ -176,9 +158,7 @@ class TestQuadraticDecimator:
         self,
         icosphere_mesh: ScalpMesh,
     ) -> None:
-        decimated = QuadraticDecimator(density_percent=50.0).run(
-            build_context(ScalpMesh=icosphere_mesh)
-        )
+        decimated = QuadraticDecimator(density_percent=50.0).process(icosphere_mesh)
 
         original = icosphere_mesh.vertices.shape[0]
         ratio = decimated.vertices.shape[0] / original
@@ -186,9 +166,7 @@ class TestQuadraticDecimator:
         assert decimated.faces.shape[0] < icosphere_mesh.faces.shape[0]
 
     def test_density_low_keeps_valid_mesh(self, icosphere_mesh: ScalpMesh) -> None:
-        decimated = QuadraticDecimator(density_percent=15.0).run(
-            build_context(ScalpMesh=icosphere_mesh)
-        )
+        decimated = QuadraticDecimator(density_percent=15.0).process(icosphere_mesh)
 
         assert isinstance(decimated, ScalpMesh)
         assert decimated.vertices.shape[1] == 3
@@ -227,41 +205,18 @@ def synthetic_nifti_path(tmp_path: Path) -> Path:
     return nifti_path
 
 
-class TestPipelineDensity:
-    def test_from_config_applies_both_density_params(
-        self, synthetic_nifti_path: Path, tmp_path: Path
-    ) -> None:
-        fiducials_path = save_test_fiducials(tmp_path / "fiducials.json")
+class TestPurePipelineDensity:
+    def test_from_inputs_applies_both_density_params(self, synthetic_nifti_path: Path) -> None:
+        def build(voxel_size_mm: float | None, density_percent: float) -> ScalpMesh:
+            mri = import_nifti(synthetic_nifti_path)
+            mask = OtsuHeadSegmenter(closing_radius=0).process(mri)
+            mesh = MarchingCubesExtractor(voxel_size_mm=voxel_size_mm).process(mask, mri)
+            if density_percent < 100:
+                mesh = QuadraticDecimator(density_percent=density_percent).process(mesh)
+            return mesh
 
-        dense_config = Config(
-            nifti_path=str(synthetic_nifti_path),
-            project_dir=str(tmp_path / "dense"),
-            fiducials_path=str(fiducials_path),
-            closing_radius=0,
-            seal_enabled=False,
-        )
-        dense_result = (
-            Stage1PipelineBuilder.from_config(config=dense_config)
-            .build()
-            .run()
-            .get_store_notnull(Stage1Result)
-        )
+        dense_result = build(voxel_size_mm=None, density_percent=100.0)
+        coarse_result = build(voxel_size_mm=2.0, density_percent=50.0)
 
-        coarse_config = Config(
-            nifti_path=str(synthetic_nifti_path),
-            project_dir=str(tmp_path / "coarse"),
-            fiducials_path=str(fiducials_path),
-            closing_radius=0,
-            seal_enabled=False,
-            mesh_voxel_size_mm=2.0,
-            mesh_density_percent=50.0,
-        )
-        coarse_result = (
-            Stage1PipelineBuilder.from_config(config=coarse_config)
-            .build()
-            .run()
-            .get_store_notnull(Stage1Result)
-        )
-
-        assert coarse_result.mesh.vertices.shape[0] > 0
-        assert coarse_result.mesh.vertices.shape[0] < dense_result.mesh.vertices.shape[0]
+        assert coarse_result.vertices.shape[0] > 0
+        assert coarse_result.vertices.shape[0] < dense_result.vertices.shape[0]

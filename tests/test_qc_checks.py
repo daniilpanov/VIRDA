@@ -5,16 +5,14 @@ from typing import cast
 import nibabel as nib
 import numpy as np
 
-from virda.models.ese_config import ESEConfig
 from virda.models.fiducial import Fiducial, Fiducials
 from virda.models.mri_volume import MRIVolume
 from virda.models.scalp_mesh import ScalpMesh
 from virda.models.segmentation_mask import SegmentationMask
-from virda.models.stage1_result import Stage1Result
 from virda.qc.checks import (
     check_components,
     check_coordinates_mm,
-    check_ese_config,
+    check_ese_offset,
     check_fiducials,
     check_holes,
     check_mesh,
@@ -38,17 +36,6 @@ def _triangle_mesh() -> ScalpMesh:
         vertices=np.array([[0.0, 0.0, 0.0], [4.0, 0.0, 0.0], [0.0, 4.0, 0.0]], dtype=np.float64),
         faces=np.array([[0, 1, 2]], dtype=np.int64),
         face_adjacency=np.zeros((0, 2), dtype=np.int64),
-    )
-
-
-def _result(
-    mesh: ScalpMesh, mask: np.ndarray, fiducials: list[Fiducial] | None = None
-) -> Stage1Result:
-    return Stage1Result(
-        mri_volume=_volume(),
-        segmentation_mask=SegmentationMask(mask=mask),
-        mesh=mesh,
-        fiducials=Fiducials([] if fiducials is None else fiducials),
     )
 
 
@@ -126,19 +113,17 @@ class TestCheckCoordinatesMm:
         assert check_coordinates_mm(mesh, _volume())["status"] == "fail"
 
 
-class TestCheckESEConfig:
-    def test_missing_config_skips(self) -> None:
-        assert check_ese_config(None)["status"] == "skip"
+class TestCheckESEOffset:
+    def test_missing_offset_skips(self) -> None:
+        assert check_ese_offset(None)["status"] == "skip"
 
-    def test_valid_config_passes(self) -> None:
-        config = ESEConfig(ese_offset_mm=15.0)
-        check = check_ese_config(config)
+    def test_valid_offset_passes(self) -> None:
+        check = check_ese_offset(15.0)
         assert check["status"] == "ok"
         assert check["ese_offset_mm"] == 15.0
 
     def test_non_positive_offset_fails(self) -> None:
-        config = SimpleNamespace(ese_offset_mm=-1.0)
-        assert check_ese_config(cast(ESEConfig, config))["status"] == "fail"
+        assert check_ese_offset(-1.0)["status"] == "fail"
 
 
 class TestCheckMesh:
@@ -190,8 +175,7 @@ class TestCheckComponents:
 
 class TestCheckFiducials:
     def test_no_fiducials_warns(self) -> None:
-        result = _result(_triangle_mesh(), _ball_mask())
-        check = check_fiducials(Fiducials([]), result)
+        check = check_fiducials(Fiducials([]), _triangle_mesh(), _volume())
         assert check["status"] == "warn"
 
     def test_on_surface_passes(self) -> None:
@@ -201,8 +185,8 @@ class TestCheckFiducials:
             coordinates=np.array([0.5, 0.5, 0.0]),
             coordinate_system="world",
         )
-        result = _result(_triangle_mesh(), _ball_mask(), [fiducial])
-        assert check_fiducials(Fiducials([fiducial]), result)["status"] == "ok"
+        check = check_fiducials(Fiducials([fiducial]), _triangle_mesh(), _volume())
+        assert check["status"] == "ok"
 
     def test_far_fiducial_warns(self) -> None:
         fiducial = Fiducial(
@@ -211,8 +195,8 @@ class TestCheckFiducials:
             coordinates=np.array([0.0, 0.0, 50.0]),
             coordinate_system="world",
         )
-        result = _result(_triangle_mesh(), _ball_mask(), [fiducial])
-        assert check_fiducials(Fiducials([fiducial]), result)["status"] == "warn"
+        check = check_fiducials(Fiducials([fiducial]), _triangle_mesh(), _volume())
+        assert check["status"] == "warn"
 
 
 class TestCheckHoles:
@@ -303,10 +287,15 @@ class TestCheckNiftiMask:
 class TestRunChecks:
     def test_aggregates_report(self, tmp_path: Path) -> None:
         mask = _ball_mask()
-        result = _result(_triangle_mesh(), mask)
         mask_path = _save_mask(tmp_path / "m.nii.gz", mask)
-        ese_config = ESEConfig(ese_offset_mm=15.0)
-        report = run_checks(result, nifti_mask_path=mask_path, ese_config=ese_config)
+        report = run_checks(
+            _triangle_mesh(),
+            SegmentationMask(mask=mask),
+            _volume(),
+            Fiducials([]),
+            nifti_mask_path=mask_path,
+            ese_offset_mm=15.0,
+        )
         assert report["status"] in {"ok", "warn", "fail"}
         assert any(check["name"] == "mri_metadata" for check in report["checks"])
         assert any(check["name"] == "coordinates_mm" for check in report["checks"])
@@ -321,14 +310,18 @@ class TestRunChecks:
             faces=np.zeros((0, 3), dtype=np.int64),
             face_adjacency=np.zeros((0, 2), dtype=np.int64),
         )
-        result = _result(mesh, np.zeros((16, 16, 16), dtype=bool))
-        assert run_checks(result)["status"] == "fail"
+        report = run_checks(
+            mesh, SegmentationMask(mask=np.zeros((16, 16, 16), dtype=bool)), _volume(), Fiducials([])
+        )
+        assert report["status"] == "fail"
 
-    def test_missing_ese_config_does_not_fail_overall(self, tmp_path: Path) -> None:
+    def test_missing_ese_offset_does_not_fail_overall(self, tmp_path: Path) -> None:
         mask = _ball_mask()
-        result = _result(_triangle_mesh(), mask)
         mask_path = _save_mask(tmp_path / "m.nii.gz", mask)
-        report = run_checks(result, nifti_mask_path=mask_path)
+        report = run_checks(
+            _triangle_mesh(), SegmentationMask(mask=mask), _volume(), Fiducials([]),
+            nifti_mask_path=mask_path,
+        )
         ese = next(check for check in report["checks"] if check["name"] == "ese_offset")
         assert ese["status"] == "skip"
         assert report["status"] != "fail"

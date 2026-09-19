@@ -1,7 +1,6 @@
 import numpy as np
 import pytest
 
-from tests.helpers.pipelines import build_context
 from virda.models.mri_volume import MRIVolume
 from virda.segmentation.head_segmenter import OtsuHeadSegmenter
 
@@ -62,7 +61,7 @@ class TestHeadSegmenter:
     def test_segment_sphere_returns_bool_mask_with_correct_shape(
         self, sphere_volume: MRIVolume
     ) -> None:
-        segmentation_mask = self.segmenter.run(build_context(MRIVolume=sphere_volume))
+        segmentation_mask = self.segmenter.process(sphere_volume)
 
         assert segmentation_mask.mask.shape == (30, 30, 30)
         assert segmentation_mask.mask.dtype == bool
@@ -74,7 +73,7 @@ class TestHeadSegmenter:
         squared_distance = np.sum((grid_indices - sphere_center.reshape(-1, 1, 1, 1)) ** 2, axis=0)
         expected_inside = squared_distance <= sphere_radius**2
 
-        segmentation_mask = self.segmenter.run(build_context(MRIVolume=sphere_volume))
+        segmentation_mask = self.segmenter.process(sphere_volume)
 
         assert np.all(segmentation_mask.mask[expected_inside])
         assert segmentation_mask.mask.sum() == expected_inside.sum()
@@ -86,7 +85,7 @@ class TestHeadSegmenter:
         squared_distance = np.sum((grid_indices - sphere_center.reshape(-1, 1, 1, 1)) ** 2, axis=0)
         expected_outside = squared_distance > sphere_radius**2
 
-        segmentation_mask = self.segmenter.run(build_context(MRIVolume=sphere_volume))
+        segmentation_mask = self.segmenter.process(sphere_volume)
 
         assert not np.any(segmentation_mask.mask[expected_outside])
 
@@ -99,7 +98,7 @@ class TestHeadSegmenter:
             orientation=("R", "A", "S"),
         )
 
-        segmentation_mask = self.segmenter.run(build_context(MRIVolume=volume))
+        segmentation_mask = self.segmenter.process(volume)
 
         assert segmentation_mask.mask.shape == (10, 10, 10)
         assert segmentation_mask.mask.dtype == bool
@@ -113,7 +112,7 @@ class TestOtsuScopeAndScale:
     def test_scope_all_keeps_low_intensity_tissue(self, three_level_volume: MRIVolume) -> None:
         segmenter = OtsuHeadSegmenter(closing_radius=0, otsu_scope="all")
 
-        mask = segmenter.run(build_context(MRIVolume=three_level_volume)).mask
+        mask = segmenter.process(three_level_volume).mask
 
         assert mask.sum() == self.N_LOW + self.N_HIGH
 
@@ -124,7 +123,7 @@ class TestOtsuScopeAndScale:
             closing_radius=0, otsu_scope="foreground", threshold_scale=1.0
         )
 
-        mask = segmenter.run(build_context(MRIVolume=three_level_volume)).mask
+        mask = segmenter.process(three_level_volume).mask
 
         assert mask.sum() == self.N_HIGH
 
@@ -135,7 +134,7 @@ class TestOtsuScopeAndScale:
             closing_radius=0, otsu_scope="foreground", threshold_scale=0.4
         )
 
-        mask = segmenter.run(build_context(MRIVolume=three_level_volume)).mask
+        mask = segmenter.process(three_level_volume).mask
 
         assert mask.sum() == self.N_LOW + self.N_HIGH
 
@@ -147,8 +146,8 @@ class TestOtsuScopeAndScale:
         )
         all_scope = OtsuHeadSegmenter(closing_radius=0, otsu_scope="all")
 
-        foreground_mask = foreground.run(build_context(MRIVolume=sphere_volume)).mask
-        all_mask = all_scope.run(build_context(MRIVolume=sphere_volume)).mask
+        foreground_mask = foreground.process(sphere_volume).mask
+        all_mask = all_scope.process(sphere_volume).mask
 
         np.testing.assert_array_equal(foreground_mask, all_mask)
 

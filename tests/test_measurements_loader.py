@@ -3,25 +3,20 @@ import json
 import numpy as np
 import pytest
 
-from tests.helpers.measurements import make_fiducials, make_measurements_file
-from tests.helpers.pipelines import build_context
-from virda.io.loader.measurements_loader import MeasurementsLoaderFromJson
-from virda.models.fiducial import Fiducials
-from virda.models.path import MeasurementsPath
+from tests.helpers.measurements import make_measurements_file
+from virda.io.importers.measurements import import_measurements
 
 
-class TestMeasurementsLoader:
-    def test_loads_electrodes(self, tmp_path) -> None:
+class TestMeasurementsImporter:
+    def test_imports_electrodes(self, tmp_path) -> None:
         path = make_measurements_file(tmp_path / "measurements.json", points=np.zeros((2, 3)))
 
-        result = MeasurementsLoaderFromJson().run(
-            build_context(measurements_path=MeasurementsPath(path))
-        )
+        result = import_measurements(path)
 
         assert [electrode.electrode_id for electrode in result.items] == ["E0", "E1"]
         assert set(result.items[0].measured_distances) == {"NAS", "LPA", "RPA"}
 
-    def test_loads_distances(self, tmp_path) -> None:
+    def test_imports_distances(self, tmp_path) -> None:
         path = tmp_path / "measurements.json"
         path.write_text(
             json.dumps(
@@ -36,9 +31,7 @@ class TestMeasurementsLoader:
             )
         )
 
-        result = MeasurementsLoaderFromJson().run(
-            build_context(measurements_path=MeasurementsPath(path))
-        )
+        result = import_measurements(path)
 
         assert len(result.items) == 1
         electrode = result.items[0]
@@ -59,9 +52,7 @@ class TestMeasurementsLoader:
             )
         )
 
-        result = MeasurementsLoaderFromJson().run(
-            build_context(measurements_path=MeasurementsPath(path))
-        )
+        result = import_measurements(path)
 
         assert [e.electrode_id for e in result.items] == ["E001", "Fz", "E003"]
 
@@ -71,48 +62,27 @@ class TestMeasurementsLoader:
             json.dumps({"electrodes": [{"electrode_id": "", "measured_distances": {"NAS": 1.0}}]})
         )
 
-        result = MeasurementsLoaderFromJson().run(
-            build_context(measurements_path=MeasurementsPath(path))
-        )
+        result = import_measurements(path)
 
         assert result.items[0].electrode_id == "E001"
 
-    def test_applies_fiducial_weights(self, tmp_path) -> None:
+    def test_ignores_fiducial_weights(self, tmp_path) -> None:
+        """``fiducial_weights`` live on the Fiducials model, not the importer."""
         path = tmp_path / "measurements.json"
         path.write_text(
             json.dumps(
                 {
                     "fiducial_weights": {"NAS": 2.0},
-                    "electrodes": [],
+                    "electrodes": [
+                        {"electrode_id": "Fz", "measured_distances": {"NAS": 1.0}}
+                    ],
                 }
             )
         )
-        context = build_context(
-            fiducials=make_fiducials(),
-            measurements_path=MeasurementsPath(path),
-        )
 
-        MeasurementsLoaderFromJson().run(context)
+        result = import_measurements(path)
 
-        updated = context.get_store_notnull(Fiducials)
-        nas = updated.get("NAS")
-        lpa = updated.get("LPA")
-        assert nas is not None
-        assert lpa is not None
-        assert nas.weight == pytest.approx(2.0)
-        assert lpa.weight == pytest.approx(1.0)
-
-    def test_without_weights_keeps_fiducials(self, tmp_path) -> None:
-        path = make_measurements_file(tmp_path / "measurements.json", points=np.zeros((1, 3)))
-        fiducials = make_fiducials()
-        context = build_context(
-            fiducials=fiducials,
-            measurements_path=MeasurementsPath(path),
-        )
-
-        MeasurementsLoaderFromJson().run(context)
-
-        assert context.get_store_notnull(Fiducials) is fiducials
+        assert [electrode.electrode_id for electrode in result.items] == ["Fz"]
 
     def test_rejects_electrode_without_measurements(self, tmp_path) -> None:
         path = tmp_path / "measurements.json"
@@ -123,6 +93,4 @@ class TestMeasurementsLoader:
         with pytest.raises(
             ValueError, match="measured_distances must contain at least one measurement"
         ):
-            MeasurementsLoaderFromJson().run(
-                build_context(measurements_path=MeasurementsPath(path))
-            )
+            import_measurements(path)

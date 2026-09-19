@@ -1,20 +1,16 @@
-"""Unit tests for the atomic mesh-editing pipeline and its PLY loader."""
+"""Unit tests for the atomic mesh-editing ops and the PLY loader."""
 
 from __future__ import annotations
 
 import numpy as np
 import pytest
 import trimesh
-from pydantic import ValidationError
 
-from virda.io.loader.scalp_mesh_loader import load_scalp_mesh, save_scalp_mesh
+from virda.io.exporters.scalp_mesh import export_scalp_mesh
+from virda.io.importers.scalp_mesh import import_scalp_mesh
+from virda.mesh.laplacian_smoother import LaplacianSmoother
+from virda.mesh.mesh_decimator import QuadraticDecimator
 from virda.models.scalp_mesh import ScalpMesh
-from virda.pipelines.contracts import ContractValidationError
-from virda.pipelines.mesh_editing import (
-    MeshEditingPipeline,
-    MeshEditingPipelineContract,
-    edit_mesh,
-)
 
 
 def _tiny_mesh() -> ScalpMesh:
@@ -26,53 +22,16 @@ def _tiny_mesh() -> ScalpMesh:
     )
 
 
-class TestMeshEditingPipelineContract:
-    def test_requires_scalp_mesh(self) -> None:
-        contract = MeshEditingPipelineContract()
-        with pytest.raises(ContractValidationError, match="scalp_mesh"):
-            contract.validate_for_run()
-
-    def test_rejects_unknown_fields(self) -> None:
-        with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
-            MeshEditingPipelineContract(scalp_mesh=_tiny_mesh(), density_percent=50)
-
-    def test_accepts_none_smoother_type(self) -> None:
-        contract = MeshEditingPipelineContract(scalp_mesh=_tiny_mesh(), smoother_type="none")
-        contract.validate_for_run()
-        assert contract.smoother_type == "none"
-
-    def test_accepts_taubin_parameters(self) -> None:
-        contract = MeshEditingPipelineContract(
-            scalp_mesh=_tiny_mesh(),
-            smoother_type="taubin",
-            smoother_iterations=3,
-            smoother_lamb=0.5,
-            smoother_nu=-0.53,
-        )
-        contract.validate_for_run()
-        assert contract.smoother_iterations == 3
-
-
 class TestEditMesh:
-    def test_identity_returns_input_instance_when_no_postprocessing(self) -> None:
+    def test_full_density_decimation_returns_input_instance(self) -> None:
         source = _tiny_mesh()
-        contract = MeshEditingPipelineContract(
-            scalp_mesh=source, smoother_type="none", mesh_density_percent=100.0
-        )
-        result = edit_mesh(contract)
+        result = QuadraticDecimator(density_percent=100.0).process(source)
         assert result is source
 
     def test_smoothing_returns_new_mesh_and_leaves_input_unchanged(self) -> None:
         source = _tiny_mesh()
         original_vertices = source.vertices.copy()
-        contract = MeshEditingPipelineContract(
-            scalp_mesh=source,
-            smoother_type="laplacian",
-            smoother_iterations=3,
-            smoother_lamb=0.5,
-            mesh_density_percent=100.0,
-        )
-        result = edit_mesh(contract)
+        result = LaplacianSmoother(iterations=3, lamb=0.5).process(source)
         assert result is not source
         assert result.vertices.shape == source.vertices.shape
         assert not np.allclose(result.vertices, source.vertices, atol=1e-7)
@@ -80,32 +39,20 @@ class TestEditMesh:
 
     def test_decimation_reduces_vertex_count(self) -> None:
         source = _tiny_mesh()
-        contract = MeshEditingPipelineContract(
-            scalp_mesh=source,
-            smoother_type="laplacian",
-            smoother_iterations=1,
-            smoother_lamb=0.3,
-            mesh_density_percent=25.0,
-        )
-        result = edit_mesh(contract)
+        result = QuadraticDecimator(density_percent=25.0).process(source)
         assert len(result.vertices) < len(source.vertices)
 
     def test_skips_decimation_at_full_density(self) -> None:
         source = _tiny_mesh()
-        contract = MeshEditingPipelineContract(
-            scalp_mesh=source,
-            smoother_type="none",
-            mesh_density_percent=100.0,
-        )
-        result = edit_mesh(contract)
+        result = QuadraticDecimator(density_percent=100.0).process(source)
         assert len(result.vertices) == len(source.vertices)
 
 
-class TestScalpMeshLoader:
+class TestScalpMeshImporter:
     def test_ply_round_trip_preserves_geometry(self, tmp_path) -> None:
         source = _tiny_mesh()
-        target = save_scalp_mesh(tmp_path / "mesh.ply", source)
-        loaded = load_scalp_mesh(target)
+        target = export_scalp_mesh(tmp_path / "mesh.ply", source)
+        loaded = import_scalp_mesh(target)
 
         # Binary PLY stores vertices as float32, so allow ~float32 roundoff.
         assert np.allclose(loaded.vertices, source.vertices, atol=1e-5)
@@ -117,11 +64,4 @@ class TestScalpMeshLoader:
         path = tmp_path / "points.ply"
         points.export(str(path))
         with pytest.raises(ValueError, match="Not a triangular surface mesh"):
-            load_scalp_mesh(path)
-
-    def test_stage0_registers_the_input_mesh(self) -> None:
-        source = _tiny_mesh()
-        contract = MeshEditingPipelineContract(scalp_mesh=source, smoother_type="none")
-        pipeline = MeshEditingPipeline(contract)
-        context = pipeline.run_stage0()
-        assert context.get_store_notnull(ScalpMesh) is source
+            import_scalp_mesh(path)

@@ -4,11 +4,9 @@ import numpy as np
 import pytest
 
 from tests.helpers.measurements import make_electrodes, make_ese, make_fiducials
-from tests.helpers.pipelines import build_context
 from virda.localization.brute_force_localizer import BruteForceLocalizer
 from virda.models.electrode import Electrode, Electrodes
 from virda.models.fiducial import Fiducials
-from virda.models.stage3_config import Stage3Config
 
 
 def _closest_vertex_index(ese, point) -> int:
@@ -35,9 +33,9 @@ def _localize(electrodes: Electrodes, threshold_mm: float = 10.0) -> Electrodes:
     ese = make_ese()
     fiducials = make_fiducials()
     localizer = BruteForceLocalizer(
-        Stage3Config(residual_threshold_mm=threshold_mm, calibrate_ese_offset=False)
+        residual_threshold_mm=threshold_mm, calibrate_ese_offset=False
     )
-    return localizer.run(build_context(ese=ese, fiducials=fiducials, electrodes=electrodes))
+    return localizer.process(ese, fiducials, electrodes)
 
 
 class TestBruteForceLocalizer:
@@ -70,10 +68,9 @@ class TestBruteForceLocalizer:
         electrodes = Electrodes(items=[Electrode(electrode_id="E0", measured_distances=distances)])
 
         weighted = _reweighted(fiducials, weights={"NAS": 1e9, "LPA": 0.01, "RPA": 1.0})
-        config = Stage3Config(calibrate_ese_offset=False)
-        weighted_result = BruteForceLocalizer(config).run(
-            build_context(ese=ese, fiducials=weighted, electrodes=electrodes)
-        )
+        weighted_result = BruteForceLocalizer(
+            calibrate_ese_offset=False
+        ).process(ese, weighted, electrodes)
         unweighted_result = _localize(electrodes)
 
         weighted_electrode = weighted_result.items[0]
@@ -181,9 +178,8 @@ class TestOffsetCalibration:
         indices = [0, 42, 100]
         # Measurements taken at the scalp surface while the ESE sits 2 mm out.
         electrodes, points = self._shifted_electrodes(ese, indices, shift_mm=-2.0)
-        config = Stage3Config(calibrate_ese_offset=True)
-        result = BruteForceLocalizer(config).run(
-            build_context(ese=ese, fiducials=make_fiducials(), electrodes=electrodes)
+        result = BruteForceLocalizer(calibrate_ese_offset=True).process(
+            ese, make_fiducials(), electrodes
         )
 
         assert result.calibrated_offset_shift_mm == pytest.approx(-2.0, abs=1e-9)
@@ -199,9 +195,9 @@ class TestOffsetCalibration:
     def test_disabled_when_flag_off(self):
         ese = make_ese()
         electrodes, _ = self._shifted_electrodes(ese, [0], shift_mm=-2.0)
-        result = BruteForceLocalizer(Stage3Config(calibrate_ese_offset=False)).run(
-            build_context(ese=ese, fiducials=make_fiducials(), electrodes=electrodes)
-        )
+        result = BruteForceLocalizer(
+            calibrate_ese_offset=False
+        ).process(ese, make_fiducials(), electrodes)
 
         assert result.calibrated_offset_shift_mm is None
         assert result.items[0].is_localized
@@ -222,10 +218,9 @@ class TestOffsetCalibration:
         assert len(indices) == 2
 
         electrodes = make_electrodes(vertices[indices], fiducials)
-        config = Stage3Config(calibrate_ese_offset=True)
-        result = BruteForceLocalizer(config).run(
-            build_context(ese=ese, fiducials=fiducials, electrodes=electrodes)
-        )
+        result = BruteForceLocalizer(
+            calibrate_ese_offset=True
+        ).process(ese, fiducials, electrodes)
 
         assert result.calibrated_offset_shift_mm == pytest.approx(0.0, abs=1e-9)
         for electrode in result.items:

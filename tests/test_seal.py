@@ -1,7 +1,6 @@
 import numpy as np
 from scipy import ndimage as ndi
 
-from tests.helpers.pipelines import build_context
 from virda.models.segmentation_mask import SegmentationMask
 from virda.segmentation.seal import MaskSealer
 
@@ -83,13 +82,12 @@ class TestSealMask:
 
 
 class TestMaskSealer:
-    def test_step_seals_mask_from_context(self) -> None:
+    def test_step_seals_mask(self) -> None:
         solid = _sphere_mask((30, 30, 30), (15.0, 15.0, 15.0), 10.0)
         cavity = _sphere_mask((30, 30, 30), (15.0, 15.0, 15.0), 3.0)
         mask = solid & ~cavity
-        context = build_context(SegmentationMask=SegmentationMask(mask=mask))
 
-        result = MaskSealer(radius=2).run(context)
+        result = MaskSealer(radius=2).process(SegmentationMask(mask=mask))
 
         assert _enclosed_air_voxels(result.mask) == 0
         assert result.mask.dtype == bool

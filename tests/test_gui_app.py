@@ -17,8 +17,15 @@ import pytest
 from PySide6.QtCore import QSettings, Signal
 from PySide6.QtWidgets import QWidget
 
-from virda.config import VirdaSettings, build_config, load_config_file
-from virda.models.config import Config
+from virda.io.importers.pipeline_config import import_pipeline_config
+from virda.ops.options import (
+    CleanOptions,
+    DecimateOptions,
+    EseOptions,
+    LocalizeOptions,
+    SealingOptions,
+    SmoothOptions,
+)
 from virda_gui.constants import (
     ADVANCED_FIELD_DEFAULTS,
     CONFIG_KEY_TO_ADVANCED,
@@ -30,6 +37,7 @@ from virda_gui.dialogs.project_dialog import (
 )
 from virda_gui.main_window import IdeWindow
 from virda_gui.preferences import Preferences
+from virda_gui.services.pipeline_runner import PipelineRequest
 from virda_gui.state import AppState
 from virda_gui.tabs.config_tab import (
     ConfigTab,
@@ -103,7 +111,6 @@ def _config_tab_stub(tmp_path: Path, advanced: dict[str, str]) -> SimpleNamespac
         _nifti=_FakeSelector(str(nifti)),
         _project_dir=_FakeSelector(str(tmp_path / "out")),
         _fiducials=_FakeSelector(""),
-        _auto_detect_fid=_FakeSelector("false"),
     )
 
 
@@ -134,25 +141,15 @@ def test_collect_config_wires_mesh_density(tmp_path) -> None:
 
     config = ConfigTab.collect_config(cast("ConfigTab", _config_tab_stub(tmp_path, advanced)))
 
-    assert config.mesh_voxel_size_mm == 2.0
-    assert config.mesh_density_percent == 50.0
+    assert config.decimation.density_percent == 50.0
 
 
-def test_collect_config_mesh_voxel_empty_means_native(tmp_path) -> None:
+def test_collect_config_mesh_density_defaults_to_100(tmp_path) -> None:
     config = ConfigTab.collect_config(
         cast("ConfigTab", _config_tab_stub(tmp_path, dict(ADVANCED_FIELD_DEFAULTS)))
     )
 
-    assert config.mesh_voxel_size_mm is None
-    assert config.mesh_density_percent == 100.0
-
-
-def test_collect_config_rejects_nonpositive_voxel_size(tmp_path) -> None:
-    advanced = dict(ADVANCED_FIELD_DEFAULTS)
-    advanced["mesh_voxel_size_mm"] = "0"
-
-    with pytest.raises(ValueError, match="mesh_voxel_size_mm"):
-        ConfigTab.collect_config(cast("ConfigTab", _config_tab_stub(tmp_path, advanced)))
+    assert config.decimation.density_percent == 100.0
 
 
 def test_collect_config_rejects_out_of_range_density(tmp_path) -> None:
@@ -233,7 +230,7 @@ def test_config_tab_density_slider_feeds_collected_config_offscreen(
         tab.density_slider.setValue(42)
 
         config = tab.collect_config()
-        assert config.mesh_density_percent == 42.0
+        assert config.decimation.density_percent == 42.0
         assert state.advanced["mesh_density_percent"] == "42"
     finally:
         tab.close()
@@ -241,49 +238,60 @@ def test_config_tab_density_slider_feeds_collected_config_offscreen(
 
 
 def test_serialize_config_for_save_round_trips_through_file(tmp_path: Path) -> None:
-    config = Config(
-        nifti_path=str(tmp_path / "head.nii.gz"),
-        project_dir=str(tmp_path / "proj"),
-        seal_enabled=False,
-        seal_radius=7,
-        smoother_lamb=0.3,
-        smoother_iterations=9,
-        mesh_voxel_size_mm=2,
-        mesh_density_percent=45,
-        ese_offset_mm=2.5,
+    request = PipelineRequest(
+        nifti_path=tmp_path / "head.nii.gz",
+        project_dir=tmp_path / "proj",
+        sealing=SealingOptions(seal_enabled=False, seal_radius=7),
+        cleaning=CleanOptions(min_component_vertices=100, merge_digits=7),
+        smoothing=SmoothOptions(smoother="taubin", iterations=9, lamb=0.3, nu=-0.53),
+        decimation=DecimateOptions(density_percent=45),
+        ese=EseOptions(
+            ese_offset_mm=2.5,
+            neighborhood_radius_mm=10.0,
+            k_neighbors=None,
+            use_weighted_pca=False,
+            pca_sigma_mm=5.0,
+            min_neighbors=5,
+        ),
+        localization=LocalizeOptions(residual_threshold_mm=10.0, calibrate_ese_offset=True),
     )
     advanced = dict(ADVANCED_FIELD_DEFAULTS)
-    data = serialize_config_for_save(config, advanced, measurements_path=str(tmp_path / "in.json"))
+    advanced["mesh_voxel_size_mm"] = "2"
+    data = serialize_config_for_save(request, advanced, measurements_path=str(tmp_path / "in.json"))
     target = tmp_path / "saved" / DEFAULT_PIPELINE_CONFIG_FILENAME
 
     write_pipeline_config(target, data)
 
-    restored = Config.model_validate(load_config_file(target))
-    assert restored.seal_enabled is False
-    assert restored.seal_radius == 7
-    assert restored.smoother_lamb == pytest.approx(0.3)
-    assert restored.smoother_iterations == 9
-    assert restored.mesh_voxel_size_mm == 2
-    assert restored.mesh_density_percent == 45
-    assert restored.ese_offset_mm == 2.5
+    restored = import_pipeline_config(target)
+    assert restored["seal_enabled"] is False
+    assert restored["seal_radius"] == 7
+    assert restored["smoother_lamb"] == pytest.approx(0.3)
+    assert restored["smoother_iterations"] == 9
+    assert restored["mesh_voxel_size_mm"] == "2"
+    assert restored["mesh_density_percent"] == 45
+    assert restored["ese_offset_mm"] == 2.5
     assert data["advanced"] == advanced
-    assert load_config_file(target)["measurements_path"] == str(tmp_path / "in.json")
+    assert import_pipeline_config(target)["measurements_path"] == str(tmp_path / "in.json")
 
 
-def test_saved_pipeline_config_parses_through_build_config(tmp_path: Path) -> None:
-    config = Config(
-        nifti_path=str(tmp_path / "head.nii.gz"),
-        project_dir=str(tmp_path / "proj"),
-        mesh_density_percent=25,
+def test_saved_pipeline_config_parses_through_importer(tmp_path: Path) -> None:
+    request = PipelineRequest(
+        nifti_path=tmp_path / "head.nii.gz",
+        project_dir=tmp_path / "proj",
+        sealing=SealingOptions(seal_enabled=True, seal_radius=4),
+        cleaning=CleanOptions(min_component_vertices=100, merge_digits=7),
+        smoothing=SmoothOptions(smoother="laplacian", iterations=5, lamb=0.5, nu=-0.53),
+        decimation=DecimateOptions(density_percent=25),
+        localization=LocalizeOptions(residual_threshold_mm=10.0, calibrate_ese_offset=True),
     )
     target = tmp_path / "pipeline_config.json"
-    write_pipeline_config(target, serialize_config_for_save(config, dict(ADVANCED_FIELD_DEFAULTS)))
+    write_pipeline_config(target, serialize_config_for_save(request, dict(ADVANCED_FIELD_DEFAULTS)))
 
-    restored = build_config(VirdaSettings(), config_files=[target])
+    restored = import_pipeline_config(target)
 
-    assert restored.mesh_density_percent == 25.0
-    assert restored.nifti_path == config.nifti_path
-    assert restored.project_dir == config.project_dir
+    assert restored["mesh_density_percent"] == 25
+    assert restored["nifti_path"] == str(request.nifti_path)
+    assert restored["project_dir"] == str(request.project_dir)
 
 
 def test_default_config_save_path_uses_project_dir(tmp_path: Path) -> None:

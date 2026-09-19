@@ -7,7 +7,8 @@ import numpy as np
 import pytest
 
 from tests.helpers.pipelines import make_fiducials
-from virda.io.fiducial_helpers import load_fiducials, save_fiducials
+from virda.io.exporters.fiducials import export_fiducials
+from virda.io.importers.fiducials import import_fiducials
 from virda.models.coordsystem import Coordsystem
 from virda.models.fiducial import (
     CoordinateSystem,
@@ -83,13 +84,13 @@ class TestFiducialModel:
         assert fiducials.get("RPA") is None
 
 
-class TestFiducialHelpers:
+class TestFiducialIo:
     def test_round_trip_preserves_fiducials(self, tmp_path: Path) -> None:
         path = tmp_path / "fiducials.json"
         fiducials = make_fiducials()
 
-        save_fiducials(path, fiducials)
-        restored = load_fiducials(path)
+        export_fiducials(path, fiducials)
+        restored = import_fiducials(path)
 
         assert restored.ids == ["NAS", "LPA"]
         nas = restored.get("NAS")
@@ -107,8 +108,8 @@ class TestFiducialHelpers:
         base = make_fiducials().items
         fiducials = Fiducials(items=[replace(base[0], weight=2.5), *base[1:]])
 
-        save_fiducials(path, fiducials)
-        restored = load_fiducials(path)
+        export_fiducials(path, fiducials)
+        restored = import_fiducials(path)
 
         nas = restored.get("NAS")
         assert nas is not None
@@ -133,7 +134,7 @@ class TestFiducialHelpers:
             encoding="utf-8",
         )
 
-        restored = load_fiducials(path)
+        restored = import_fiducials(path)
 
         nas = restored.get("NAS")
         assert nas is not None
@@ -156,7 +157,7 @@ class TestFiducialHelpers:
             encoding="utf-8",
         )
 
-        fiducials = load_fiducials(path)
+        fiducials = import_fiducials(path)
 
         assert fiducials.ids == ["NAS", "LPA", "RPA"]
         nas = fiducials.get("NAS")
@@ -180,7 +181,7 @@ class TestFiducialHelpers:
             encoding="utf-8",
         )
 
-        fiducials = load_fiducials(path)
+        fiducials = import_fiducials(path)
 
         nas = fiducials.get("NAS")
         assert nas is not None
@@ -200,7 +201,7 @@ class TestFiducialHelpers:
             encoding="utf-8",
         )
 
-        fiducials = load_fiducials(path)
+        fiducials = import_fiducials(path)
 
         nas = fiducials.get("NAS")
         assert nas is not None
@@ -222,7 +223,7 @@ class TestFiducialHelpers:
         )
 
         with pytest.raises(ValueError, match="Unsupported coordinate units 'cm'"):
-            load_fiducials(path)
+            import_fiducials(path)
 
     def test_load_fiducials_accepts_coordsystem_without_fiducials(self, tmp_path: Path) -> None:
         path = tmp_path / "coordsystem.json"
@@ -231,7 +232,7 @@ class TestFiducialHelpers:
             encoding="utf-8",
         )
 
-        fiducials = load_fiducials(path)
+        fiducials = import_fiducials(path)
 
         assert fiducials.items == []
 

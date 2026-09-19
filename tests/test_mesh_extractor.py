@@ -3,7 +3,6 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
-from tests.helpers.pipelines import build_context
 from virda.mesh.mesh_extractor import MarchingCubesExtractor
 from virda.models.mri_volume import MRIVolume
 from virda.models.scalp_mesh import ScalpMesh
@@ -54,9 +53,7 @@ class TestMeshExtractor:
     def test_extract_surface_returns_valid_mesh(
         self, sphere_mask: SegmentationMask, sphere_volume: MRIVolume
     ) -> None:
-        mesh = self.extractor.run(
-            build_context(SegmentationMask=sphere_mask, MRIVolume=sphere_volume)
-        )
+        mesh = self.extractor.process(sphere_mask, sphere_volume)
 
         assert isinstance(mesh, ScalpMesh)
         assert mesh.vertices.ndim == 2
@@ -70,9 +67,7 @@ class TestMeshExtractor:
         self, sphere_mask: SegmentationMask, sphere_volume: MRIVolume
     ) -> None:
         sphere_volume = replace(sphere_volume, affine=np.eye(4))
-        mesh = self.extractor.run(
-            build_context(SegmentationMask=sphere_mask, MRIVolume=sphere_volume)
-        )
+        mesh = self.extractor.process(sphere_mask, sphere_volume)
 
         sphere_surface_area_pixels = 4 * np.pi * 10**2
         expected_vertex_range = (
@@ -95,17 +90,11 @@ class TestMeshExtractor:
         )
         identity_affine = np.eye(4)
 
-        mesh_world = self.extractor.run(
-            build_context(
-                SegmentationMask=sphere_mask,
-                MRIVolume=replace(sphere_volume, affine=voxel_to_world),
-            )
+        mesh_world = self.extractor.process(
+            sphere_mask, replace(sphere_volume, affine=voxel_to_world)
         )
-        mesh_voxel = self.extractor.run(
-            build_context(
-                SegmentationMask=sphere_mask,
-                MRIVolume=replace(sphere_volume, affine=identity_affine),
-            )
+        mesh_voxel = self.extractor.process(
+            sphere_mask, replace(sphere_volume, affine=identity_affine)
         )
 
         expected_world = mesh_voxel.vertices @ voxel_to_world[:3, :3].T + voxel_to_world[:3, 3]
@@ -118,4 +107,4 @@ class TestMeshExtractor:
         empty_volume = replace(sphere_volume, affine=np.eye(4))
 
         with pytest.raises(ValueError):
-            self.extractor.run(build_context(SegmentationMask=empty_mask, MRIVolume=empty_volume))
+            self.extractor.process(empty_mask, empty_volume)

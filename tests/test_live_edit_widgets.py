@@ -14,11 +14,10 @@ import pytest
 from PySide6.QtCore import QSettings
 
 from tests.helpers.measurements import make_fiducials
-from tests.helpers.pipelines import build_context
-from virda.io.fiducial_helpers import load_fiducials, save_fiducials
-from virda.io.loader.measurements_loader import MeasurementsLoaderFromJson
+from virda.io.exporters.fiducials import export_fiducials
+from virda.io.importers.fiducials import import_fiducials
+from virda.io.importers.measurements import import_measurements
 from virda.models.fiducial import Fiducial, Fiducials
-from virda.models.path import MeasurementsPath
 from virda_gui.main_window import IdeWindow
 from virda_gui.preferences import Preferences
 from virda_gui.tabs.editors_tab import (
@@ -57,9 +56,9 @@ def _qt_app():
 def test_fiducials_rows_round_trip_through_file(tmp_path: Path) -> None:
     fiducials = make_fiducials()
     target = tmp_path / "fiducials.json"
-    save_fiducials(target, rows_to_fiducials(fiducials_to_rows(fiducials)))
+    export_fiducials(target, rows_to_fiducials(fiducials_to_rows(fiducials)))
 
-    loaded = load_fiducials(target)
+    loaded = import_fiducials(target)
 
     assert loaded.ids == fiducials.ids
     for original in fiducials.items:
@@ -124,9 +123,7 @@ def test_measurements_rows_round_trip_through_loader(tmp_path: Path) -> None:
     target = tmp_path / "measurements.json"
     target.write_text(json.dumps(measurements_rows_to_schema(rows)), encoding="utf-8")
 
-    loaded = MeasurementsLoaderFromJson().run(
-        build_context(measurements_path=MeasurementsPath(target))
-    )
+    loaded = import_measurements(target)
 
     assert [electrode.electrode_id for electrode in loaded.items] == ["E0", "E1"]
     assert loaded.items[0].measured_distances == rows[0].measured_distances
@@ -143,15 +140,12 @@ def test_measurements_rows_empty_ids_generate_electrode_ids(tmp_path: Path) -> N
     target = tmp_path / "measurements.json"
     target.write_text(json.dumps(schema), encoding="utf-8")
 
-    loaded = MeasurementsLoaderFromJson().run(
-        build_context(measurements_path=MeasurementsPath(target))
-    )
+    loaded = import_measurements(target)
 
     assert [electrode.electrode_id for electrode in loaded.items] == ["E001", "Fz", "E003"]
 
 
-def test_measurements_rows_apply_weights_through_loader(tmp_path: Path) -> None:
-    fiducials = make_fiducials()
+def test_measurements_rows_ignore_weights_through_loader(tmp_path: Path) -> None:
     schema = measurements_rows_to_schema(
         [MeasurementRow(electrode_id="Fz", measured_distances={"NAS": 1.0, "LPA": 2.0})]
     )
@@ -159,15 +153,9 @@ def test_measurements_rows_apply_weights_through_loader(tmp_path: Path) -> None:
     target = tmp_path / "measurements.json"
     target.write_text(json.dumps(schema), encoding="utf-8")
 
-    context = build_context(fiducials=fiducials, measurements_path=MeasurementsPath(target))
-    MeasurementsLoaderFromJson().run(context)
+    loaded = import_measurements(target)
 
-    nas = context.get_store_notnull(Fiducials).get("NAS")
-    lpa = context.get_store_notnull(Fiducials).get("LPA")
-    assert nas is not None
-    assert lpa is not None
-    assert nas.weight == pytest.approx(3.0)
-    assert lpa.weight == pytest.approx(1.0)
+    assert [electrode.electrode_id for electrode in loaded.items] == ["Fz"]
 
 
 def test_measurements_schema_to_rows_and_back() -> None:
@@ -219,7 +207,7 @@ def test_fiducials_editor_saves_loaded_rows_offscreen(tmp_path: Path) -> None:
 
         target = tmp_path / "out.json"
         assert editor.save_to(target) is True
-        loaded = load_fiducials(target)
+        loaded = import_fiducials(target)
         assert loaded.ids == fiducials.ids
 
         item = editor._table.item(0, COL_X)
@@ -252,14 +240,8 @@ def test_measurements_editor_saves_round_trip_offscreen(tmp_path: Path) -> None:
 
         target = tmp_path / "out.json"
         assert editor.save_to(target) is True
-        context = build_context(
-            fiducials=make_fiducials(), measurements_path=MeasurementsPath(target)
-        )
-        loaded = MeasurementsLoaderFromJson().run(context)
+        loaded = import_measurements(target)
         assert loaded.items[0].measured_distances == {"NAS": 1.0, "LPA": 2.0, "RPA": 3.0}
-        nas = context.get_store_notnull(Fiducials).get("NAS")
-        assert nas is not None
-        assert nas.weight == pytest.approx(1.5)
     finally:
         editor.close()
         app.quit()
@@ -368,7 +350,7 @@ def test_ide_window_opens_live_editing_tab_offscreen(tmp_path: Path) -> None:
         project = tmp_path / "recorded-project"
         inputs = project / "input"
         inputs.mkdir(parents=True)
-        save_fiducials(inputs / "fiducials.json", make_fiducials())
+        export_fiducials(inputs / "fiducials.json", make_fiducials())
         (inputs / "measurements.json").write_text(
             json.dumps(
                 measurements_rows_to_schema(
