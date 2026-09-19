@@ -252,7 +252,7 @@ class MeshProcessingTab(QWidget):
         return ""
 
     def _on_generate_ese(self) -> None:
-        base = self._preview_mesh if self._preview_mesh is not None else self._base_mesh
+        base = self.current_scalp_mesh()
         if base is None:
             QMessageBox.warning(self, "Generate ESE", "Load a base mesh first.")
             return
@@ -349,6 +349,10 @@ class MeshProcessingTab(QWidget):
         candidate = root / "mesh" / _FINAL_MESH_FILENAME
         if candidate.is_file():
             self.load_base(candidate)
+
+    def current_scalp_mesh(self) -> ScalpMesh | None:
+        """The in-memory mesh the user is working on (preview, else the base)."""
+        return self._preview_mesh if self._preview_mesh is not None else self._base_mesh
 
     def clear(self) -> None:
         """Forget the in-memory mesh state without touching the project."""
