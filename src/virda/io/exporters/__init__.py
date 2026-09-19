@@ -8,6 +8,7 @@ from virda.io.exporters.electrodes import export_electrodes
 from virda.io.exporters.ese_mesh import export_ese_mesh
 from virda.io.exporters.fiducials import export_fiducials
 from virda.io.exporters.head_mask import export_head_mask
+from virda.io.exporters.localization_table import export_localization_table
 from virda.io.exporters.measurements import export_measurements
 from virda.io.exporters.scalp_mesh import export_scalp_mesh
 
@@ -16,6 +17,7 @@ __all__ = [
     "export_ese_mesh",
     "export_fiducials",
     "export_head_mask",
+    "export_localization_table",
     "export_measurements",
     "export_scalp_mesh",
 ]

@@ -9,9 +9,10 @@ functions so round-trips are testable without a ``QApplication``.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import numpy as np
 from PySide6.QtCore import Qt, Signal
@@ -21,7 +22,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
-    QLineEdit,
     QMessageBox,
     QPushButton,
     QSplitter,
@@ -32,17 +32,58 @@ from PySide6.QtWidgets import (
 )
 
 from virda.io.exporters.fiducials import export_fiducials
+from virda.io.exporters.localization_table import export_localization_table
 from virda.io.importers.fiducials import import_fiducials
+from virda.models.electrode import Electrodes
 from virda.models.fiducial import Fiducial, Fiducials
 from virda_gui.constants import DEFAULT_FIDUCIALS_FILENAME, DEFAULT_MEASUREMENTS_FILENAME
 from virda_gui.state import AppState
-from virda_gui.viewer.frames import FRAME_IDS, frame_label
+from virda_gui.viewer.frames import FRAME_HEAD, FRAME_SCANNER, frame_label
 
 FIDUCIAL_HEADERS = ["ID", "Name", "X", "Y", "Z", "Method", "Weight"]
 COL_ID, COL_NAME, COL_X, COL_Y, COL_Z, COL_METHOD, COL_WEIGHT = range(7)
 COL_ELECTRODE = 0
 COORDINATE_SYSTEMS = ["world", "voxel"]
 DEFINITION_METHODS = ["manual", "auto", "imported"]
+
+#: The coordinate systems the fiducial X/Y/Z columns are entered in.  ``head``
+#: is scanner RAS relative to the NIfTI volume centre (same maths as cRAS).
+EDITOR_FRAME_IDS: tuple[str, str] = (FRAME_SCANNER, FRAME_HEAD)
+
+#: The three canonical fiducials the fixed measurements columns map onto.
+CANONICAL_FIDUCIALS: tuple[str, str, str] = ("LPA", "RPA", "NAS")
+MEASUREMENT_HEADERS = ["Electrode", *CANONICAL_FIDUCIALS]
+
+#: Read-only preview table columns for the live localization output.
+LOCALIZATION_HEADERS = [
+    "Name",
+    "World X",
+    "World Y",
+    "World Z",
+    "Head X",
+    "Head Y",
+    "Head Z",
+    "LPA",
+    "RPA",
+    "NAS",
+    "Residual (mm)",
+    "Flagged",
+]
+
+
+def canonical_fiducial_id(fiducial_id: str) -> str:
+    """Return the canonical (uppercase) form of NAS/LPA/RPA fiducial ids.
+
+    Legacy projects sometimes store the canonical fiducials with different
+    casing (e.g. ``"nas"``); the fixed measurements columns and the live
+    localization both key distances by the three canonical ids, so every
+    reader normalises them here.
+    """
+    lowered = fiducial_id.lower()
+    for canonical in CANONICAL_FIDUCIALS:
+        if lowered == canonical.lower():
+            return canonical
+    return fiducial_id
 
 
 @dataclass(frozen=True)
@@ -61,7 +102,7 @@ def fiducials_to_rows(fiducials: Fiducials) -> list[FiducialRow]:
     """Flatten a :class:`Fiducials` model into editor rows."""
     return [
         FiducialRow(
-            fiducial_id=fiducial.fiducial_id,
+            fiducial_id=canonical_fiducial_id(fiducial.fiducial_id),
             name=fiducial.name,
             coordinates=(
                 float(fiducial.coordinates[0]),
@@ -81,7 +122,7 @@ def rows_to_fiducials(rows: list[FiducialRow]) -> Fiducials:
     return Fiducials(
         items=[
             Fiducial(
-                fiducial_id=row.fiducial_id,
+                fiducial_id=canonical_fiducial_id(row.fiducial_id),
                 name=row.name,
                 coordinates=np.asarray(row.coordinates, dtype=np.float64),
                 coordinate_system=row.coordinate_system,  # type: ignore[arg-type]
@@ -109,7 +150,7 @@ class FiducialsEditor(QWidget):
         self._path: Path | None = None
         self._coord_systems: list[str] = []
         self._loading = False
-        self._input_frame: str = FRAME_IDS[0]
+        self._input_frame: str = EDITOR_FRAME_IDS[0]
 
         self._table = QTableWidget(0, len(FIDUCIAL_HEADERS), self)
         self._table.setHorizontalHeaderLabels(FIDUCIAL_HEADERS)
@@ -125,10 +166,10 @@ class FiducialsEditor(QWidget):
         self._frame_layout.setSpacing(6)
         self._frame_layout.addWidget(QLabel("Coordinate system:", self))
         self._frame_combo = QComboBox(self._frame_row)
-        for frame_id in FRAME_IDS:
+        for frame_id in EDITOR_FRAME_IDS:
             self._frame_combo.addItem(frame_label(frame_id), frame_id)
         self._frame_combo.blockSignals(True)
-        self._frame_combo.setCurrentIndex(FRAME_IDS.index(FRAME_IDS[0]))
+        self._frame_combo.setCurrentIndex(EDITOR_FRAME_IDS.index(EDITOR_FRAME_IDS[0]))
         self._frame_combo.blockSignals(False)
         self._frame_combo.currentIndexChanged.connect(self._on_frame_selected)
         self._frame_layout.addWidget(self._frame_combo)
@@ -202,13 +243,13 @@ class FiducialsEditor(QWidget):
     def input_frame(self) -> str:
         """The coordinate system the X/Y/Z columns are interpreted in."""
         frame = self._frame_combo.currentData()
-        return frame if isinstance(frame, str) else FRAME_IDS[0]
+        return frame if isinstance(frame, str) else EDITOR_FRAME_IDS[0]
 
     def set_input_frame(self, frame: str) -> None:
         """Select the input coordinate system, ignoring unknown frames."""
-        if frame in FRAME_IDS:
+        if frame in EDITOR_FRAME_IDS:
             self._input_frame = frame
-            self._frame_combo.setCurrentIndex(FRAME_IDS.index(frame))
+            self._frame_combo.setCurrentIndex(EDITOR_FRAME_IDS.index(frame))
 
     # ---- table content ----
 
@@ -233,9 +274,9 @@ class FiducialsEditor(QWidget):
         self.rowsChanged.emit()
 
     def fiducial_ids(self) -> list[str]:
-        """Current non-empty ids, read directly from the table (no parsing)."""
+        """Current non-empty canonical ids, read directly from the table."""
         return [
-            self._text(row, COL_ID).strip()
+            canonical_fiducial_id(self._text(row, COL_ID).strip())
             for row in range(self._table.rowCount())
             if self._text(row, COL_ID).strip()
         ]
@@ -244,7 +285,7 @@ class FiducialsEditor(QWidget):
         """Parse the table into rows, raising :class:`ValueError` on bad input."""
         rows: list[FiducialRow] = []
         for index in range(self._table.rowCount()):
-            fiducial_id = self._text(index, COL_ID).strip()
+            fiducial_id = canonical_fiducial_id(self._text(index, COL_ID).strip())
             if not fiducial_id:
                 continue
             rows.append(
@@ -428,7 +469,12 @@ def measurements_rows_to_schema(rows: list[MeasurementRow]) -> dict[str, Any]:
 
 
 class MeasurementsEditor(QWidget):
-    """Editable table of Stage 3 measurements for ``input/measurements.json``."""
+    """Editable table of Stage 3 measurements for ``input/measurements.json``.
+
+    The distance columns are fixed to the three canonical fiducials
+    (LPA / RPA / NAS) and the whole editor is locked until those fiducials
+    exist in the fiducials table (:meth:`set_fiducial_ready`).
+    """
 
     rowsChanged = Signal()  # noqa: N815
 
@@ -440,23 +486,21 @@ class MeasurementsEditor(QWidget):
         super().__init__(parent)
         self._default_dir = default_dir
         self._path: Path | None = None
-        self._fiducial_ids: list[str] = []
-        self._weights: dict[str, QLineEdit] = {}
         self._loading = False
+        self._ready = False
 
-        self._table = QTableWidget(0, 1, self)
-        self._table.setHorizontalHeaderLabels(["Electrode"])
+        self._table = QTableWidget(0, len(MEASUREMENT_HEADERS), self)
+        self._table.setHorizontalHeaderLabels(MEASUREMENT_HEADERS)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(COL_ELECTRODE, QHeaderView.ResizeMode.Stretch)
         self._table.cellChanged.connect(self._on_cell_changed)
 
-        self._weights_row = QWidget(self)
-        self._weights_layout = QHBoxLayout(self._weights_row)
-        self._weights_layout.setContentsMargins(0, 0, 0, 0)
-        self._weights_layout.setSpacing(6)
-        self._weights_row.setVisible(False)
+        self._hint = QLabel(
+            "Fill in the NAS, LPA and RPA fiducials above to enable measurements.", self
+        )
+        self._hint.setWordWrap(True)
 
         add_btn = QPushButton("Add electrode")
         add_btn.clicked.connect(self.add_row)
@@ -468,6 +512,7 @@ class MeasurementsEditor(QWidget):
         save_btn.clicked.connect(self._on_save)
         save_as_btn = QPushButton("Save As...")
         save_as_btn.clicked.connect(self._on_save_as)
+        self._controls = [add_btn, remove_btn, load_btn, save_btn, save_as_btn]
 
         buttons = QHBoxLayout()
         buttons.addWidget(add_btn)
@@ -480,9 +525,11 @@ class MeasurementsEditor(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
-        layout.addWidget(self._weights_row)
+        layout.addWidget(self._hint)
         layout.addWidget(self._table, 1)
         layout.addLayout(buttons)
+
+        self._apply_ready(False)
 
     # ---- table helpers ----
 
@@ -497,57 +544,46 @@ class MeasurementsEditor(QWidget):
         if not self._loading:
             self.rowsChanged.emit()
 
-    def _capture_text_rows(self) -> list[tuple[str, dict[str, str]]]:
-        """Snapshot the table as (electrode, {fiducial_id: text}) before a rebuild."""
-        captured: list[tuple[str, dict[str, str]]] = []
-        for row_index in range(self._table.rowCount()):
-            distances = {
-                self._fiducial_ids[col - 1]: self._text(row_index, col)
-                for col in range(1, self._table.columnCount())
-                if col - 1 < len(self._fiducial_ids)
-            }
-            captured.append((self._text(row_index, COL_ELECTRODE), distances))
-        return captured
+    # ---- readiness ----
+
+    def set_fiducial_ready(self, ready: bool) -> None:
+        """Lock or unlock the table depending on the canonical fiducials."""
+        self._apply_ready(bool(ready))
+
+    def _apply_ready(self, ready: bool) -> None:
+        self._ready = ready
+        self._table.setEnabled(ready)
+        for control in self._controls:
+            control.setEnabled(ready)
+        self._hint.setVisible(not ready)
+
+    @property
+    def fiducial_ready(self) -> bool:
+        """Whether measurements are enabled (canonical fiducials are present)."""
+        return self._ready
 
     # ---- table content ----
 
-    def set_fiducial_ids(self, fiducial_ids: list[str]) -> None:
-        """Set the fiducial columns, preserving already-typed distances."""
-        if fiducial_ids == self._fiducial_ids:
-            return
-        captured = self._capture_text_rows()
-        self._fiducial_ids = list(fiducial_ids)
-        self._loading = True
-        try:
-            self._table.clear()
-            self._table.setColumnCount(len(fiducial_ids) + 1)
-            self._table.setHorizontalHeaderLabels(["Electrode", *fiducial_ids])
-            self._table.setRowCount(len(captured))
-            for row_index, (electrode_id, distances) in enumerate(captured):
-                self._set_item(row_index, COL_ELECTRODE, electrode_id)
-                for col, fiducial_id in enumerate(fiducial_ids, start=1):
-                    self._set_item(row_index, col, distances.get(fiducial_id, ""))
-        finally:
-            self._loading = False
-        self._rebuild_weights_row()
-        self.rowsChanged.emit()
+    def _distance_text(self, distances: dict[str, float], fiducial_id: str) -> str:
+        fiducial_lower = fiducial_id.lower()
+        for key, value in distances.items():
+            if key.lower() == fiducial_lower:
+                return f"{value}"
+        return ""
 
-    def set_measurement_rows(
-        self, rows: list[MeasurementRow], weights: dict[str, float] | None = None
-    ) -> None:
+    def set_measurement_rows(self, rows: list[MeasurementRow]) -> None:
         """Replace the table contents from the given rows."""
         self._loading = True
         try:
             self._table.setRowCount(len(rows))
             for index, row in enumerate(rows):
                 self._set_item(index, COL_ELECTRODE, row.electrode_id)
-                for col, fiducial_id in enumerate(self._fiducial_ids, start=1):
-                    if fiducial_id in row.measured_distances:
-                        self._set_item(index, col, f"{row.measured_distances[fiducial_id]}")
+                for col, fiducial_id in enumerate(CANONICAL_FIDUCIALS, start=1):
+                    self._set_item(
+                        index, col, self._distance_text(row.measured_distances, fiducial_id)
+                    )
         finally:
             self._loading = False
-        if weights is not None:
-            self.set_weights(weights)
         self.rowsChanged.emit()
 
     def measurement_rows(self) -> list[MeasurementRow]:
@@ -556,7 +592,7 @@ class MeasurementsEditor(QWidget):
         for row_index in range(self._table.rowCount()):
             electrode_id = self._text(row_index, COL_ELECTRODE).strip()
             distances: dict[str, float] = {}
-            for col, fiducial_id in enumerate(self._fiducial_ids, start=1):
+            for col, fiducial_id in enumerate(CANONICAL_FIDUCIALS, start=1):
                 text = self._text(row_index, col).strip()
                 if not text:
                     continue
@@ -591,63 +627,15 @@ class MeasurementsEditor(QWidget):
                 self.rowsChanged.emit()
 
     def clear(self) -> None:
-        """Reset the table, weights and file path without touching the fiducials."""
+        """Reset the table and forget the current file path."""
         self._path = None
-        self._fiducial_ids = []
         self._loading = True
         try:
             self._table.clear()
-            self._table.setColumnCount(1)
-            self._table.setHorizontalHeaderLabels(["Electrode"])
+            self._table.setHorizontalHeaderLabels(MEASUREMENT_HEADERS)
             self._table.setRowCount(0)
         finally:
             self._loading = False
-        self._rebuild_weights_row()
-
-    # ---- fiducial weights ----
-
-    def _rebuild_weights_row(self) -> None:
-        while self._weights_layout.count():
-            item = self._weights_layout.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.deleteLater()
-        self._weights.clear()
-        self._weights_row.setVisible(bool(self._fiducial_ids))
-        if not self._fiducial_ids:
-            return
-        self._weights_layout.addWidget(QLabel("Fiducial weights:", self))
-        for fiducial_id in self._fiducial_ids:
-            edit = QLineEdit(self)
-            edit.setFixedWidth(70)
-            edit.setToolTip(f"Weight of fiducial {fiducial_id}")
-            self._weights[fiducial_id] = edit
-            self._weights_layout.addWidget(edit)
-            self._weights_layout.addWidget(QLabel(fiducial_id, self))
-        self._weights_layout.addStretch(1)
-
-    def set_weights(self, weights: dict[str, float]) -> None:
-        for fiducial_id, edit in self._weights.items():
-            if fiducial_id in weights:
-                edit.setText(f"{weights[fiducial_id]}")
-
-    def weight_values(self) -> dict[str, str]:
-        """Return the non-empty weight fields as strings."""
-        return {
-            fiducial_id: edit.text().strip()
-            for fiducial_id, edit in self._weights.items()
-            if edit.text().strip()
-        }
-
-    def parsed_weights(self) -> dict[str, float]:
-        """Parse the weight fields into floats, raising :class:`ValueError`."""
-        weights: dict[str, float] = {}
-        for fiducial_id, text in self.weight_values().items():
-            try:
-                weights[fiducial_id] = float(text)
-            except ValueError:
-                raise ValueError(f"Invalid weight for {fiducial_id!r}: {text!r}") from None
-        return weights
 
     # ---- load / save ----
 
@@ -658,26 +646,14 @@ class MeasurementsEditor(QWidget):
             if not isinstance(data, dict):
                 raise ValueError("Expected a JSON object.")
             rows = measurements_schema_to_rows(data)
-            raw_weights = data.get("fiducial_weights")
-            weights = (
-                {str(fiducial_id): float(value) for fiducial_id, value in raw_weights.items()}
-                if isinstance(raw_weights, dict)
-                else {}
-            )
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
             if interactive:
                 QMessageBox.critical(
                     self, "Load measurements", f"Could not load measurements:\n{exc}"
                 )
             return False
-        file_ids = measurements_fiducial_ids(rows, weights)
-        ids = list(self._fiducial_ids)
-        for fiducial_id in file_ids:
-            if fiducial_id not in ids:
-                ids.append(fiducial_id)
         self._path = path
-        self.set_fiducial_ids(ids)
-        self.set_measurement_rows(rows, weights)
+        self.set_measurement_rows(rows)
         return True
 
     def save_to(self, path: Path) -> bool:
@@ -700,11 +676,7 @@ class MeasurementsEditor(QWidget):
 
     def collected_schema(self) -> dict[str, Any]:
         """Return the measurements JSON object for the current table."""
-        schema = measurements_rows_to_schema(self.measurement_rows())
-        weights = self.parsed_weights()
-        if weights:
-            schema["fiducial_weights"] = weights
-        return schema
+        return measurements_rows_to_schema(self.measurement_rows())
 
     def _on_load(self) -> None:
         path, _selected_filter = QFileDialog.getOpenFileName(
@@ -743,10 +715,145 @@ class MeasurementsEditor(QWidget):
         return DEFAULT_MEASUREMENTS_FILENAME
 
 
-class EditorsTab(QWidget):
-    """Fiducials and measurements editors stacked vertically in one tab."""
+class LocalizationPreview(QWidget):
+    """Read-only preview of the live localization results.
 
-    localizeRequested = Signal()  # noqa: N815
+    Shows each electrode's localized coordinates in the world and head frames
+    side by side with the measured fiducial distances, plus the residual error
+    and flag.  The backing CSV export is Qt-free.
+    """
+
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        default_dir: Callable[[], str | None] | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._default_dir = default_dir
+        self._electrodes: Electrodes | None = None
+        self._cras_offset: np.ndarray | None = None
+
+        self._table = QTableWidget(0, len(LOCALIZATION_HEADERS), self)
+        self._table.setHorizontalHeaderLabels(LOCALIZATION_HEADERS)
+        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        header = self._table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+
+        self._hint = QLabel(
+            "Load or generate a scalp mesh and fill in the NAS/LPA/RPA fiducials and at "
+            "least one measurement row to see localized electrodes here.",
+            self,
+        )
+        self._hint.setWordWrap(True)
+        self._hint.setVisible(True)
+
+        export_btn = QPushButton("Export CSV...", self)
+        export_btn.setToolTip("Save the table below as a CSV file.")
+        export_btn.clicked.connect(self._on_export_csv)
+        self._export_btn = export_btn
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        buttons.addWidget(export_btn)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        layout.addWidget(self._hint)
+        layout.addWidget(self._table, 1)
+        layout.addLayout(buttons)
+
+    # ---- table helpers ----
+
+    def _set_item(self, row: int, col: int, text: str) -> None:
+        self._table.setItem(row, col, QTableWidgetItem(text))
+
+    def _set_coordinate_row(self, row: int, start_col: int, coordinates: np.ndarray | None) -> None:
+        if coordinates is None:
+            return
+        for axis in range(3):
+            self._set_item(row, start_col + axis, f"{float(coordinates[axis]):.3f}")
+
+    # ---- result population ----
+
+    def set_result(self, electrodes: Electrodes | None, cras_offset: np.ndarray | None) -> None:
+        """Replace the table with the given localization result."""
+        self._electrodes = electrodes
+        self._cras_offset = (
+            np.asarray(cras_offset, dtype=np.float64) if cras_offset is not None else None
+        )
+        self._table.setRowCount(0)
+        if electrodes is None or not electrodes.items:
+            self._hint.setVisible(True)
+            self._export_btn.setEnabled(False)
+            return
+        self._hint.setVisible(False)
+        self._export_btn.setEnabled(True)
+        self._table.setRowCount(len(electrodes.items))
+        for index, electrode in enumerate(electrodes.items):
+            self._set_item(index, 0, electrode.electrode_id or "")
+            self._set_coordinate_row(index, 1, electrode.ese_coords)
+            head_coords = self._head_coords(electrode.ese_coords)
+            self._set_coordinate_row(index, 4, head_coords)
+            for col, fiducial_id in enumerate(CANONICAL_FIDUCIALS, start=7):
+                distance = self._distance(electrode.measured_distances, fiducial_id)
+                self._set_item(index, col, f"{distance}" if distance is not None else "")
+            self._set_item(
+                index,
+                10,
+                f"{float(electrode.residual_error):.3f}"
+                if electrode.is_localized and electrode.residual_error is not None
+                else "",
+            )
+            self._set_item(index, 11, "yes" if electrode.flagged else "no")
+
+    def _head_coords(self, world_coords: np.ndarray | None) -> np.ndarray | None:
+        if world_coords is None or self._cras_offset is None:
+            return None
+        head = world_coords.astype(np.float64) - self._cras_offset
+        return np.asarray(head, dtype=np.float64)
+
+    def _distance(self, distances: dict[str, float], fiducial_id: str) -> float | None:
+        fiducial_lower = fiducial_id.lower()
+        for key, value in distances.items():
+            if key.lower() == fiducial_lower:
+                return value
+        return None
+
+    # ---- export ----
+
+    def _on_export_csv(self) -> None:
+        path, _selected_filter = QFileDialog.getSaveFileName(
+            self, "Export localization table", self._start_path(), "CSV (*.csv);;All files (*)"
+        )
+        if not path:
+            return
+        if self._electrodes is None:
+            return
+        try:
+            export_localization_table(Path(path), self._electrodes, self._cras_offset)
+        except OSError as exc:
+            QMessageBox.critical(self, "Export localization", f"Could not write file:\n{exc}")
+
+    def _start_path(self) -> str:
+        """Default location for the CSV export dialog."""
+        default_dir = self._default_dir() if self._default_dir else None
+        filename = DEFAULT_MEASUREMENTS_FILENAME.replace("measurements", "localization")
+        if default_dir:
+            return str(Path(default_dir) / "input" / filename)
+        return filename
+
+
+class EditorsTab(QWidget):
+    """Fiducials, measurements and localization preview stacked vertically.
+
+    Measurements are unlocked once the canonical NAS/LPA/RPA fiducials exist;
+    the read-only localization preview is fed live by the main window as
+    localization runs.
+    """
+
     advancedRequested = Signal()  # noqa: N815
 
     def __init__(self, state: AppState, parent: QWidget | None = None) -> None:
@@ -754,25 +861,19 @@ class EditorsTab(QWidget):
         self._state = state
         self._fiducials = FiducialsEditor(self, default_dir=lambda: self._default_dir())
         self._measurements = MeasurementsEditor(self, default_dir=lambda: self._default_dir())
+        self._localization = LocalizationPreview(self, default_dir=lambda: self._default_dir())
         self._fiducials.rowsChanged.connect(self._on_fiducials_changed)
 
         splitter = QSplitter(Qt.Orientation.Vertical, self)
         splitter.addWidget(self._fiducials)
         splitter.addWidget(self._measurements)
-
-        localize_btn = QPushButton("Localize measurements", self)
-        localize_btn.setToolTip(
-            "Run localization on the current scalp mesh using the "
-            "table rows above, and show the electrodes on the 3D mesh."
-        )
-        localize_btn.clicked.connect(self._on_localize_clicked)
+        splitter.addWidget(self._localization)
 
         advanced_btn = QPushButton("Localization settings...", self)
         advanced_btn.setToolTip("Open the advanced mesh-generation and localization settings.")
         advanced_btn.clicked.connect(self._on_advanced_clicked)
 
         buttons = QHBoxLayout()
-        buttons.addWidget(localize_btn)
         buttons.addWidget(advanced_btn)
         buttons.addStretch(1)
 
@@ -791,14 +892,24 @@ class EditorsTab(QWidget):
         """The live measurements editor widget."""
         return self._measurements
 
+    @property
+    def localization(self) -> LocalizationPreview:
+        """The read-only live localization preview widget."""
+        return self._localization
+
     def _default_dir(self) -> str | None:
         return self._state.last_project_dir
 
-    def _on_fiducials_changed(self) -> None:
-        self._measurements.set_fiducial_ids(self._fiducials.fiducial_ids())
+    def _canonical_fiducials_ready(self) -> bool:
+        """Whether the NAS/LPA/RPA fiducials are all present (canonical ids)."""
+        ids = {fiducial_id.lower() for fiducial_id in self._fiducials.fiducial_ids()}
+        return {canonical.lower() for canonical in CANONICAL_FIDUCIALS}.issubset(ids)
 
-    def _on_localize_clicked(self) -> None:
-        self.localizeRequested.emit()
+    def _on_fiducials_changed(self) -> None:
+        ready = self._canonical_fiducials_ready()
+        self._measurements.set_fiducial_ready(ready)
+        if not ready:
+            self._localization.set_result(None, None)
 
     def _on_advanced_clicked(self) -> None:
         self.advancedRequested.emit()
@@ -815,6 +926,7 @@ class EditorsTab(QWidget):
             self._measurements.load(measurements, interactive=False)
 
     def clear(self) -> None:
-        """Reset both editors so no stale rows survive a project close."""
+        """Reset all three editors so no stale rows survive a project close."""
         self._measurements.clear()
         self._fiducials.clear()
+        self._localization.set_result(None, None)
