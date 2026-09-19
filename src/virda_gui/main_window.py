@@ -3,6 +3,7 @@
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
@@ -73,6 +74,12 @@ class IdeWindow(QMainWindow):
         self._config_tab.exportHtml.connect(self._on_export_html)
 
         self._editors_tab = EditorsTab(self._state)
+
+        self._fiducial_overlay_timer = QTimer(self)
+        self._fiducial_overlay_timer.setSingleShot(True)
+        self._fiducial_overlay_timer.setInterval(150)
+        self._fiducial_overlay_timer.timeout.connect(self._refresh_live_fiducials)
+        self._editors_tab.fiducials.rowsChanged.connect(self._on_fiducials_edited)
 
         self._sidebar = ProjectSidebar(self)
         self._sidebar.openViewerRequested.connect(self._on_open_viewer)
@@ -473,6 +480,35 @@ class IdeWindow(QMainWindow):
         self._state.viewer_loading = False
         self._config_tab.log_viewer.append("3D viewer scene loaded.")
         self._config_tab.viewer_btn.setEnabled(True)
+        self._refresh_live_fiducials()
+
+    def _on_fiducials_edited(self) -> None:
+        """Debounce fast table edits before pushing rows to the viewer."""
+        self._fiducial_overlay_timer.start()
+
+    def _refresh_live_fiducials(self) -> None:
+        """Push the current fiducials table onto the viewer as a live overlay.
+
+        Rows are interpreted in the editor's input coordinate system; the
+        viewer converts them into the scene frame before rendering, so a
+        coordinate-system switch immediately re-places the points on the mesh.
+        """
+        viewer = self._viewer_widget
+        if viewer is None:
+            return
+        rows = self._editors_tab.fiducials.fiducial_rows()
+        ids = [row.fiducial_id for row in rows]
+        points = (
+            np.asarray([row.coordinates for row in rows], dtype=np.float64)
+            if rows
+            else np.empty((0, 3))
+        )
+        try:
+            viewer.set_live_fiducials(
+                ids, points, frame=self._editors_tab.fiducials.input_frame()
+            )
+        except ValueError as exc:
+            self._config_tab.log_viewer.append(f"Live fiducials skipped: {exc}")
 
     def _on_viewer_scene_failed(self, message: str) -> None:
         self._state.viewer_loading = False
