@@ -5,12 +5,14 @@ progress into its own :class:`LogViewer`, and asks the host application to
 act through the ``runRequested``/``openViewer``/``exportHtml`` signals.
 """
 
+import json
 from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
+    QFileDialog,
     QFrame,
     QGroupBox,
     QHBoxLayout,
@@ -29,6 +31,7 @@ from virda.models.coordsystem import Coordsystem
 from virda_gui.constants import (
     CONFIG_KEY_TO_ADVANCED,
     CONFIG_KEY_TO_INPUT,
+    DEFAULT_PIPELINE_CONFIG_FILENAME,
     ELECTRODE_PALETTE,
 )
 from virda_gui.dialogs.advanced_settings import AdvancedSettingsDialog
@@ -59,6 +62,34 @@ def density_percent_from_state(advanced: dict[str, str]) -> int:
     except ValueError:
         value = _MESH_DENSITY_DEFAULT
     return max(_MESH_DENSITY_MIN, min(_MESH_DENSITY_MAX, value))
+
+
+def serialize_config_for_save(config: Config, advanced: dict[str, str]) -> dict[str, Any]:
+    """Serialize a pipeline ``Config`` into the ``pipeline_config.json`` schema.
+
+    The saved file is a flat JSON object whose keys are the ``Config`` field
+    names (snake_case, e.g. ``mesh_density_percent``, ``seal_radius``,
+    ``smoother_lamb``), produced by ``Config.model_dump(exclude_none=True)``,
+    merged with a nested ``"advanced"`` object holding the
+    ``AppState.advanced`` string values.  The flat keys are exactly the keys
+    :func:`virda.config.build_config` / :func:`virda.config.load_config_file`
+    read, so the file round-trips into a ``Config`` with identical field
+    values; ``"advanced"`` preserves the GUI-only string settings (such as an
+    empty ``mesh_voxel_size_mm`` meaning native NIfTI spacing).  The parsed
+    ``coordsystem`` is deliberately not stored: it is a nested model derived
+    from the project's ``coordsystem.json`` rather than a flat pipeline field,
+    and re-validating it from this file would be lossy.
+    """
+    data = config.model_dump(exclude_none=True)
+    data.pop("coordsystem", None)
+    data["advanced"] = dict(advanced)
+    return data
+
+
+def write_pipeline_config(path: Path, data: dict[str, Any]) -> None:
+    """Write one ``pipeline_config.json`` file, creating parent directories."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
 class ConfigTab(QWidget):
@@ -111,6 +142,9 @@ class ConfigTab(QWidget):
         self.export_btn = QPushButton("Export HTML")
         self.export_btn.setEnabled(False)
 
+        self.save_config_btn = QPushButton("Save Config")
+        self.save_config_as_btn = QPushButton("Save As...")
+
         self.electrodes_cras_check = QCheckBox("Force cRAS conversion")
 
         self.log_viewer = LogViewer(self)
@@ -126,6 +160,8 @@ class ConfigTab(QWidget):
         self.run_btn.clicked.connect(self.runRequested)
         self.viewer_btn.clicked.connect(self.openViewer)
         self.export_btn.clicked.connect(self.exportHtml)
+        self.save_config_btn.clicked.connect(self._on_save_pipeline_config)
+        self.save_config_as_btn.clicked.connect(self._on_save_pipeline_config_as)
 
         self._sync_density_from_state()
 
@@ -196,6 +232,12 @@ class ConfigTab(QWidget):
         btn_layout.addSpacing(8)
 
         btn_layout.addWidget(self.export_btn)
+        btn_layout.addSpacing(8)
+
+        btn_layout.addWidget(self.save_config_btn)
+        btn_layout.addSpacing(8)
+
+        btn_layout.addWidget(self.save_config_as_btn)
 
         btn_layout.addStretch(1)
         outer.addWidget(btn_frame)
@@ -278,6 +320,49 @@ class ConfigTab(QWidget):
         if dialog.exec():
             self._state.advanced = dialog.result_values
             self._sync_density_from_state()
+
+    # ---- Pipeline config save ----
+
+    def _default_config_save_path(self) -> str:
+        """Default save location: the project's ``input/pipeline_config.json``."""
+        project = self.project_dir() or self._state.last_project_dir
+        if project:
+            return str(Path(project) / "input" / DEFAULT_PIPELINE_CONFIG_FILENAME)
+        return DEFAULT_PIPELINE_CONFIG_FILENAME
+
+    def _on_save_pipeline_config(self) -> None:
+        self._save_pipeline_config(Path(self._default_config_save_path()))
+
+    def _on_save_pipeline_config_as(self) -> None:
+        path, _selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Save pipeline config as",
+            self._default_config_save_path(),
+            "JSON (*.json);;All files (*)",
+        )
+        if path:
+            self._save_pipeline_config(Path(path))
+
+    def _save_pipeline_config(self, path: Path) -> None:
+        """Collect the current form state and write it to *path*.
+
+        The saved file intentionally does not touch the config-file selector,
+        so saving never reloads the freshly written file (which would drop a
+        parsed ``coordsystem`` from ``AppState``).
+        """
+        try:
+            config = self.collect_config()
+        except Exception as exc:  # noqa: BLE001 - surfaced to the user
+            QMessageBox.critical(self, "Save config", f"Invalid configuration:\n{exc}")
+            return
+        try:
+            write_pipeline_config(
+                path, serialize_config_for_save(config, self._state.advanced)
+            )
+        except OSError as exc:
+            QMessageBox.critical(self, "Save config", f"Could not write file:\n{exc}")
+            return
+        self.log_viewer.append(f"Saved pipeline config to {path}")
 
     # ---- Electrode groups ----
 

@@ -4,6 +4,7 @@ ELECTRODE_PALETTE = ["yellow", "lime", "magenta", "cyan", "orange", "white"]
 
 DEFAULT_FIDUCIALS_FILENAME = "fiducials.json"
 DEFAULT_MEASUREMENTS_FILENAME = "measurements.json"
+DEFAULT_PIPELINE_CONFIG_FILENAME = "pipeline_config.json"
 
 PROJECT_ARTIFACT_DIRS = [
     "input",
