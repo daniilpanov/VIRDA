@@ -541,7 +541,7 @@ class IdeWindow(QMainWindow):
         ).ravel()
         poly = pv.PolyData(np.asarray(vertices, dtype=np.float64), faces_ravel)
         _, _, transform, mm_scene = scene_placement(self._viewer_widget.scene_frame_params[0])
-        if not mm_scene and self._viewer_widget.scene_frame_params[0] is not None:
+        if not mm_scene:
             poly.transform(transform, inplace=True)
         return poly
 
