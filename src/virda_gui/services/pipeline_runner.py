@@ -8,16 +8,14 @@ The pipeline itself is orchestrated here from the pure ``virda.ops`` atoms and
 ``virda.io`` importers/exporters.
 """
 
-import json
 import logging
 import queue
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
 
-import numpy as np
 from PySide6.QtCore import QObject, Signal
 
 from virda.io.exporters import (
@@ -28,8 +26,7 @@ from virda.io.exporters import (
     export_scalp_mesh,
 )
 from virda.io.importers import import_fiducials, import_measurements, import_nifti
-from virda.models.config import Config
-from virda.models.electrode import Electrodes
+from virda.models.coordsystem import Coordsystem
 from virda.models.ese_mesh import ESEMesh
 from virda.models.fiducial import Fiducials
 from virda.models.mri_volume import MRIVolume
@@ -42,7 +39,6 @@ from virda.ops.options import (
     LocalizeOptions,
     SealingOptions,
     SmoothOptions,
-    SmootherKind,
 )
 from virda.ops.scalp_surface import ScalpSurface
 from virda_gui.state import AppState
@@ -51,6 +47,29 @@ _DONE_SENTINEL = "__DONE__"
 _ERROR_SENTINEL = "__ERROR__"
 _EXPORT_DONE_SENTINEL = "__EXPORT_DONE__"
 _EXPORT_ERROR_SENTINEL = "__EXPORT_ERROR__"
+
+
+@dataclass(frozen=True)
+class PipelineRequest:
+    """Run parameters collected from the GUI config tab.
+
+    The pure pipeline is configured entirely through the typed dataclasses in
+    :mod:`virda.ops.options`; :class:`PipelineRequest` bundles them with the
+    three external inputs (the MRI scan, an optional fiducials file and the
+    parsed MNE coordsystem) so the runner never touches pydantic or pipeline
+    config models.
+    """
+
+    nifti_path: Path
+    project_dir: Path
+    fiducials_path: Path | None = None
+    coordsystem: Coordsystem | None = None
+    sealing: SealingOptions = SealingOptions()
+    cleaning: CleanOptions = CleanOptions()
+    smoothing: SmoothOptions = SmoothOptions()
+    decimation: DecimateOptions = DecimateOptions()
+    ese: EseOptions | None = None
+    localization: LocalizeOptions = LocalizeOptions()
 
 
 class _QueueLogHandler(logging.Handler):
@@ -95,11 +114,13 @@ class PipelineRunner(QObject):
         self._export_threads: list[threading.Thread] = []
         self._closed = False
 
-    def submit(self, config: Config, measurements_path: str | None) -> None:
+    def submit(self, request: PipelineRequest, measurements_path: str | None) -> None:
         """Start the pipeline on a background thread (daemon)."""
         if self._closed:
             return
-        thread = threading.Thread(target=self._run, args=(config, measurements_path), daemon=True)
+        thread = threading.Thread(
+            target=self._run, args=(request, measurements_path), daemon=True
+        )
         self._pipeline_thread = thread
         thread.start()
 
@@ -141,60 +162,37 @@ class PipelineRunner(QObject):
             thread.join(remaining)
         self._closed = True
 
-    def _run(self, config: Config, measurements_path: str | None) -> None:
+    def _run(self, request: PipelineRequest, measurements_path: str | None) -> None:
         """Background thread: run the pure-ops pipeline and post results to the queue."""
         try:
             self._state.log_queue.put("Building configuration...")
-            project = Path(config.project_dir)
-            mri = import_nifti(config.nifti_path)
+            project = request.project_dir
+            mri = import_nifti(request.nifti_path)
 
-            surface = generate_scalp_surface(
-                mri,
-                SealingOptions(seal_enabled=config.seal_enabled, seal_radius=config.seal_radius),
-            )
-            mesh = clean(
-                surface.mesh,
-                CleanOptions(
-                    min_component_vertices=config.cleaner_min_vertices,
-                    merge_digits=config.cleaner_merge_digits,
-                ),
-            )
-            mesh = smooth(
-                mesh,
-                SmoothOptions(
-                    smoother=cast(SmootherKind, config.smoother_type),
-                    iterations=config.smoother_iterations,
-                    lamb=config.smoother_lamb,
-                    nu=config.smoother_nu,
-                ),
-            )
-            if config.mesh_density_percent < 100.0:
-                mesh = decimate(
-                    mesh, DecimateOptions(density_percent=config.mesh_density_percent)
-                )
+            surface = generate_scalp_surface(mri, request.sealing)
+            mesh = clean(surface.mesh, request.cleaning)
+            mesh = smooth(mesh, request.smoothing)
+            if request.decimation.density_percent < 100.0:
+                mesh = decimate(mesh, request.decimation)
 
-            fiducials = self._resolve_fiducials(config)
-            self._export_stage1(project, mri, surface, mesh, fiducials, config)
+            fiducials = self._resolve_fiducials(request)
+            self._export_stage1(project, mri, surface, mesh, fiducials)
 
             msg = f"Stage 1: mesh with {len(mesh.vertices)} vertices"
             self._state.log_queue.put(msg)
 
             ese_mesh: ESEMesh | None = (
-                self._run_stage2(project, config, mesh)
-                if config.ese_offset_mm is not None
+                self._run_stage2(project, request.ese, mesh)
+                if request.ese is not None
                 else None
             )
 
-            electrodes: Electrodes | None = None
             if ese_mesh is not None and measurements_path:
                 electrodes = localize(
                     surface=ese_mesh,
                     fiducials=fiducials,
                     electrodes=import_measurements(measurements_path),
-                    options=LocalizeOptions(
-                        calibrate_ese_offset=config.calibrate_ese_offset,
-                        residual_threshold_mm=config.residual_threshold_mm,
-                    ),
+                    options=request.localization,
                 )
                 export_electrodes(project / "localization" / "electrodes.json", electrodes)
                 items = electrodes.items
@@ -224,17 +222,12 @@ class PipelineRunner(QObject):
             self._state.log_queue.put(_ERROR_SENTINEL)
 
     @staticmethod
-    def _resolve_fiducials(config: Config) -> Fiducials:
+    def _resolve_fiducials(request: PipelineRequest) -> Fiducials:
         """Pick the fiducials for Stage 3 from the loaded inputs."""
-        if config.auto_detect_fiducials:
-            raise ValueError(
-                "Auto fiducial detection is not available in the pure library; "
-                "provide a fiducials file or a coordsystem.json config file."
-            )
-        if config.fiducials_path:
-            return import_fiducials(config.fiducials_path)
-        if config.coordsystem is not None:
-            fiducials = config.coordsystem.to_fiducials()
+        if request.fiducials_path is not None:
+            return import_fiducials(request.fiducials_path)
+        if request.coordsystem is not None:
+            fiducials = request.coordsystem.to_fiducials()
             if fiducials.items:
                 return fiducials
         raise ValueError(
@@ -249,43 +242,21 @@ class PipelineRunner(QObject):
         surface: ScalpSurface,
         mesh: ScalpMesh,
         fiducials: Fiducials,
-        config: Config,
     ) -> None:
-        """Persist the Stage 1 artifacts: mesh, mask, fiducials and config."""
+        """Persist the Stage 1 artifacts: mask, mesh and fiducials."""
         project.mkdir(parents=True, exist_ok=True)
         export_head_mask(project / "segmentation" / "head_mask.nii.gz", surface.mask, mri)
         export_scalp_mesh(project / "mesh" / "final_mesh.ply", mesh)
-        np.save(project / "mesh" / "scalp_vertices.npy", mesh.vertices)
-        np.save(project / "mesh" / "scalp_faces.npy", mesh.faces)
-        np.save(project / "mesh" / "scalp_face_adjacency.npy", mesh.face_adjacency)
         export_fiducials(project / "input" / "fiducials.json", fiducials)
-        (project / "input" / "pipeline_config.json").write_text(
-            json.dumps(config.model_dump(mode="json"), indent=2),
-            encoding="utf-8",
-        )
 
     @staticmethod
-    def _run_stage2(project: Path, config: Config, mesh: ScalpMesh) -> ESEMesh:
-        """Generate the ESE mesh and persist its Stage 2 artifacts."""
-        ese = generate_ese(
-            mesh,
-            EseOptions(
-                ese_offset_mm=config.ese_offset_mm,  # type: ignore[arg-type]
-                neighborhood_radius_mm=config.neighborhood_radius_mm,
-                k_neighbors=config.k_neighbors,
-                use_weighted_pca=config.use_weighted_pca,
-                pca_sigma_mm=config.pca_sigma_mm,
-                min_neighbors=config.min_neighbors,
-            ),
-        )
+    def _run_stage2(project: Path, ese: EseOptions, mesh: ScalpMesh) -> ESEMesh:
+        """Generate the ESE mesh and persist its Stage 2 artifact."""
+        ese_mesh = generate_ese(mesh, ese)
         ese_dir = project / "ese"
         ese_dir.mkdir(parents=True, exist_ok=True)
-        export_ese_mesh(ese_dir / "ese_mesh.ply", ese)
-        np.save(ese_dir / "ese_vertices.npy", ese.vertices)
-        np.save(ese_dir / "ese_faces.npy", ese.faces)
-        np.save(ese_dir / "normals.npy", ese.normals)
-        np.save(ese_dir / "quality.npy", ese.quality)
-        return ese
+        export_ese_mesh(ese_dir / "ese_mesh.ply", ese_mesh)
+        return ese_mesh
 
     def poll(self, append: Callable[[str], None]) -> None:
         """Main thread: drain the log queue and turn sentinels into signals.

@@ -28,6 +28,7 @@ from typing import Any
 
 import numpy as np
 
+from virda.io.importers.scalp_mesh import import_scalp_mesh
 from virda_gui.viewer.scene import (
     compute_normal_lines,
     load_fiducial_points,
@@ -740,14 +741,14 @@ def build_payload(
             payload["ese_config"] = {"ese": {"ese_offset_mm": pipeline_config["ese_offset_mm"]}}
 
     # --- Mesh ----------------------------------------------------------------
-    vertices_path = project / "mesh" / "scalp_vertices.npy"
-    faces_path = project / "mesh" / "scalp_faces.npy"
-    if vertices_path.is_file() and faces_path.is_file():
-        vertices = np.load(vertices_path)
-        faces = np.load(faces_path)
+    vertices: np.ndarray | None = None
+    mesh_path = project / "mesh" / "final_mesh.ply"
+    if mesh_path.is_file():
+        scalp_mesh = import_scalp_mesh(mesh_path)
+        vertices = scalp_mesh.vertices
         payload["mesh"] = {
             "vertices": _encode_float32(transform_points(vertices, transform)),
-            "faces": _encode_uint32(faces),
+            "faces": _encode_uint32(scalp_mesh.faces),
         }
 
     # --- Fiducials -----------------------------------------------------------

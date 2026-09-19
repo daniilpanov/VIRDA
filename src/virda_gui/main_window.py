@@ -392,7 +392,7 @@ class IdeWindow(QMainWindow):
         self._config_tab.export_btn.setEnabled(False)
         self._config_tab.log_viewer.clear()
         self._state.log_queue.put("Starting pipeline...")
-        self._state.last_project_dir = config.project_dir
+        self._state.last_project_dir = str(config.project_dir)
         self._state.stage3_summary = None
 
         measurements_path = self._config_tab.measurements.get().strip() or None

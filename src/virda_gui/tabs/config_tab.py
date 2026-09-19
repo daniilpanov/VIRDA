@@ -1,13 +1,15 @@
 """Configuration tab: input files, electrode groups and run controls.
 
-The tab builds a :class:`Config` from the visible fields on demand, streams
-progress into its own :class:`LogViewer`, and asks the host application to
-act through the ``runRequested``/``openViewer``/``exportHtml`` signals.
+The tab builds a :class:`virda_gui.services.pipeline_runner.PipelineRequest`
+(typed ``virda.ops.options`` values plus the input paths) from the visible
+fields on demand, streams progress into its own :class:`LogViewer`, and asks
+the host application to act through the
+``runRequested``/``openViewer``/``exportHtml`` signals.
 """
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -26,8 +28,16 @@ from PySide6.QtWidgets import (
 
 from virda.io.importers.fiducials import import_fiducials
 from virda.io.importers.pipeline_config import import_pipeline_config
-from virda.models.config import Config
 from virda.models.coordsystem import Coordsystem
+from virda.ops.options import (
+    CleanOptions,
+    DecimateOptions,
+    EseOptions,
+    LocalizeOptions,
+    SealingOptions,
+    SmoothOptions,
+    SmootherKind,
+)
 from virda_gui.constants import (
     CONFIG_KEY_TO_ADVANCED,
     CONFIG_KEY_TO_INPUT,
@@ -35,12 +45,12 @@ from virda_gui.constants import (
     ELECTRODE_PALETTE,
 )
 from virda_gui.dialogs.advanced_settings import AdvancedSettingsDialog
+from virda_gui.services.pipeline_runner import PipelineRequest
 from virda_gui.state import AppState
 from virda_gui.widgets import (
     DirectorySelector,
     ElectrodeGroupRow,
     FileSelector,
-    LabeledField,
     LogViewer,
 )
 
@@ -65,27 +75,63 @@ def density_percent_from_state(advanced: dict[str, str]) -> int:
 
 
 def serialize_config_for_save(
-    config: Config, advanced: dict[str, str], measurements_path: str | None = None
+    request: PipelineRequest, advanced: dict[str, str], measurements_path: str | None = None
 ) -> dict[str, Any]:
-    """Serialize a pipeline ``Config`` into the ``pipeline_config.json`` schema.
+    """Serialize a :class:`PipelineRequest` into the ``pipeline_config.json`` schema.
 
-    The saved file is a flat JSON object whose keys are the ``Config`` field
-    names (snake_case, e.g. ``mesh_density_percent``, ``seal_radius``,
-    ``smoother_lamb``), produced by ``Config.model_dump(exclude_none=True)``,
-    merged with a nested ``"advanced"`` object holding the
-    ``AppState.advanced`` string values.  The flat keys are exactly the keys
-    :func:`virda.io.importers.pipeline_config.import_pipeline_config`
-    reads, so the file round-trips into a ``Config`` with identical field
-    values; ``"advanced"`` preserves the GUI-only string settings (such as an
-    empty ``mesh_voxel_size_mm`` meaning native NIfTI spacing).  The parsed
+    The saved file is a flat JSON object whose keys reuse the historical
+    ``Config`` field names (snake_case, e.g. ``mesh_density_percent``,
+    ``seal_radius``, ``smoother_lamb``) so files written by the GUI keep being
+    read by the config loader and by
+    :func:`virda.io.importers.pipeline_config.import_pipeline_config`.
+    GUI-only string settings that have no pure pipeline counterpart (such as an
+    empty ``mesh_voxel_size_mm`` meaning native NIfTI spacing) are carried
+    through unchanged from ``advanced``; a nested ``"advanced"`` object
+    preserves every knob for the advanced-settings dialog.  The parsed
     ``coordsystem`` is deliberately not stored: it is a nested model derived
     from the project's ``coordsystem.json`` rather than a flat pipeline field,
     and re-validating it from this file would be lossy.
     """
-    data = config.model_dump(exclude_none=True)
-    data.pop("coordsystem", None)
+    data: dict[str, Any] = {
+        "nifti_path": str(request.nifti_path),
+        "project_dir": str(request.project_dir),
+    }
+    if request.fiducials_path is not None:
+        data["fiducials_path"] = str(request.fiducials_path)
+
+    data.update(
+        {
+            "seal_enabled": request.sealing.seal_enabled,
+            "seal_radius": request.sealing.seal_radius,
+            "mesh_density_percent": request.decimation.density_percent,
+            "cleaner_min_vertices": request.cleaning.min_component_vertices,
+            "cleaner_merge_digits": request.cleaning.merge_digits,
+            "smoother_type": request.smoothing.smoother,
+            "smoother_iterations": request.smoothing.iterations,
+            "smoother_lamb": request.smoothing.lamb,
+            "smoother_nu": request.smoothing.nu,
+        }
+    )
+    if request.ese is not None:
+        data.update(
+            {
+                "ese_offset_mm": request.ese.ese_offset_mm,
+                "neighborhood_radius_mm": request.ese.neighborhood_radius_mm,
+                "k_neighbors": request.ese.k_neighbors,
+                "use_weighted_pca": request.ese.use_weighted_pca,
+                "pca_sigma_mm": request.ese.pca_sigma_mm,
+                "min_neighbors": request.ese.min_neighbors,
+                "residual_threshold_mm": request.localization.residual_threshold_mm,
+                "calibrate_ese_offset": request.localization.calibrate_ese_offset,
+            }
+        )
     if measurements_path:
         data["measurements_path"] = measurements_path
+
+    for flat_key, adv_key in CONFIG_KEY_TO_ADVANCED.items():
+        if flat_key not in data and adv_key in advanced:
+            data[flat_key] = advanced[adv_key]
+
     data["advanced"] = dict(advanced)
     return data
 
@@ -127,12 +173,6 @@ class ConfigTab(QWidget):
             self,
             label="Measurements",
             filetypes=[("JSON", "*.json"), ("All files", "*")],
-        )
-        self._auto_detect_fid = LabeledField(
-            self,
-            label="Auto detect fiducials",
-            widget_type="check",
-            default="false",
         )
 
         self.density_slider = QSlider(Qt.Orientation.Horizontal, self)
@@ -187,7 +227,6 @@ class ConfigTab(QWidget):
         input_layout.addWidget(self._project_dir)
         input_layout.addWidget(self._fiducials)
         input_layout.addWidget(self.measurements)
-        input_layout.addWidget(self._auto_detect_fid)
         outer.addWidget(input_box)
 
         density_box = QGroupBox("Mesh Density", self)
@@ -489,7 +528,7 @@ class ConfigTab(QWidget):
         if config is not None:
             self._config_file.set(str(config))
 
-    def collect_config(self) -> Config:
+    def collect_config(self) -> PipelineRequest:
         nifti = self._nifti.get() or None
         project = self._project_dir.get() or None
         fiducials = self._fiducials.get() or None
@@ -519,16 +558,6 @@ class ConfigTab(QWidget):
             except ValueError:
                 raise ValueError(f"{key}: expected a number, got {val!r}") from None
 
-        def _mesh_voxel_size(val: str) -> float | None:
-            if not val.strip():
-                return None
-            size = _float(val, key="mesh_voxel_size_mm")
-            if size is None:
-                raise ValueError("mesh_voxel_size_mm: expected a number")
-            if size <= 0:
-                raise ValueError("mesh_voxel_size_mm: must be positive")
-            return size
-
         def _mesh_density(val: str) -> float:
             density = _float(val, 100.0, key="mesh_density_percent")
             if density is None:
@@ -537,39 +566,58 @@ class ConfigTab(QWidget):
                 raise ValueError("mesh_density_percent: must be within [1, 100]")
             return density
 
-        return Config(
-            nifti_path=nifti,
-            project_dir=project,
-            fiducials_path=fiducials or None,
-            auto_detect_fiducials=self._auto_detect_fid.get() == "true",
+        ese_offset_mm = _float(adv["ese_offset_mm"], key="ese_offset_mm")
+        ese: EseOptions | None = None
+        if ese_offset_mm is not None:
+            ese = EseOptions(
+                ese_offset_mm=ese_offset_mm,
+                neighborhood_radius_mm=_float(
+                    adv["neighborhood_radius_mm"], 10.0, key="neighborhood_radius_mm"
+                )
+                or 10.0,
+                k_neighbors=_int(adv["k_neighbors"], key="k_neighbors"),
+                use_weighted_pca=adv["use_weighted_pca"] == "true",
+                pca_sigma_mm=_float(adv["pca_sigma_mm"], 5.0, key="pca_sigma_mm") or 5.0,
+                min_neighbors=_int(adv["min_neighbors"], 5, key="min_neighbors") or 5,
+            )
+
+        return PipelineRequest(
+            nifti_path=Path(nifti),
+            project_dir=Path(project),
+            fiducials_path=Path(fiducials) if fiducials else None,
             coordsystem=self._state.coordsystem,
-            closing_radius=_int(adv["closing_radius"], 5, key="closing_radius"),
-            otsu_scope=adv["otsu_scope"] or "all",  # type: ignore[arg-type]
-            otsu_threshold_scale=_float(
-                adv["otsu_threshold_scale"], 0.6, key="otsu_threshold_scale"
+            sealing=SealingOptions(
+                seal_enabled=adv["seal_enabled"] == "true",
+                seal_radius=_int(adv["seal_radius"], 4, key="seal_radius") or 4,
             ),
-            seal_enabled=adv["seal_enabled"] == "true",
-            seal_radius=_int(adv["seal_radius"], 4, key="seal_radius"),
-            mesh_voxel_size_mm=_mesh_voxel_size(adv["mesh_voxel_size_mm"]),
-            mesh_density_percent=_mesh_density(adv["mesh_density_percent"]),
-            cleaner_min_vertices=_int(adv["cleaner_min_vertices"], 100, key="cleaner_min_vertices"),
-            cleaner_merge_digits=_int(adv["cleaner_merge_digits"], 7, key="cleaner_merge_digits"),
-            smoother_type=adv["smoother_type"] or "laplacian",
-            smoother_iterations=_int(adv["smoother_iterations"], 5, key="smoother_iterations"),
-            smoother_lamb=_float(adv["smoother_lamb"], 0.5, key="smoother_lamb"),
-            smoother_nu=_float(adv["smoother_nu"], -0.53, key="smoother_nu"),
-            ese_offset_mm=_float(adv["ese_offset_mm"], key="ese_offset_mm"),
-            neighborhood_radius_mm=_float(
-                adv["neighborhood_radius_mm"], 10.0, key="neighborhood_radius_mm"
+            cleaning=CleanOptions(
+                min_component_vertices=_int(
+                    adv["cleaner_min_vertices"], 100, key="cleaner_min_vertices"
+                )
+                or 100,
+                merge_digits=_int(
+                    adv["cleaner_merge_digits"], 7, key="cleaner_merge_digits"
+                )
+                or 7,
             ),
-            k_neighbors=_int(adv["k_neighbors"], key="k_neighbors"),
-            use_weighted_pca=adv["use_weighted_pca"] == "true",
-            pca_sigma_mm=_float(adv["pca_sigma_mm"], 5.0, key="pca_sigma_mm"),
-            min_neighbors=_int(adv["min_neighbors"], 5, key="min_neighbors"),
-            residual_threshold_mm=_float(
-                adv["residual_threshold_mm"],  # type: ignore[arg-type]
-                10.0,
-                key="residual_threshold_mm",
+            smoothing=SmoothOptions(
+                smoother=cast(SmootherKind, adv["smoother_type"] or "laplacian"),
+                iterations=_int(
+                    adv["smoother_iterations"], 5, key="smoother_iterations"
+                )
+                or 5,
+                lamb=_float(adv["smoother_lamb"], 0.5, key="smoother_lamb") or 0.5,
+                nu=_float(adv["smoother_nu"], -0.53, key="smoother_nu") or -0.53,
             ),
-            calibrate_ese_offset=adv["calibrate_ese_offset"] == "true",
+            decimation=DecimateOptions(
+                density_percent=_mesh_density(adv["mesh_density_percent"])
+            ),
+            ese=ese,
+            localization=LocalizeOptions(
+                residual_threshold_mm=float(
+                    _float(adv["residual_threshold_mm"], 10.0, key="residual_threshold_mm")
+                    or 10.0
+                ),
+                calibrate_ese_offset=adv["calibrate_ese_offset"] == "true",
+            ),
         )

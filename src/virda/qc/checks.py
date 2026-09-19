@@ -10,11 +10,10 @@ from scipy.spatial import cKDTree
 from skimage.measure import label
 
 from virda.geometry.transforms import fiducials_world_coordinates
-from virda.models.ese_config import ESEConfig
 from virda.models.fiducial import Fiducials
 from virda.models.mri_volume import MRIVolume
 from virda.models.scalp_mesh import ScalpMesh
-from virda.models.stage1_result import Stage1Result
+from virda.models.segmentation_mask import SegmentationMask
 
 CheckStatus = Literal["ok", "warn", "fail", "skip"]
 FIDUCIAL_TOLERANCE_MM = 3.0
@@ -98,23 +97,23 @@ def check_coordinates_mm(
     )
 
 
-def check_ese_config(ese_config: ESEConfig | None) -> dict[str, Any]:
+def check_ese_offset(ese_offset_mm: float | None) -> dict[str, Any]:
     """ESE offset is present and positive (spec §13.1).
 
-    Skipped (not failed) when no ESE config is supplied: the offset is an
+    Skipped (not failed) when no ESE offset is supplied: the offset is an
     ESE/simulation concern and its absence does not invalidate Stage 1 output.
     """
-    if ese_config is None:
-        return _check("ese_offset", "skip", "ESE config is missing; check skipped")
+    if ese_offset_mm is None:
+        return _check("ese_offset", "skip", "ESE offset is missing; check skipped")
     return _check(
         "ese_offset",
-        "ok" if ese_config.ese_offset_mm > 0 else "fail",
+        "ok" if ese_offset_mm > 0 else "fail",
         (
-            f"ESE offset is {ese_config.ese_offset_mm} mm"
-            if ese_config.ese_offset_mm > 0
-            else f"ESE offset must be positive, got {ese_config.ese_offset_mm} mm"
+            f"ESE offset is {ese_offset_mm} mm"
+            if ese_offset_mm > 0
+            else f"ESE offset must be positive, got {ese_offset_mm} mm"
         ),
-        ese_offset_mm=ese_config.ese_offset_mm,
+        ese_offset_mm=ese_offset_mm,
     )
 
 
@@ -206,7 +205,8 @@ def check_components(
 
 def check_fiducials(
     fiducials: Fiducials,
-    result: Stage1Result,
+    mesh: ScalpMesh,
+    mri_volume: MRIVolume,
     tolerance_mm: float = FIDUCIAL_TOLERANCE_MM,
 ) -> dict[str, Any]:
     """Distance from each fiducial to the scalp mesh (per spec §13.1 / §16)."""
@@ -227,9 +227,9 @@ def check_fiducials(
     # truly distant fiducial is never missed; the gap equals the local vertex
     # spacing (~1-2 mm on the dense Stage 1 mesh) and is negligible against the
     # 3 mm tolerance.
-    tree = cKDTree(np.asarray(result.mesh.vertices, dtype=np.float64))
+    tree = cKDTree(np.asarray(mesh.vertices, dtype=np.float64))
     for fiducial in fiducials.items:
-        world = fiducials_world_coordinates([fiducial], result.mri_volume.affine)[0]
+        world = fiducials_world_coordinates([fiducial], mri_volume.affine)[0]
         distance = float(tree.query(world, k=1)[0])
         checks.append(
             {
@@ -361,39 +361,44 @@ def check_nifti_mask(path: str | Path, mask: np.ndarray, affine: np.ndarray) -> 
 
 
 def run_checks(
-    result: Stage1Result,
+    mesh: ScalpMesh,
+    segmentation_mask: SegmentationMask,
+    mri_volume: MRIVolume,
+    fiducials: Fiducials,
     *,
     min_mesh_vertices: int = MIN_MESH_VERTICES,
     min_component_vertices: int = MIN_COMPONENT_VERTICES,
     fiducial_tolerance_mm: float = FIDUCIAL_TOLERANCE_MM,
     max_hole_diameter_mm: float = MAX_HOLE_DIAMETER_MM,
     nifti_mask_path: str | Path | None = None,
-    ese_config: ESEConfig | None = None,
+    ese_offset_mm: float | None = None,
     coordinate_margin_mm: float | None = None,
 ) -> dict[str, Any]:
     """Run all automatic QC checks and aggregate a report.
 
     Each check reports one of the ``CheckStatus`` values: "ok", "warn",
     "fail" or "skip" (a check is skipped when it cannot apply, e.g. the
-    missing ESE config). The overall status ignores skipped checks.
+    missing ESE offset). The overall status ignores skipped checks.
     """
     checks = [
-        check_mri(result.mri_volume),
-        check_coordinates_mm(result.mesh, result.mri_volume, margin_mm=coordinate_margin_mm),
-        check_mesh(result.mesh, min_vertices=min_mesh_vertices),
-        check_components(result.segmentation_mask.mask, min_component_vertices),
-        check_holes(result.mesh, max_diameter_mm=max_hole_diameter_mm),
-        check_ese_config(ese_config),
+        check_mri(mri_volume),
+        check_coordinates_mm(mesh, mri_volume, margin_mm=coordinate_margin_mm),
+        check_mesh(mesh, min_vertices=min_mesh_vertices),
+        check_components(segmentation_mask.mask, min_component_vertices),
+        check_holes(mesh, max_diameter_mm=max_hole_diameter_mm),
+        check_ese_offset(ese_offset_mm),
     ]
     if nifti_mask_path is not None:
         checks.append(
             check_nifti_mask(
                 nifti_mask_path,
-                result.segmentation_mask.mask,
-                result.mri_volume.affine,
+                segmentation_mask.mask,
+                mri_volume.affine,
             )
         )
-    fiducials = check_fiducials(result.fiducials, result, tolerance_mm=fiducial_tolerance_mm)
+    fiducials = check_fiducials(
+        fiducials, mesh, mri_volume, tolerance_mm=fiducial_tolerance_mm
+    )
 
     warnings: list[str] = []
     for check in checks:

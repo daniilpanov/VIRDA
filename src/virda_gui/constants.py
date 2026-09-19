@@ -21,7 +21,6 @@ CONFIG_KEY_TO_INPUT: dict[str, str] = {
     "nifti_path": "nifti_path",
     "project_dir": "project_dir",
     "fiducials_path": "fiducials_path",
-    "auto_detect_fiducials": "auto_detect_fiducials",
 }
 
 ADVANCED_FIELD_DEFAULTS: dict[str, str] = {
