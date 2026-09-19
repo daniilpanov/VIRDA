@@ -180,6 +180,7 @@ class IdeWindow(QMainWindow):
         self._state.last_project_dir = None
         self._tabs.removeTab(self._tabs.indexOf(self._config_tab))
         self._tabs.removeTab(self._tabs.indexOf(self._editors_tab))
+        self._editors_tab.clear()
         self.setWindowTitle("VIRDA — Electrode Localization System")
 
     def _create_project(self) -> None:

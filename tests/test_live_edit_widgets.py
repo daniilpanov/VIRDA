@@ -265,6 +265,101 @@ def test_measurements_editor_saves_round_trip_offscreen(tmp_path: Path) -> None:
         app.quit()
 
 
+def test_measurements_editor_rejects_electrode_without_distances_offscreen(
+    tmp_path: Path,
+) -> None:
+    app = _qt_app()
+    editor = MeasurementsEditor()
+    try:
+        editor.set_fiducial_ids(["NAS"])
+        editor.set_measurement_rows([MeasurementRow(electrode_id="E9", measured_distances={})])
+
+        with pytest.raises(ValueError, match="E9.*no measured distances"):
+            editor.fiducial_rows()
+        editor._table.item(0, 0).setText("")
+        assert editor.fiducial_rows() == []
+    finally:
+        editor.close()
+        app.quit()
+
+
+def test_fiducials_editor_load_invalid_file_returns_false(tmp_path: Path) -> None:
+    app = _qt_app()
+    editor = FiducialsEditor()
+    try:
+        bad = tmp_path / "bad.json"
+        bad.write_text(json.dumps({"fiducials": [{"id": {"nas": [0.0, 0.0]}, "name": None}]}), encoding="utf-8")
+        assert editor.load(bad, interactive=False) is False
+
+        not_json = tmp_path / "garbage.json"
+        not_json.write_text("{not json", encoding="utf-8")
+        assert editor.load(not_json, interactive=False) is False
+    finally:
+        editor.close()
+        app.quit()
+
+
+def test_measurements_editor_load_invalid_schema_returns_false(tmp_path: Path) -> None:
+    app = _qt_app()
+    editor = MeasurementsEditor()
+    try:
+        bad = tmp_path / "bad.json"
+        bad.write_text(json.dumps({"electrodes": [{"electrode_id": "E0"}]}), encoding="utf-8")
+        assert editor.load(bad, interactive=False) is False
+
+        non_dict = tmp_path / "list.json"
+        non_dict.write_text("[1, 2]", encoding="utf-8")
+        assert editor.load(non_dict, interactive=False) is False
+    finally:
+        editor.close()
+        app.quit()
+
+
+def test_editors_clear_resets_rows_and_path_offscreen(tmp_path: Path) -> None:
+    app = _qt_app()
+    fiducials_editor = FiducialsEditor()
+    measurements_editor = MeasurementsEditor()
+    try:
+        fiducials_editor.set_rows(fiducials_to_rows(make_fiducials()))
+        fiducials_editor.save_to(tmp_path / "f.json")
+        measurements_editor.set_fiducial_ids(["NAS", "LPA", "RPA"])
+        measurements_editor.set_measurement_rows(
+            [MeasurementRow(electrode_id="E0", measured_distances={"NAS": 1.0})]
+        )
+        measurements_editor._path = tmp_path / "m.json"
+
+        fiducials_editor.clear()
+        measurements_editor.clear()
+
+        assert fiducials_editor.fiducial_ids() == []
+        assert fiducials_editor._table.rowCount() == 0
+        assert fiducials_editor._path is None
+        assert measurements_editor._table.rowCount() == 0
+        assert measurements_editor._table.columnCount() == 1
+        assert measurements_editor._path is None
+        assert measurements_editor._weights == {}
+    finally:
+        fiducials_editor.close()
+        measurements_editor.close()
+        app.quit()
+
+
+def test_measurements_rows_without_distances_validate_on_save(tmp_path: Path) -> None:
+    app = _qt_app()
+    editor = MeasurementsEditor()
+    try:
+        editor.set_fiducial_ids(["NAS"])
+        editor.set_measurement_rows([MeasurementRow(electrode_id="E0", measured_distances={})])
+        editor._table.item(0, 0).setText("E7")
+
+        with pytest.raises(ValueError, match="no measured distances"):
+            editor.collected_schema()
+        assert editor.save_to(tmp_path / "m.json") is False
+    finally:
+        editor.close()
+        app.quit()
+
+
 def test_ide_window_opens_live_editing_tab_offscreen(tmp_path: Path) -> None:
     app = _qt_app()
     prefs = Preferences(QSettings(str(tmp_path / "prefs.ini"), QSettings.Format.IniFormat))

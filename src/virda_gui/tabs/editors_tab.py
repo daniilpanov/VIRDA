@@ -38,6 +38,7 @@ from virda_gui.state import AppState
 
 FIDUCIAL_HEADERS = ["ID", "Name", "X", "Y", "Z", "Method", "Weight"]
 COL_ID, COL_NAME, COL_X, COL_Y, COL_Z, COL_METHOD, COL_WEIGHT = range(7)
+COL_ELECTRODE = 0
 COORDINATE_SYSTEMS = ["world", "voxel"]
 DEFINITION_METHODS = ["manual", "auto", "imported"]
 
@@ -247,7 +248,6 @@ class FiducialsEditor(QWidget):
         self._table.setCellWidget(index, COL_METHOD, self._make_method_combo("manual"))
         self._set_item(index, COL_WEIGHT, "1.0")
         self._table.scrollToBottom()
-        self.rowsChanged.emit()
 
     def remove_selected(self) -> None:
         row = self._table.currentRow()
@@ -258,17 +258,23 @@ class FiducialsEditor(QWidget):
             self._coord_systems.pop(row)
         self.rowsChanged.emit()
 
+    def clear(self) -> None:
+        """Reset the table and forget the current file path."""
+        self._path = None
+        self.set_rows([])
+
     # ---- load / save ----
 
     def load(self, path: Path, *, interactive: bool = True) -> bool:
         """Load *path* into the table; returns False when *path* is invalid."""
         try:
             fiducials = load_fiducials(path)
+            rows = fiducials_to_rows(fiducials)
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
             if interactive:
                 QMessageBox.critical(self, "Load fiducials", f"Could not load fiducials:\n{exc}")
             return False
-        self.set_rows(fiducials_to_rows(fiducials))
+        self.set_rows(rows)
         self._path = path
         return True
 
@@ -322,9 +328,6 @@ class FiducialsEditor(QWidget):
         if default_dir:
             return str(Path(default_dir) / "input" / DEFAULT_FIDUCIALS_FILENAME)
         return DEFAULT_FIDUCIALS_FILENAME
-
-
-COL_ELECTRODE = 0
 
 
 @dataclass(frozen=True)
@@ -513,6 +516,10 @@ class MeasurementsEditor(QWidget):
                     ) from None
             if distances:
                 rows.append(MeasurementRow(electrode_id=electrode_id, measured_distances=distances))
+            elif electrode_id:
+                raise ValueError(
+                    f"Electrode row {row_index + 1}: {electrode_id!r} has no measured distances"
+                )
         return rows
 
     def add_row(self) -> None:
@@ -525,6 +532,20 @@ class MeasurementsEditor(QWidget):
         row = self._table.currentRow()
         if row >= 0:
             self._table.removeRow(row)
+
+    def clear(self) -> None:
+        """Reset the table, weights and file path without touching the fiducials."""
+        self._path = None
+        self._fiducial_ids = []
+        self._loading = True
+        try:
+            self._table.clear()
+            self._table.setColumnCount(1)
+            self._table.setHorizontalHeaderLabels(["Electrode"])
+            self._table.setRowCount(0)
+        finally:
+            self._loading = False
+        self._rebuild_weights_row()
 
     # ---- fiducial weights ----
 
@@ -573,26 +594,24 @@ class MeasurementsEditor(QWidget):
     # ---- load / save ----
 
     def load(self, path: Path, *, interactive: bool = True) -> bool:
-        """Load *path* into the table; returns False when *path* is invalid."""
+        """Load *path* into the table; reports nothing when *interactive* is False."""
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError("Expected a JSON object.")
+            rows = measurements_schema_to_rows(data)
+            raw_weights = data.get("fiducial_weights")
+            weights = (
+                {str(fiducial_id): float(value) for fiducial_id, value in raw_weights.items()}
+                if isinstance(raw_weights, dict)
+                else {}
+            )
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
             if interactive:
                 QMessageBox.critical(
                     self, "Load measurements", f"Could not load measurements:\n{exc}"
                 )
             return False
-        if not isinstance(data, dict):
-            if interactive:
-                QMessageBox.critical(self, "Load measurements", "Expected a JSON object.")
-            return False
-        rows = measurements_schema_to_rows(data)
-        raw_weights = data.get("fiducial_weights")
-        weights = (
-            {str(fiducial_id): float(value) for fiducial_id, value in raw_weights.items()}
-            if isinstance(raw_weights, dict)
-            else {}
-        )
         file_ids = measurements_fiducial_ids(rows, weights)
         ids = list(self._fiducial_ids)
         for fiducial_id in file_ids:
@@ -692,6 +711,7 @@ class EditorsTab(QWidget):
 
     def prefill_from_project(self, project: str | Path) -> None:
         """Load the project's canonical fiducials and measurements, if any."""
+        self.clear()
         root = Path(project)
         fiducials = root / "input" / DEFAULT_FIDUCIALS_FILENAME
         if fiducials.is_file():
@@ -699,3 +719,8 @@ class EditorsTab(QWidget):
         measurements = root / "input" / DEFAULT_MEASUREMENTS_FILENAME
         if measurements.is_file():
             self._measurements.load(measurements, interactive=False)
+
+    def clear(self) -> None:
+        """Reset both editors so no stale rows survive a project close."""
+        self._measurements.clear()
+        self._fiducials.clear()
