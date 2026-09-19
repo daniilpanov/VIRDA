@@ -47,6 +47,7 @@ from .frames import (
     collect_mesh_export,
     frame_available,
     frame_label,
+    frame_to_scene_points,
     natural_frame,
     scene_to_frame_matrix,
     write_mesh_obj,
@@ -139,6 +140,19 @@ class ViewerWidget(QWidget):
         self._mesh_opacity = 0.6
         self._hi_clim: tuple[float, float] | None = None
         self._contrast_boost = False
+
+        self._live_fiducial_ids: list[str] = []
+        self._live_fiducial_points: np.ndarray | None = None
+        self._live_fiducial_actor: Any = None
+        self._live_fiducial_label_actor: Any = None
+        self._live_electrode_ids: list[str] = []
+        self._live_electrode_points: np.ndarray | None = None
+        self._live_electrode_flags: np.ndarray | None = None
+        self._live_links_actor: Any = None
+        self._live_electrode_actor: Any = None
+        self._live_electrode_label_actor: Any = None
+        self._extra_mesh: pv.PolyData | None = None
+        self._extra_mesh_actor: Any = None
 
         self._build_ui()
 
@@ -245,6 +259,18 @@ class ViewerWidget(QWidget):
         self._current_frame = FRAME_SCANNER
         self._affine = None
         self._cras_offset = None
+        self._live_fiducial_ids = []
+        self._live_fiducial_points = None
+        self._live_fiducial_actor = None
+        self._live_fiducial_label_actor = None
+        self._live_electrode_ids = []
+        self._live_electrode_points = None
+        self._live_electrode_flags = None
+        self._live_links_actor = None
+        self._live_electrode_actor = None
+        self._live_electrode_label_actor = None
+        self._extra_mesh = None
+        self._extra_mesh_actor = None
 
     def _clear_layers(self) -> None:
         while self._layers_layout.count():
@@ -417,6 +443,75 @@ class ViewerWidget(QWidget):
             self._flagged_actors_per_group.append(f_actors)
             self._link_actors_per_group.append(l_actors)
             self._label_actors_per_group.append(n_actors)
+
+        # ---- live editing overlay (independent of the loaded SceneData) ----
+        # Rows typed into the editors are re-rendered here every time the
+        # display frame changes; the underlying points stay in scene frame and
+        # only the actor pass is re-transformed.
+        self._live_fiducial_actor = None
+        self._live_fiducial_label_actor = None
+        if self._live_fiducial_points is not None and len(self._live_fiducial_points) > 0:
+            pts = transform_points(self._live_fiducial_points, matrix)
+            self._live_fiducial_actor = self._plotter.add_points(
+                pts, color="deeppink", point_size=10, render_points_as_spheres=True
+            )
+            self._live_fiducial_label_actor = self._plotter.add_point_labels(
+                pts,
+                self._live_fiducial_ids,
+                font_size=12,
+                text_color="white",
+                show_points=False,
+                shape="rounded_rect",
+                shape_color="black",
+                shape_opacity=0.65,
+                always_visible=True,
+            )
+            self._point_actors.extend([self._live_fiducial_actor, self._live_fiducial_label_actor])
+
+        self._live_electrode_actor = None
+        self._live_links_actor = None
+        self._live_electrode_label_actor = None
+        if self._live_electrode_points is not None and len(self._live_electrode_points) > 0:
+            pts = transform_points(self._live_electrode_points, matrix)
+            flags = self._live_electrode_flags
+            if flags is None or len(flags) != len(pts):
+                flags = np.zeros(len(pts), dtype=bool)
+            healthy = ~flags
+            self._live_electrode_actor = self._plotter.add_points(
+                pts[healthy],
+                color="lime",
+                point_size=12,
+                render_points_as_spheres=True,
+            )
+            self._point_actors.append(self._live_electrode_actor)
+            if (~healthy).any():
+                flagged_actor = self._plotter.add_points(
+                    pts[~healthy], color="red", point_size=17, render_points_as_spheres=True
+                )
+                self._point_actors.append(flagged_actor)
+            ids = list(self._live_electrode_ids[: len(pts)])
+            ids.extend(f"E{index + 1:03d}" for index in range(len(ids), len(pts)))
+            self._live_electrode_label_actor = self._plotter.add_point_labels(
+                pts,
+                ids,
+                font_size=12,
+                text_color="white",
+                show_points=False,
+                shape="rounded_rect",
+                shape_color="black",
+                shape_opacity=0.65,
+                always_visible=True,
+            )
+            self._point_actors.append(self._live_electrode_label_actor)
+
+        self._extra_mesh_actor = None
+        if self._extra_mesh is not None:
+            poly = self._extra_mesh.copy()
+            poly.transform(matrix, inplace=True)
+            self._extra_mesh_actor = self._plotter.add_mesh(
+                poly, color="royalblue", opacity=0.55, name="extra_mesh"
+            )
+            self._point_actors.append(self._extra_mesh_actor)
 
         self._apply_visibility_states()
 
@@ -695,6 +790,83 @@ class ViewerWidget(QWidget):
                     self._volume, cmap="bone", opacity="sigmoid", mapper="smart"
                 )
             self._mri_actor.SetVisibility(self._mri_visible and self._volume_frame_aligned())
+        self._plotter.render()
+
+    # ---- live editing overlay ----
+
+    @property
+    def scene_frame_params(self) -> tuple[np.ndarray | None, np.ndarray | None, bool]:
+        """Expose ``(affine, cras_offset, mm_scene)`` to the embedder.
+
+        Lets the live-editing consumers convert editor rows from the input
+        coordinate frame into the scene's natural frame (the one the mesh and
+        :class:`SceneData` live in).
+        """
+        return self._affine, self._cras_offset, self._mm_scene
+
+    def current_display_matrix(self) -> np.ndarray:
+        """The 4x4 matrix mapping scene points into the selected display frame."""
+        return scene_to_frame_matrix(
+            self._current_frame, self._affine, self._cras_offset, self._mm_scene
+        )
+
+    def _to_scene_points(self, points: np.ndarray, frame: str | None) -> np.ndarray:
+        """Normalize (N, 3) *points* into the scene frame for a given input frame."""
+        pts = np.asarray(points, dtype=np.float64)
+        if pts.ndim != 2 or pts.shape[1] != 3:
+            raise ValueError(f"expected (N, 3) points, got shape {pts.shape}")
+        if frame is None or frame == natural_frame(self._mm_scene):
+            return pts
+        if frame not in FRAME_IDS:
+            raise ValueError(f"unknown coordinate frame {frame!r}, expected one of {FRAME_IDS}")
+        return frame_to_scene_points(pts, frame, self._affine, self._cras_offset, self._mm_scene)
+
+    def set_live_fiducials(
+        self, ids: list[str], points: np.ndarray, frame: str | None = None
+    ) -> None:
+        """Overlay fiduciary points typed into the live editors on the mesh.
+
+        *points* are (N, 3) rows interpreted in *frame* (None = the scene's
+        natural frame); they are re-rendered, together with the previously set
+        live electrodes and the extra mesh, whenever the display frame changes.
+        """
+        self._live_fiducial_ids = [str(fiducial_id) for fiducial_id in ids]
+        self._live_fiducial_points = self._to_scene_points(points, frame)
+        self._rerender_overlay()
+
+    def set_live_electrodes(
+        self,
+        ids: list[str],
+        points: np.ndarray,
+        flags: np.ndarray | None = None,
+        frame: str | None = None,
+    ) -> None:
+        """Overlay localized electrode points (from a live localization run)."""
+        self._live_electrode_ids = [str(electrode_id) for electrode_id in ids]
+        self._live_electrode_points = self._to_scene_points(points, frame)
+        self._live_electrode_flags = (
+            np.asarray(flags, dtype=bool) if flags is not None else None
+        )
+        self._rerender_overlay()
+
+    def clear_live_points(self) -> None:
+        """Remove the live fiducial and electrode overlay points."""
+        self._live_fiducial_ids = []
+        self._live_fiducial_points = None
+        self._live_electrode_ids = []
+        self._live_electrode_points = None
+        self._live_electrode_flags = None
+        self._rerender_overlay()
+
+    def set_extra_mesh(self, poly: pv.PolyData | None) -> None:
+        """Overlay an extra mesh (e.g. the generated ESE surface)."""
+        self._extra_mesh = poly
+        self._rerender_overlay()
+
+    def _rerender_overlay(self) -> None:
+        if self._scene is None:
+            return
+        self._rebuild_point_actors(self.current_display_matrix())
         self._plotter.render()
 
     def closeEvent(self, event: Any) -> None:  # noqa: N802 - Qt naming
