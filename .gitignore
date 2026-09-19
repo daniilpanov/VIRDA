@@ -19,3 +19,7 @@ env/
 CMakeLists.txt
 # For me, because I'm using pyenv
 .python-version
+
+# Local planning notes / scratch (never committed)
+TASK.md
+.scratch/
