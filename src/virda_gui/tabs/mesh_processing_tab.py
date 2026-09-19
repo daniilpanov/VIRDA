@@ -449,6 +449,7 @@ class MeshProcessingTab(QWidget):
         if seq != self._generation_seq:
             return
         kind = self._pending_kind
+        source_path = self._mesh_source_path
         self._finish_generation()
         if kind == "ese":
             ese: ESEMesh = result  # type: ignore[assignment]
@@ -456,11 +457,11 @@ class MeshProcessingTab(QWidget):
             self.eseMesh.emit(ese)
             return
         mesh: ScalpMesh = result  # type: ignore[assignment]
-        assert self._mesh_source_path is not None
+        assert source_path is not None
         self._base_mesh = mesh
-        self._base_path = self._mesh_source_path
+        self._base_path = source_path
         self._preview_mesh = None
-        self._base_label.setText(str(self._base_path))
+        self._base_label.setText(str(source_path))
         self._preview_label.setText(f"Base mesh: {len(mesh.vertices)} vertices")
         self.previewMesh.emit(mesh)
         self.status.emit(f"Scalp mesh generated: {len(mesh.vertices)} vertices.")
