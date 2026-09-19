@@ -14,7 +14,11 @@ NIfTI scan ("Generate scalp mesh from NIfTI...") through the pure atoms
 :func:`virda.ops.atoms.generate_scalp_surface` + :func:`virda.ops.atoms.clean`.
 
 The tab is host-agnostic: everything the host needs to render or persist
-travels through Qt signals carrying domain objects.
+travels through Qt signals carrying domain objects.  Scalp-mesh generation
+from NIfTI runs on a dedicated worker thread (see
+:meth:`MeshProcessingTab.generate_from_nifti`); only the pure atoms execute on
+the thread, the resulting :class:`~virda.models.scalp_mesh.ScalpMesh` is
+applied to the tab and signalled to the host on the GUI thread.
 """
 
 from __future__ import annotations
@@ -22,7 +26,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QObject, QThread, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
@@ -63,6 +67,55 @@ _SMOOTHER_ITEMS = [
 ]
 
 
+def generate_mesh_from_nifti(
+    path: str | Path,
+    sealing: SealingOptions,
+    cleaning: CleanOptions,
+) -> ScalpMesh:
+    """Segment *path* into a scalp mesh via the pure atoms.
+
+    Runs :func:`virda.io.importers.nifti.import_nifti`,
+    :func:`virda.ops.atoms.generate_scalp_surface` and
+    :func:`virda.ops.atoms.clean` in sequence.  Qt-free; meant to run on a
+    worker thread (see :class:`_MeshSourceWorker`).
+    """
+    mri = import_nifti(path)
+    surface = generate_scalp_surface(mri, sealing)
+    return clean(surface.mesh, cleaning)
+
+
+class _MeshSourceWorker(QObject):
+    """Generate a scalp mesh off the GUI thread.
+
+    Lives on a dedicated :class:`QThread`; ``done``/``failed`` are delivered
+    back to the main thread because the tab (the receiver) lives there.
+    """
+
+    done = Signal(int, object)  # noqa: N815 - seq, ScalpMesh
+    failed = Signal(int, str)  # noqa: N815 - seq, error message
+
+    def __init__(
+        self,
+        path: Path,
+        sealing: SealingOptions,
+        cleaning: CleanOptions,
+        seq: int,
+    ) -> None:
+        super().__init__()
+        self._path = path
+        self._sealing = sealing
+        self._cleaning = cleaning
+        self._seq = seq
+
+    def run(self) -> None:
+        try:
+            mesh = generate_mesh_from_nifti(self._path, self._sealing, self._cleaning)
+        except Exception as exc:  # noqa: BLE001 - surfaced to the user
+            self.failed.emit(self._seq, str(exc))
+        else:
+            self.done.emit(self._seq, mesh)
+
+
 class MeshProcessingTab(QWidget):
     """In-memory mesh editing with a single explicit "Save to project" step."""
 
@@ -77,6 +130,12 @@ class MeshProcessingTab(QWidget):
         self._base_mesh: ScalpMesh | None = None
         self._base_path: Path | None = None
         self._preview_mesh: ScalpMesh | None = None
+        self._mesh_generation_btn: QPushButton | None = None
+        self._mesh_thread: QThread | None = None
+        self._mesh_worker: _MeshSourceWorker | None = None
+        self._mesh_generation_seq = 0
+        self._mesh_loading = False
+        self._mesh_source_path: Path | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -173,9 +232,9 @@ class MeshProcessingTab(QWidget):
         row.setContentsMargins(4, 4, 4, 4)
         row.setSpacing(6)
 
-        generate_btn = QPushButton("Generate scalp mesh from NIfTI...", box)
-        generate_btn.clicked.connect(self._on_generate_from_nifti)
-        row.addWidget(generate_btn)
+        self._mesh_generation_btn = QPushButton("Generate scalp mesh from NIfTI...", box)
+        self._mesh_generation_btn.clicked.connect(self._on_generate_from_nifti)
+        row.addWidget(self._mesh_generation_btn)
 
         ese_btn = QPushButton("Generate ESE mesh", box)
         ese_btn.clicked.connect(self._on_generate_ese)
@@ -307,7 +366,9 @@ class MeshProcessingTab(QWidget):
         )
 
     def _on_generate_from_nifti(self) -> None:
-        """Segment a NIfTI scan into a scalp mesh using the pure atoms."""
+        """Pick a NIfTI scan and start generating the scalp mesh in the background."""
+        if self._mesh_loading:
+            return
         path, _selected_filter = QFileDialog.getOpenFileName(
             self,
             "Generate scalp mesh from NIfTI",
@@ -316,23 +377,126 @@ class MeshProcessingTab(QWidget):
         )
         if not path:
             return
-        try:
-            mri = import_nifti(path)
-            sealing, cleaning = self._generation_options()
-            surface = generate_scalp_surface(mri, sealing)
-            mesh = clean(surface.mesh, cleaning)
-        except Exception as exc:  # noqa: BLE001 - surfaced to the user
-            QMessageBox.critical(self, "Generate scalp mesh", f"Generation failed:\n{exc}")
+        self.generate_from_nifti(Path(path), self._generation_options(), Path(path).name)
+
+    def generate_from_nifti(
+        self,
+        path: str | Path,
+        options: tuple[SealingOptions, CleanOptions],
+        name: str | None = None,
+    ) -> None:
+        """Segment *path* into a scalp mesh on a background thread.
+
+        The worker thread only runs the pure atoms; the resulting mesh is
+        applied to the tab and emitted to the host on the GUI thread.  A new
+        request retires any in-flight generation; stale results are dropped via
+        the generation counter.
+        """
+        if self._mesh_loading:
             return
+        path = Path(path)
+        self._mesh_generation_seq += 1
+        seq = self._mesh_generation_seq
+        self._cancel_running_generation()
+        self._mesh_loading = True
+        self._mesh_source_path = path
+        self._set_generation_enabled(False)
+
+        sealing, cleaning = options
+        self._mesh_thread = QThread(self)
+        self._mesh_worker = _MeshSourceWorker(path, sealing, cleaning, seq)
+        self._mesh_worker.moveToThread(self._mesh_thread)
+        self._mesh_thread.started.connect(self._mesh_worker.run)
+        self._mesh_worker.done.connect(self._on_mesh_generated)
+        self._mesh_worker.failed.connect(self._on_mesh_generation_failed)
+        self._mesh_thread.start()
+        self.status.emit(f"Generating scalp mesh from {name or path.name}...")
+
+    def _on_mesh_generated(self, seq: int, mesh: ScalpMesh) -> None:
+        if seq != self._mesh_generation_seq:
+            return
+        self._finish_generation()
+        assert self._mesh_source_path is not None
         self._base_mesh = mesh
-        self._base_path = Path(path)
+        self._base_path = self._mesh_source_path
         self._preview_mesh = None
-        self._base_label.setText(str(path))
+        self._base_label.setText(str(self._base_path))
         self._preview_label.setText(f"Base mesh: {len(mesh.vertices)} vertices")
         self.previewMesh.emit(mesh)
-        self.status.emit(
-            f"Scalp mesh generated from {Path(path).name}: {len(mesh.vertices)} vertices."
+        self.status.emit(f"Scalp mesh generated: {len(mesh.vertices)} vertices.")
+
+    def _on_mesh_generation_failed(self, seq: int, message: str) -> None:
+        if seq != self._mesh_generation_seq:
+            return
+        name = (
+            self._mesh_source_path.name
+            if self._mesh_source_path is not None
+            else "NIfTI scan"
         )
+        self._finish_generation()
+        QMessageBox.critical(
+            self, "Generate scalp mesh", f"Generation failed for {name}:\n{message}"
+        )
+        self.status.emit(f"Scalp mesh generation failed: {message}")
+
+    def _finish_generation(self) -> None:
+        """Retire the finished generation thread and re-enable the UI."""
+        # deleteLater() must be posted while the worker's event loop is still
+        # live, otherwise the DeferredDelete event is never processed.
+        if self._mesh_worker is not None:
+            self._mesh_worker.deleteLater()
+        if self._mesh_thread is not None:
+            self._mesh_thread.quit()
+            self._mesh_thread.wait()
+            if self._mesh_thread.isFinished():
+                self._mesh_thread.deleteLater()
+            self._mesh_thread = None
+        self._mesh_worker = None
+        self._mesh_source_path = None
+        self._mesh_loading = False
+        self._set_generation_enabled(True)
+
+    def _cancel_running_generation(self) -> None:
+        """Stop an in-flight generation so a newer request replaces it.
+
+        A previous ``generate_from_nifti`` may still be running its atoms on a
+        worker thread; retiring it here prevents the abandoned thread (and its
+        ``done``/``failed`` emissions) from lingering after a new call.
+        """
+        thread = self._mesh_thread
+        if thread is None:
+            return
+        worker = self._mesh_worker
+        if worker is not None:
+            worker.done.disconnect(self._on_mesh_generated)
+            worker.failed.disconnect(self._on_mesh_generation_failed)
+            # deleteLater() must be posted while the worker's event loop is
+            # still live, otherwise the DeferredDelete event is never processed.
+            worker.deleteLater()
+        thread.quit()
+        thread.wait(3000)
+        # Never delete a thread that is still running (wait timed out);
+        # destroying a live QThread is undefined behaviour.  In that case
+        # the thread keeps running under its parent until it finishes.
+        if thread.isFinished():
+            thread.deleteLater()
+        self._mesh_thread = None
+        self._mesh_worker = None
+        self._mesh_source_path = None
+        self._mesh_loading = False
+        self._set_generation_enabled(True)
+
+    def _set_generation_enabled(self, enabled: bool) -> None:
+        if self._mesh_generation_btn is not None:
+            self._mesh_generation_btn.setEnabled(enabled)
+
+    def shutdown(self) -> None:
+        """Stop the generation thread, if any.
+
+        Safe to call at application teardown for tabs whose ``closeEvent`` is
+        never delivered (children of a main window).
+        """
+        self._cancel_running_generation()
 
     def _on_generate_ese(self) -> None:
         base = self.current_scalp_mesh()
@@ -411,6 +575,7 @@ class MeshProcessingTab(QWidget):
 
     def clear(self) -> None:
         """Forget the in-memory mesh state without touching the project."""
+        self._cancel_running_generation()
         self._base_mesh = None
         self._base_path = None
         self._preview_mesh = None

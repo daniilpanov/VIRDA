@@ -876,3 +876,4 @@ class IdeWindow(QMainWindow):
                 widget.shutdown()
         if self._viewer_widget is not None:
             self._viewer_widget.shutdown()
+        self._mesh_processing_tab.shutdown()
