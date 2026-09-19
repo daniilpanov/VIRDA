@@ -5,8 +5,9 @@ from pathlib import Path
 
 import nibabel as nib
 import numpy as np
+import pytest
 
-from tests.helpers.measurements import make_measurements_file
+from tests.helpers.measurements import make_fiducials, make_measurements_file
 from tests.helpers.pipelines import save_test_fiducials
 from virda.input_parsers import (
     parse_config,
@@ -61,6 +62,18 @@ def test_parse_measurements(tmp_path: Path) -> None:
 
     assert isinstance(result, Electrodes)
     assert [electrode.electrode_id for electrode in result.items] == ["E0", "E1"]
+
+
+def test_parse_measurements_requires_fiducials_for_weights(tmp_path: Path) -> None:
+    path = make_measurements_file(
+        tmp_path / "weighted.json", points=np.zeros((1, 3)), weights={"NAS": 2.0}
+    )
+
+    with pytest.raises(ValueError, match="fiducial_weights"):
+        parse_measurements(path)
+
+    result = parse_measurements(path, fiducials=make_fiducials())
+    assert isinstance(result, Electrodes)
 
 
 def test_parse_mri_volume(tmp_path: Path) -> None:

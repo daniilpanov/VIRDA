@@ -2,6 +2,12 @@
 
 Owns the argument parsing and the ``main()`` console entry point; the actual
 pipeline orchestration lives in :func:`virda.main.run`.
+
+Import invariant: this module must never import :mod:`virda.main` at module
+scope — :mod:`virda.main` re-exports :func:`main` (and helpers) from here at
+its top level, so a module-level ``virda.main`` import would deadlock the
+two packages.  ``virda.main.run`` is therefore imported lazily inside
+:func:`main`, after both modules have been fully loaded.
 """
 
 import argparse
@@ -212,7 +218,3 @@ def main() -> None:
             f"{sum(electrode.is_localized for electrode in electrodes.items)}/"
             f"{len(electrodes.items)} electrodes"
         )
-
-
-if __name__ == "__main__":
-    main()
