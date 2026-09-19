@@ -428,12 +428,17 @@ class SceneData:
     the GUI thread by :meth:`virda_gui.viewer.viewer.ViewerWidget.set_scene`.
     Contains only data objects (NumPy arrays and PyVista meshes), never actors
     or windows, so the collection step is testable without a display.
+    ``affine`` (post-downsampling) and ``cras_offset`` are retained so the GUI
+    thread can transform the scene into alternative coordinate frames without
+    reloading the volume.
     """
 
     volume: pv.ImageData | None = None
     scene_mesh: pv.PolyData | None = None
     mm_scene: bool = True
     mesh_opacity: float = 0.6
+    affine: np.ndarray | None = None
+    cras_offset: np.ndarray | None = None
     hi_clim: tuple[float, float] | None = None
     fiducial_points: np.ndarray | None = None
     fiducial_labels: list[str] = field(default_factory=list)
@@ -556,6 +561,8 @@ def collect_scene_data(
         scene_mesh=scene_mesh,
         mm_scene=mm_scene,
         mesh_opacity=mesh_opacity,
+        affine=affine,
+        cras_offset=cras_offset,
         hi_clim=hi_clim,
         fiducial_points=scene_fiducials,
         fiducial_labels=fiducial_labels,
