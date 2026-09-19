@@ -35,6 +35,7 @@ from virda.io.fiducial_helpers import load_fiducials, save_fiducials
 from virda.models.fiducial import Fiducial, Fiducials
 from virda_gui.constants import DEFAULT_FIDUCIALS_FILENAME, DEFAULT_MEASUREMENTS_FILENAME
 from virda_gui.state import AppState
+from virda_gui.viewer.frames import FRAME_IDS, frame_label
 
 FIDUCIAL_HEADERS = ["ID", "Name", "X", "Y", "Z", "Method", "Weight"]
 COL_ID, COL_NAME, COL_X, COL_Y, COL_Z, COL_METHOD, COL_WEIGHT = range(7)
@@ -115,6 +116,22 @@ class FiducialsEditor(QWidget):
         header.setSectionResizeMode(COL_NAME, QHeaderView.ResizeMode.Stretch)
         self._table.cellChanged.connect(self._on_cell_changed)
 
+        self._frame_row = QWidget(self)
+        self._frame_layout = QHBoxLayout(self._frame_row)
+        self._frame_layout.setContentsMargins(0, 0, 0, 0)
+        self._frame_layout.setSpacing(6)
+        self._frame_layout.addWidget(QLabel("Coordinate system:", self))
+        self._frame_combo = QComboBox(self._frame_row)
+        for frame_id in FRAME_IDS:
+            self._frame_combo.addItem(frame_label(frame_id), frame_id)
+        self._frame_combo.setCurrentIndex(FRAME_IDS.index(FRAME_IDS[0]))
+        self._frame_combo.currentIndexChanged.connect(self._on_frame_selected)
+        self._frame_layout.addWidget(self._frame_combo)
+        self._frame_layout.addWidget(
+            QLabel("The X/Y/Z columns above are interpreted in this system.", self._frame_row)
+        )
+        self._frame_layout.addStretch(1)
+
         add_btn = QPushButton("Add row")
         add_btn.clicked.connect(self.add_row)
         remove_btn = QPushButton("Remove row")
@@ -137,6 +154,7 @@ class FiducialsEditor(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
+        layout.addWidget(self._frame_row)
         layout.addWidget(self._table, 1)
         layout.addLayout(buttons)
 
@@ -165,6 +183,20 @@ class FiducialsEditor(QWidget):
     def _on_cell_changed(self, _row: int, _col: int) -> None:
         if not self._loading:
             self.rowsChanged.emit()
+
+    def _on_frame_selected(self) -> None:
+        if not self._loading:
+            self.rowsChanged.emit()
+
+    def input_frame(self) -> str:
+        """The coordinate system the X/Y/Z columns are interpreted in."""
+        frame = self._frame_combo.currentData()
+        return frame if isinstance(frame, str) else FRAME_IDS[0]
+
+    def set_input_frame(self, frame: str) -> None:
+        """Select the input coordinate system, ignoring unknown frames."""
+        if frame in FRAME_IDS:
+            self._frame_combo.setCurrentIndex(FRAME_IDS.index(frame))
 
     # ---- table content ----
 
@@ -702,6 +734,16 @@ class EditorsTab(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.addWidget(splitter)
+
+    @property
+    def fiducials(self) -> FiducialsEditor:
+        """The live fiducials editor widget."""
+        return self._fiducials
+
+    @property
+    def measurements(self) -> MeasurementsEditor:
+        """The live measurements editor widget."""
+        return self._measurements
 
     def _default_dir(self) -> str | None:
         return self._state.last_project_dir
