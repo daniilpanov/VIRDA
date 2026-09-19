@@ -112,4 +112,4 @@ def test_unknown_stage1_function_raises(synthetic_nifti_path: Path) -> None:
 def test_stage1_names_list_available_functions(synthetic_nifti_path: Path) -> None:
     pipeline = build_pipeline(synthetic_nifti_path)
 
-    assert set(pipeline.stage1_names) == {"clean", "smooth"}
+    assert set(pipeline.stage1_names) == {"clean", "smooth", "decimate"}

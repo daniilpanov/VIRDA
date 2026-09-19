@@ -35,11 +35,11 @@ class QuadraticDecimator(MeshPostprocessor):
                 ) from None
 
     def _process(self, mesh: ScalpMesh) -> ScalpMesh:
-        if self._density_percent >= 100.0 or mesh.faces.shape[0] == 0:
-            logger.info(
-                "Mesh density 100%%: keeping the full mesh (%d vertices)",
-                len(mesh.vertices),
-            )
+        if mesh.faces.shape[0] == 0:
+            logger.info("Mesh has no faces, nothing to decimate")
+            return mesh
+        if self._density_percent >= 100.0:
+            logger.info("Mesh density 100%%: keeping the full mesh (%d vertices)", len(mesh.vertices))
             return mesh
 
         target_faces = max(1, round(mesh.faces.shape[0] * self._density_percent / 100.0))
