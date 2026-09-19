@@ -314,15 +314,63 @@ def test_frame_to_frame_matrix_requires_loaded_params() -> None:
 
 
 def test_generate_and_clean_scalp_mesh_from_mini_nifti(tmp_path: Path) -> None:
-    from virda.io.importers.nifti import import_nifti
-    from virda.ops.atoms import clean, generate_scalp_surface
+    from virda_gui.tabs.mesh_processing_tab import generate_mesh_from_nifti
 
-    mri = import_nifti(_write_mini_nifti(tmp_path / "mini.nii.gz"))
-    surface = generate_scalp_surface(mri, SealingOptions(seal_enabled=True, seal_radius=1))
-    mesh = clean(surface.mesh, CleanOptions(min_component_vertices=1, merge_digits=7))
+    mesh = generate_mesh_from_nifti(
+        _write_mini_nifti(tmp_path / "mini.nii.gz"),
+        SealingOptions(seal_enabled=True, seal_radius=1),
+        CleanOptions(min_component_vertices=1, merge_digits=7),
+    )
 
     assert len(mesh.vertices) > 0
     assert mesh.faces.size > 0
+
+
+def test_mesh_generation_is_asynchronous_offscreen(tmp_path: Path) -> None:
+    """generate_from_nifti returns immediately and applies the mesh when done."""
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QMessageBox
+
+    from virda_gui.tabs.mesh_processing_tab import MeshProcessingTab
+
+    app = _offscreen_app()
+    # Failures must not open a modal box and deadlock the test.
+    app.setStyleSheet("")
+    critical_messages = []
+    original_critical = QMessageBox.critical
+
+    def _noop_critical(*_args, **_kwargs):
+        critical_messages.append(_args)
+
+    QMessageBox.critical = _noop_critical
+    tab = MeshProcessingTab(state=AppState())
+    try:
+        path = _write_mini_nifti(tmp_path / "mini.nii.gz")
+        received = []
+        tab.previewMesh.connect(received.append)
+
+        tab.generate_from_nifti(
+            path,
+            (
+                SealingOptions(seal_enabled=True, seal_radius=1),
+                CleanOptions(min_component_vertices=1, merge_digits=7),
+            ),
+            path.name,
+        )
+
+        assert tab._mesh_loading is True  # async: request is still in flight
+        assert tab._mesh_thread is not None
+        assert tab._mesh_thread.isRunning()
+
+        assert QTest.qWaitUntil(lambda: tab._base_mesh is not None, 20000)
+        assert len(received) == 1
+        assert len(tab._base_mesh.vertices) > 0
+        assert not tab._mesh_loading
+    finally:
+        QMessageBox.critical = original_critical
+        tab.shutdown()
+        tab.close()
+        app.quit()
 
 
 # ----------------------------------------------------------------------
