@@ -10,7 +10,7 @@ any stage can be reproduced exactly from the project alone:
 
 ```
 <project_dir>/
-├── input/              # source MRI NIfTI copy + merged pipeline configuration + fiducials
+├── input/              # canonical input copies: MRI, config, measurements, fiducials
 ├── segmentation/       # head segmentation mask
 ├── mesh/               # final scalp mesh, arrays and per-step versions
 ├── ese/                # Stage 2 output: electrode-skin-entrance surface
@@ -22,11 +22,17 @@ viewer.html             # optional: self-contained HTML viewer exported by virda
 
 ## `input/`
 
-| File                   | Description                                                                  |
-|------------------------|------------------------------------------------------------------------------|
-| `<source_mri>.nii.gz`  | Byte-for-byte copy of the source MRI NIfTI.                                  |
-| `pipeline_config.json` | Full merged `Config` dump (`model_dump(mode="json")`); written on every run. |
-| `fiducials.json`       | List of fiducial coordinates.                                                |
+Canonical input files live here. `config.json`/`pipeline_config.json` and `measurements.json` are the
+locations the GUI prefills the *Run Pipeline* form from and role-imports into.
+`pipeline_config.json` is written by the pipeline on every run.
+
+| File                                 | Description                                                                  |
+|--------------------------------------|------------------------------------------------------------------------------|
+| `<source_mri>.nii.gz`                | Byte-for-byte copy of the source MRI NIfTI.                                  |
+| `config.json`/`pipeline_config.json` | Optional user-supplied pipeline configuration (a partial `Config` JSON). This is where the GUI loads the run *Config file* from. |
+| `measurements.json`                  | Optional Stage 3 measurements input (see format below). This is where the GUI loads the run *Measurements* from. |
+| `fiducials.json`                     | List of fiducial coordinates; the GUI *Fiducials* input.                     |
+| `pipeline_config.json`               | Full merged `Config` dump (`model_dump(mode="json")`); written on every run. |
 
 Example `pipeline_config.json` (values follow the `Config` defaults):
 
@@ -88,6 +94,21 @@ Example `fiducials.json` — fiducial table:
 When an MNE ``coordsystem.json`` was loaded as an input config file, its parsed
 contents are embedded here under `"coordsystem"` (fiducial positions, electrode
 count / offset / reference) instead of `null`.
+
+Example `measurements.json` (the Stage 3 input):
+
+```json
+{
+  "electrodes": [
+    {"electrode_id": "Fz", "measured_distances": {"NAS": 120.5, "LPA": 131.2, "RPA": 142.8}}
+  ],
+  "fiducial_weights": {"NAS": 1.5}
+}
+```
+
+- `electrode_id` is optional; sequential ``E001`` ids are assigned when absent.
+- `fiducial_weights` is optional; when present it overrides the weights of the
+  fiducials store for the localization solver.
 
 ## `segmentation/`
 

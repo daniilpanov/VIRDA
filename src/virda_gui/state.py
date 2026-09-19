@@ -1,8 +1,8 @@
 """Shared application state object.
 
 ``AppState`` is the single mutable state object of the GUI: instead of
-scattered ad-hoc instance attributes on ``virda_gui.app.VirdaApp``, every
-view/worker touches the same dataclass so ownership is explicit.
+scattered ad-hoc instance attributes on ``virda_gui.main_window.IdeWindow``,
+every view/worker touches the same dataclass so ownership is explicit.
 """
 
 import queue
@@ -17,8 +17,9 @@ from virda_gui.widgets import ElectrodeGroupRow
 class AppState:
     """Mutable state shared across the GUI tabs and background workers.
 
-    Owned by :class:`virda_gui.app.VirdaApp` and passed to any component that
-    must read or update it (tabs, pipeline runner, preview worker).
+    Owned by :class:`virda_gui.main_window.IdeWindow` and passed to any
+    component that must read or update it (tabs, pipeline runner, preview
+    worker).
     """
 
     log_queue: queue.Queue[str | None] = field(default_factory=queue.Queue)

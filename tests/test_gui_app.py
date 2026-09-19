@@ -1,22 +1,54 @@
 """Unit tests for the PySide6 application logic that does not need a display.
 
-These tests exercise the pure helper logic of :mod:`virda_gui.app` by calling
+These tests exercise the pure helper logic of :mod:`virda_gui` by calling
 the methods unbound against lightweight stubs, so no ``QApplication`` is
 created (CI runners have no display).  The one exception is the offscreen
-smoke test below, which constructs the real :class:`VirdaApp` to catch signal
+smoke tests, which construct the real :class:`IdeWindow` to catch signal
 wiring regressions that the stubs cannot.
 """
 
+import json
 import os
+from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
 import pytest
-from PySide6.QtWidgets import QTreeWidgetItem
+from PySide6.QtCore import QSettings, Signal
+from PySide6.QtWidgets import QWidget
 
 from virda_gui.constants import ADVANCED_FIELD_DEFAULTS, CONFIG_KEY_TO_ADVANCED
+from virda_gui.dialogs.project_dialog import (
+    ProjectStartDialog,
+    ask_create_project_folder,
+)
+from virda_gui.main_window import IdeWindow
+from virda_gui.preferences import Preferences
 from virda_gui.tabs.config_tab import ConfigTab
-from virda_gui.tabs.results_tab import ResultsTab
+
+
+def _make_prefs(tmp_path: Path) -> Preferences:
+    """Preferences backed by an isolated INI file so user config stays clean."""
+    return Preferences(QSettings(str(tmp_path / "prefs.ini"), QSettings.Format.IniFormat))
+
+
+class _StubViewer(QWidget):
+    """Stand-in for ``ViewerWidget`` used by the offscreen file-tab tests."""
+
+    sceneLoaded = Signal(object)  # noqa: N815
+    sceneFailed = Signal(str)  # noqa: N815
+
+    def __init__(self, log: object | None = None) -> None:
+        super().__init__()
+        self.log = log
+        self.load_calls: list[dict[str, str]] = []
+        self.shut_down = False
+
+    def load(self, **kwargs: str) -> None:
+        self.load_calls.append(dict(kwargs))
+
+    def shutdown(self) -> None:
+        self.shut_down = True
 
 
 class _FakeRow:
@@ -81,114 +113,18 @@ def test_ensure_stage3_group_already_present(tmp_path) -> None:
     assert ConfigTab.ensure_stage3_electrodes_group(cast("ConfigTab", stub)) is None
 
 
-def test_viewer_widget_importable_from_app() -> None:
+def test_viewer_widget_importable_from_main_window() -> None:
     """The 3D viewer tab embeds ``ViewerWidget`` from ``virda_gui.viewer.viewer``."""
-    import virda_gui.app as app_module
+    import virda_gui.main_window as main_window_module
     from virda_gui.viewer.viewer import ViewerWidget
 
-    assert vars(app_module)["ViewerWidget"] is ViewerWidget
+    assert vars(main_window_module)["ViewerWidget"] is ViewerWidget
 
 
-class _FakeViewer:
-    def __init__(self) -> None:
-        self.load_calls: list[dict[str, str]] = []
+def test_ide_window_runs_pipeline_tab_offscreen(tmp_path: Path) -> None:
+    """Opening a project shows the Run Pipeline tab; the sidebar can reopen it.
 
-    def load(self, **kwargs: str) -> None:
-        self.load_calls.append(dict(kwargs))
-
-
-class _FakeStack:
-    def setCurrentWidget(self, widget: object) -> None:  # noqa: N802 - Qt naming
-        self.current = widget
-
-
-class _FakeItem:
-    def __init__(self, path: object) -> None:
-        self._path = path
-
-    def data(self, _role: object, _value: object) -> object:
-        return self._path
-
-
-def _double_click_stub(viewer: _FakeViewer) -> SimpleNamespace:
-    return SimpleNamespace(
-        _results_viewer_widget=viewer,
-        _preview_stack=_FakeStack(),
-        _preview_load_seq=0,
-        _preview_worker=None,
-        _ensure_results_viewer=lambda: viewer,
-    )
-
-
-def test_double_click_mesh_loads_interactive_preview(tmp_path) -> None:
-    mesh = tmp_path / "final_mesh.ply"
-    mesh.write_bytes(b"ply\n")
-    viewer = _FakeViewer()
-    stub = _double_click_stub(viewer)
-    item = _FakeItem(mesh)
-
-    ResultsTab._on_results_artifact_double_clicked(
-        cast("ResultsTab", stub),
-        cast("QTreeWidgetItem", item),
-        0,
-    )
-
-    assert viewer.load_calls == [{"mesh_path": str(mesh)}]
-    assert stub._preview_stack.current is viewer
-
-
-def test_double_click_nifti_loads_interactive_preview(tmp_path) -> None:
-    nifti = tmp_path / "head.nii.gz"
-    nifti.write_bytes(b"\x00")
-    viewer = _FakeViewer()
-    stub = _double_click_stub(viewer)
-    item = _FakeItem(nifti)
-
-    ResultsTab._on_results_artifact_double_clicked(
-        cast("ResultsTab", stub),
-        cast("QTreeWidgetItem", item),
-        0,
-    )
-
-    assert viewer.load_calls == [{"nifti_path": str(nifti)}]
-
-
-def test_double_click_non_visual_file_does_not_load(tmp_path) -> None:
-    csv_file = tmp_path / "electrode_coords.csv"
-    csv_file.write_text("id\n1\n", encoding="utf-8")
-    viewer = _FakeViewer()
-    stub = _double_click_stub(viewer)
-    item = _FakeItem(csv_file)
-
-    ResultsTab._on_results_artifact_double_clicked(
-        cast("ResultsTab", stub),
-        cast("QTreeWidgetItem", item),
-        0,
-    )
-
-    assert viewer.load_calls == []
-
-
-def test_double_click_directory_does_not_load(tmp_path) -> None:
-    directory = tmp_path / "mesh"
-    directory.mkdir()
-    viewer = _FakeViewer()
-    stub = _double_click_stub(viewer)
-    item = _FakeItem(directory)
-
-    ResultsTab._on_results_artifact_double_clicked(
-        cast("ResultsTab", stub),
-        cast("QTreeWidgetItem", item),
-        0,
-    )
-
-    assert viewer.load_calls == []
-
-
-def test_virda_app_constructs_offscreen() -> None:
-    """The full widget tree builds, so every connected slot exists.
-
-    Builds the real ``VirdaApp`` under the offscreen Qt platform to catch
+    Builds the real ``IdeWindow`` under the offscreen Qt platform to catch
     ``AttributeError`` wiring regressions the stub-based tests cannot see
     (e.g. a ``Signal.connect`` target that was dropped during a refactor).
     Skips when the headless Qt platform is unavailable.
@@ -199,16 +135,331 @@ def test_virda_app_constructs_offscreen() -> None:
 
     try:
         from PySide6.QtWidgets import QApplication
-
-        from virda_gui.app import VirdaApp
     except Exception as exc:  # pragma: no cover - depends on local Qt install
         pytest.skip(f"Qt platform unavailable: {exc}")
 
     app = QApplication.instance() or QApplication([])
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
     try:
-        window = VirdaApp()
-        assert window._notebook.count() == 3
-        assert window._notebook.isTabEnabled(window._viewer_tab_index) is False
+        assert window._tabs.count() == 0
+
+        project = tmp_path / "sample-project"
+        (project / "mesh").mkdir(parents=True)
+        (project / "mesh" / "final_mesh.ply").write_bytes(b"ply\n")
+
+        window.open_project(project)
+        assert window._tabs.count() == 1
+        assert window._tabs.tabText(0) == "Run Pipeline"
+        assert window._config_tab.project_dir() == str(project)
+        assert window._sidebar._tree.topLevelItemCount() == 1
+
+        window._close_tab(0)
+        assert window._tabs.count() == 0
+        window._sidebar.runPipelineRequested.emit()
+        assert window._tabs.count() == 1
+        assert window._tabs.tabText(0) == "Run Pipeline"
+
+        window.close_project()
+        assert window._project is None
+        assert window._tabs.count() == 0
+    finally:
+        window._on_close()
+        app.quit()
+
+
+def test_ide_window_constructs_and_manages_project_offscreen(
+    tmp_path: Path,
+) -> None:
+    """IdeWindow builds, opens/closes a project and closes tabs."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    if os.environ.get("PYVISTA_OFF_SCREEN") is None:
+        os.environ["PYVISTA_OFF_SCREEN"] = "true"
+
+    try:
+        from PySide6.QtWidgets import QApplication, QWidget
+    except Exception as exc:  # pragma: no cover - depends on local Qt install
+        pytest.skip(f"Qt platform unavailable: {exc}")
+
+    app = QApplication.instance() or QApplication([])
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
+    try:
+        assert window.project() is None
+        assert window._sidebar.project is None
+        assert window._sidebar._tree.topLevelItemCount() == 0
+
+        project = tmp_path / "sample-project"
+        (project / "mesh").mkdir(parents=True)
+        (project / "mesh" / "final_mesh.ply").write_bytes(b"ply\n")
+        (project / "note.txt").write_text("x", encoding="utf-8")
+
+        window.open_project(project)
+        assert window.project() == project
+        assert window._sidebar.project == project
+        assert window._sidebar._tree.topLevelItemCount() == 1
+        root = window._sidebar._tree.topLevelItem(0)
+        assert root.text(0) == "sample-project"
+        assert root.childCount() == 2  # mesh group + loose note.txt
+
+        tab = QWidget()
+        window._tabs.addTab(tab, "Untitled")
+        assert window._tabs.count() == 2  # run pipeline tab + embedded test tab
+        window._close_tab(1)
+        assert window._tabs.count() == 1
+        assert window.project() == project
+
+        window.close_project()
+        assert window.project() is None
+        assert window._sidebar._tree.topLevelItemCount() == 0
+    finally:
+        window.close()
+        app.quit()
+
+
+def test_ide_window_does_not_auto_restore_offscreen(tmp_path: Path) -> None:
+    """A fresh IdeWindow starts empty — auto-restore now lives in the dialog."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    if os.environ.get("PYVISTA_OFF_SCREEN") is None:
+        os.environ["PYVISTA_OFF_SCREEN"] = "true"
+
+    try:
+        from PySide6.QtWidgets import QApplication
+    except Exception as exc:  # pragma: no cover - depends on local Qt install
+        pytest.skip(f"Qt platform unavailable: {exc}")
+
+    app = QApplication.instance() or QApplication([])
+    project = tmp_path / "remembered"
+    (project / "note.txt").parent.mkdir(parents=True)
+    (project / "note.txt").write_text("x", encoding="utf-8")
+
+    prefs = _make_prefs(tmp_path)
+    first = IdeWindow(prefs=prefs)
+    try:
+        first.open_project(project)
+    finally:
+        first.close()
+    assert project in prefs.recent_projects()
+
+    second = IdeWindow(prefs=prefs)
+    try:
+        assert second.project() is None
+    finally:
+        second.close()
+    app.quit()
+
+
+def test_project_start_dialog_picks_path_offscreen(tmp_path: Path) -> None:
+    """The startup dialog returns the project the user accepted."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    if os.environ.get("PYVISTA_OFF_SCREEN") is None:
+        os.environ["PYVISTA_OFF_SCREEN"] = "true"
+
+    try:
+        from PySide6.QtWidgets import QApplication
+    except Exception as exc:  # pragma: no cover - depends on local Qt install
+        pytest.skip(f"Qt platform unavailable: {exc}")
+
+    app = QApplication.instance() or QApplication([])
+    prefs = _make_prefs(tmp_path)
+    chosen = tmp_path / "published"
+    (chosen / "note.txt").parent.mkdir(parents=True)
+    (chosen / "note.txt").write_text("x", encoding="utf-8")
+    prefs.note_project_opened(chosen)
+
+    dialog = ProjectStartDialog(prefs=prefs)
+    try:
+        dialog._accept(chosen)
+        assert dialog.project() == chosen
+    finally:
+        dialog.close()
+    app.quit()
+
+
+def test_ask_create_project_folder_warns_if_non_empty(tmp_path: Path, monkeypatch) -> None:
+    """Creating a project in a non-empty folder asks before opening it."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    if os.environ.get("PYVISTA_OFF_SCREEN") is None:
+        os.environ["PYVISTA_OFF_SCREEN"] = "true"
+
+    try:
+        from PySide6.QtWidgets import QApplication
+    except Exception as exc:  # pragma: no cover - depends on local Qt install
+        pytest.skip(f"Qt platform unavailable: {exc}")
+
+    from PySide6.QtWidgets import QFileDialog, QMessageBox
+
+    app = QApplication.instance() or QApplication([])
+    target = tmp_path / "wanted"
+    (target / "existing.txt").parent.mkdir(parents=True)
+    (target / "existing.txt").write_text("y", encoding="utf-8")
+
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a, **k: str(target))
+
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+    assert ask_create_project_folder(parent=None) == target
+
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.No)
+    assert ask_create_project_folder(parent=None) is None
+    app.quit()
+
+
+def test_ide_window_opens_project_files_in_tabs_offscreen(tmp_path: Path, monkeypatch) -> None:
+    """Double-clicking a sidebar artifact opens a viewer/preview tab."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    if os.environ.get("PYVISTA_OFF_SCREEN") is None:
+        os.environ["PYVISTA_OFF_SCREEN"] = "true"
+
+    import virda_gui.main_window as main_window_module
+
+    monkeypatch.setattr(main_window_module, "ViewerWidget", _StubViewer)
+
+    try:
+        from PySide6.QtWidgets import QApplication
+    except Exception as exc:  # pragma: no cover - depends on local Qt install
+        pytest.skip(f"Qt platform unavailable: {exc}")
+
+    app = QApplication.instance() or QApplication([])
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
+    try:
+        project = tmp_path / "sample-project"
+        mesh = project / "mesh" / "final_mesh.ply"
+        mesh.parent.mkdir(parents=True)
+        mesh.write_bytes(b"ply\n")
+        (project / "note.txt").write_text("hello", encoding="utf-8")
+        window.open_project(project)
+
+        window._sidebar.fileActivated.emit(mesh)
+        mesh_tab = window._tabs.widget(window._tabs.count() - 1)
+        assert isinstance(mesh_tab, _StubViewer)
+        assert mesh_tab.load_calls == [{"mesh_path": str(mesh)}]
+
+        window._sidebar.fileActivated.emit(mesh)
+        assert window._tabs.count() == 2  # run pipeline tab + one mesh tab
+
+        window._sidebar.fileActivated.emit(project / "note.txt")
+        from virda_gui.tabs.preview_tab import PreviewTab
+
+        preview_index = next(
+            i for i in range(window._tabs.count()) if isinstance(window._tabs.widget(i), PreviewTab)
+        )
+        assert window._tabs.tabText(preview_index) == "note.txt"
+
+        window._close_tab(preview_index)
+        assert not any(
+            isinstance(window._tabs.widget(i), PreviewTab) for i in range(window._tabs.count())
+        )
+
+        mesh_index = next(
+            i
+            for i in range(window._tabs.count())
+            if isinstance(window._tabs.widget(i), _StubViewer)
+        )
+        window._close_tab(mesh_index)
+        assert mesh_tab.shut_down
+    finally:
+        window._on_close()
+        app.quit()
+
+
+def test_ide_window_prefills_run_tab_from_artifacts_offscreen(
+    tmp_path: Path,
+) -> None:
+    """Opening a project fills the Run Pipeline fields from its artifacts."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    if os.environ.get("PYVISTA_OFF_SCREEN") is None:
+        os.environ["PYVISTA_OFF_SCREEN"] = "true"
+
+    try:
+        from PySide6.QtWidgets import QApplication
+    except Exception as exc:  # pragma: no cover - depends on local Qt install
+        pytest.skip(f"Qt platform unavailable: {exc}")
+
+    app = QApplication.instance() or QApplication([])
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
+    try:
+        project = tmp_path / "ready-project"
+        inputs = project / "input"
+        inputs.mkdir(parents=True)
+        (inputs / "head.nii.gz").write_bytes(b"\x00")
+        (inputs / "fiducials.json").write_text('{"fiducials": []}', encoding="utf-8")
+        (inputs / "measurements.json").write_text("{}", encoding="utf-8")
+        (inputs / "config.json").write_text(
+            json.dumps(
+                {
+                    "nifti_path": str(inputs / "head.nii.gz"),
+                    "project_dir": str(project),
+                }
+            ),
+            encoding="utf-8",
+        )
+        (inputs / "pipeline_config.json").write_text(
+            json.dumps(
+                {
+                    "nifti_path": str(inputs / "head.nii.gz"),
+                    "project_dir": str(project),
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        window.open_project(project)
+
+        assert window._config_tab.nifti_path() == str(inputs / "head.nii.gz")
+        assert window._config_tab.project_dir() == str(project)
+        assert window._config_tab.measurements.get() == str(inputs / "measurements.json")
+        assert window._config_tab._fiducials.get() == str(inputs / "fiducials.json")
+        assert window._config_tab._config_file.get() == str(inputs / "pipeline_config.json")
+    finally:
+        window._on_close()
+        app.quit()
+
+
+def test_perform_import_copies_into_project_and_refreshes_sidebar(
+    tmp_path: Path,
+) -> None:
+    """Importing a role copies the file and repopulates the sidebar tree."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    if os.environ.get("PYVISTA_OFF_SCREEN") is None:
+        os.environ["PYVISTA_OFF_SCREEN"] = "true"
+
+    from virda_gui.importing import ROLE_REGISTRY
+
+    role = next(role for role in ROLE_REGISTRY if role.key == "mesh")
+
+    try:
+        from PySide6.QtWidgets import QApplication
+    except Exception as exc:  # pragma: no cover - depends on local Qt install
+        pytest.skip(f"Qt platform unavailable: {exc}")
+
+    app = QApplication.instance() or QApplication([])
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
+    try:
+        assert window._perform_import(role, tmp_path / "mesh.ply") is None  # no project yet
+
+        project = tmp_path / "sample-project"
+        project.mkdir()
+        window.open_project(project)
+        source = tmp_path / "final_mesh.ply"
+        source.write_bytes(b"ply\n")
+
+        target = window._perform_import(role, source)
+
+        assert target == project / "mesh" / "final_mesh.ply"
+        assert target.read_bytes() == b"ply\n"
+        root = window._sidebar._tree.topLevelItem(0)
+        assert root is not None
+        mesh_group = None
+        for i in range(root.childCount()):
+            child = root.child(i)
+            if child is not None and child.text(0) == "mesh":
+                mesh_group = child
+                break
+        assert mesh_group is not None
+        assert mesh_group.childCount() == 1
     finally:
         window._on_close()
         app.quit()

@@ -277,6 +277,47 @@ class ConfigTab(QWidget):
     def project_dir(self) -> str:
         return self._project_dir.get().strip()
 
+    def set_project_dir(self, project: str | Path) -> None:
+        self._project_dir.set(str(project))
+
+    def prefill_from_project(self, project: str | Path) -> None:
+        """Fill the run fields from the project's canonical input artifacts.
+
+        The nifti scan, fiducials, measurements and config JSON live under the
+        project's ``input/`` directory; the config file is set last so its
+        loader back-fills any still-empty fields from the saved config.
+        """
+        root = Path(project)
+        self.set_project_dir(root)
+
+        nifti = next(iter(sorted(root.glob("input/*.nii.gz"))), None)
+        if nifti is None:
+            nifti = next(iter(sorted(root.glob("input/*.nii"))), None)
+        if nifti is not None:
+            self._nifti.set(str(nifti))
+
+        fiducials = root / "input" / "fiducials.json"
+        if fiducials.is_file():
+            self._fiducials.set(str(fiducials))
+
+        measurements = root / "input" / "measurements.json"
+        if measurements.is_file():
+            self.measurements.set(str(measurements))
+
+        config = next(
+            (
+                candidate
+                for candidate in (
+                    root / "input" / "pipeline_config.json",
+                    root / "input" / "config.json",
+                )
+                if candidate.is_file()
+            ),
+            None,
+        )
+        if config is not None:
+            self._config_file.set(str(config))
+
     def collect_config(self) -> Config:
         nifti = self._nifti.get() or None
         project = self._project_dir.get() or None
