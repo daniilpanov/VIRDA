@@ -335,12 +335,10 @@ def test_mesh_generation_is_asynchronous_offscreen(tmp_path: Path) -> None:
 
     app = _offscreen_app()
     # Failures must not open a modal box and deadlock the test.
-    app.setStyleSheet("")
-    critical_messages = []
     original_critical = QMessageBox.critical
 
     def _noop_critical(*_args, **_kwargs):
-        critical_messages.append(_args)
+        pass
 
     QMessageBox.critical = _noop_critical
     tab = MeshProcessingTab(state=AppState())
@@ -358,14 +356,55 @@ def test_mesh_generation_is_asynchronous_offscreen(tmp_path: Path) -> None:
             path.name,
         )
 
-        assert tab._mesh_loading is True  # async: request is still in flight
-        assert tab._mesh_thread is not None
-        assert tab._mesh_thread.isRunning()
+        assert tab._generation_busy is True  # async: request is still in flight
+        assert tab._generation_thread is not None
+        assert tab._generation_thread.isRunning()
 
         assert QTest.qWaitUntil(lambda: tab._base_mesh is not None, 20000)
         assert len(received) == 1
         assert len(tab._base_mesh.vertices) > 0
-        assert not tab._mesh_loading
+        assert not tab._generation_busy
+    finally:
+        QMessageBox.critical = original_critical
+        tab.shutdown()
+        tab.close()
+        app.quit()
+
+
+def test_ese_generation_is_asynchronous_offscreen(tmp_path: Path) -> None:
+    """generate_ese also runs on a worker thread and emits the ESE mesh."""
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QMessageBox
+
+    from virda_gui.tabs.mesh_processing_tab import (
+        MeshProcessingTab,
+        generate_mesh_from_nifti,
+    )
+
+    app = _offscreen_app()
+    original_critical = QMessageBox.critical
+
+    def _noop_critical(*_args, **_kwargs):
+        pass
+
+    QMessageBox.critical = _noop_critical
+    tab = MeshProcessingTab(state=AppState())
+    try:
+        path = _write_mini_nifti(tmp_path / "mini.nii.gz")
+        base = generate_mesh_from_nifti(
+            path,
+            SealingOptions(seal_enabled=True, seal_radius=1),
+            CleanOptions(min_component_vertices=1, merge_digits=7),
+        )
+        ese_received = []
+        tab.eseMesh.connect(ese_received.append)
+
+        tab.generate_ese(base, 2.0)
+
+        assert tab._generation_busy is True  # async
+        assert QTest.qWaitUntil(lambda: len(ese_received) == 1, 20000)
+        assert len(ese_received[0].vertices) > 0
+        assert not tab._generation_busy
     finally:
         QMessageBox.critical = original_critical
         tab.shutdown()
