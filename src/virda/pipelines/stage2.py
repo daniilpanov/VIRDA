@@ -11,6 +11,7 @@ from virda.models.ese_mesh import ESEMesh
 from virda.models.scalp_mesh import ScalpMesh
 from virda.pipeline import PipelineController
 from virda.pipeline_context import PipelineContext
+from virda.pipelines.ese import ESEPipeline, ESEPipelineContract
 
 from .helpers import get_stage_logger
 
@@ -35,12 +36,16 @@ class Stage2PipelineBuilder:
         self._scalp_mesh = scalp_mesh
         self._project_dir = Path(project_dir)
         self._logger = logger
+        self._ese_pipeline: ESEPipeline | None = None
 
     @classmethod
     def from_config(cls, config: Config, scalp_mesh: ScalpMesh) -> Self:
         """Build a Stage 2 pipeline configured from the merged ``config``.
 
         Requires that ESE is fully configured (``config.to_ese_config()`` is not None).
+        The ESE mesh generation is delegated to the atomic ESE pipeline
+        (:class:`~virda.pipelines.ese.ESEPipeline`); its options are taken from
+        the stage-2 configuration, preserving the previous default behaviour.
         """
         ese_config = config.to_ese_config()
         if ese_config is None:
@@ -63,14 +68,52 @@ class Stage2PipelineBuilder:
             ese_offset_mm=ese_config.ese_offset_mm,
         )
 
-        return cls(
+        ese_pipeline = ESEPipeline(
+            contract=ESEPipelineContract(
+                scalp_mesh=scalp_mesh,
+                ese_offset_mm=ese_config.ese_offset_mm,
+                project_dir=project_dir_path,
+                neighborhood_radius_mm=stage2_config.neighborhood_radius_mm,
+                k_neighbors=stage2_config.k_neighbors,
+                use_weighted_pca=stage2_config.use_weighted_pca,
+                pca_sigma_mm=stage2_config.pca_sigma_mm,
+                min_neighbors=stage2_config.min_neighbors,
+            ),
+            logger=logger,
+        )
+
+        builder = cls(
             ese_builder=ese_builder,
             scalp_mesh=scalp_mesh,
             project_dir=project_dir_path,
             logger=logger,
         )
+        builder._ese_pipeline = ese_pipeline
+        return builder
 
     def build(self) -> PipelineController:
+        if self._ese_pipeline is not None:
+            return self._build_atomic()
+        return self._build_manual()
+
+    def _build_atomic(self) -> PipelineController:
+        assert self._ese_pipeline is not None
+        controller = self._ese_pipeline.build_stage0()
+
+        log_provider = StoreLoggingProvider()
+        for store_type in (ScalpMesh, ESEMesh):
+            controller.register_provider(log_provider, on_store=store_type)
+
+        controller.register_provider(
+            Stage2Exporter(
+                project_dir=self._project_dir,
+            ),
+            on_store=ESEMesh,
+        )
+
+        return controller
+
+    def _build_manual(self) -> PipelineController:
         controller = PipelineController(logger=self._logger)
 
         controller.register_store(ScalpMesh, self._scalp_mesh)
