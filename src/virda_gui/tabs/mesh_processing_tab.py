@@ -5,11 +5,13 @@ untouched in memory.  Any change to a smoothing or density parameter
 recomputes a preview from that base mesh via the pure ``virda.ops`` atoms (
 :func:`virda.ops.atoms.smooth` / :func:`virda.ops.atoms.decimate`), applies no
 smoothing when the smoother is set to "none", and never writes to disk.  The
-working mesh is only persisted when the user presses "Save to project", which
-also stores the current density and smoother parameters into
-``input/pipeline_config.json``.  The generated ESE mesh
+working mesh is only persisted when the user presses "Save to project";
+the current density/smoother parameters are GUI-only and are never written to a
+pipeline config file.  The generated ESE mesh
 (:func:`virda.ops.atoms.generate_ese` with the chosen offset) is streamed to
-the host for overlay, not saved.
+the host for overlay, not saved.  A scalp mesh can be produced straight from a
+NIfTI scan ("Generate scalp mesh from NIfTI...") through the pure atoms
+:func:`virda.ops.atoms.generate_scalp_surface` + :func:`virda.ops.atoms.clean`.
 
 The tab is host-agnostic: everything the host needs to render or persist
 travels through Qt signals carrying domain objects.
@@ -17,7 +19,6 @@ travels through Qt signals carrying domain objects.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -38,11 +39,17 @@ from PySide6.QtWidgets import (
 )
 
 from virda.io.exporters.scalp_mesh import export_scalp_mesh
+from virda.io.importers.nifti import import_nifti
 from virda.io.importers.scalp_mesh import import_scalp_mesh
 from virda.models.scalp_mesh import ScalpMesh
-from virda.ops.atoms import decimate, generate_ese, smooth
-from virda.ops.options import DecimateOptions, EseOptions, SmoothOptions
-from virda_gui.constants import DEFAULT_PIPELINE_CONFIG_FILENAME
+from virda.ops.atoms import clean, decimate, generate_ese, generate_scalp_surface, smooth
+from virda.ops.options import (
+    CleanOptions,
+    DecimateOptions,
+    EseOptions,
+    SealingOptions,
+    SmoothOptions,
+)
 from virda_gui.state import AppState
 
 _FINAL_MESH_FILENAME = "final_mesh.ply"
@@ -61,7 +68,7 @@ class MeshProcessingTab(QWidget):
 
     previewMesh = Signal(object)  # noqa: N815 - a ScalpMesh preview in world coords
     eseMesh = Signal(object)  # noqa: N815 - the generated ESEMesh in world coords
-    saved = Signal()  # noqa: N815 - fired after Save wrote mesh + config to disk
+    saved = Signal()  # noqa: N815 - fired after Save wrote the mesh to disk
     status = Signal(str)  # noqa: N815 - non-blocking log lines
 
     def __init__(self, state: AppState, parent: QWidget | None = None) -> None:
@@ -84,7 +91,7 @@ class MeshProcessingTab(QWidget):
         self._preview_timer.setSingleShot(True)
         self._preview_timer.setInterval(150)
         self._preview_timer.timeout.connect(self._recompute_preview)
-        self._preview_label = QLabel("No base mesh loaded. Run Stage 1 or load a mesh.", self)
+        self._preview_label = QLabel("No base mesh loaded. Load a mesh or generate from NIfTI.", self)
         layout.addWidget(self._preview_label)
 
         self._connect_parameter_edits()
@@ -166,9 +173,13 @@ class MeshProcessingTab(QWidget):
         row.setContentsMargins(4, 4, 4, 4)
         row.setSpacing(6)
 
-        generate_btn = QPushButton("Generate ESE mesh", box)
-        generate_btn.clicked.connect(self._on_generate_ese)
+        generate_btn = QPushButton("Generate scalp mesh from NIfTI...", box)
+        generate_btn.clicked.connect(self._on_generate_from_nifti)
         row.addWidget(generate_btn)
+
+        ese_btn = QPushButton("Generate ESE mesh", box)
+        ese_btn.clicked.connect(self._on_generate_ese)
+        row.addWidget(ese_btn)
 
         save_btn = QPushButton("Save to project", box)
         save_btn.clicked.connect(self._on_save)
@@ -262,6 +273,67 @@ class MeshProcessingTab(QWidget):
             return str(Path(project) / "mesh")
         return ""
 
+    def _nifti_start_dir(self) -> str:
+        project = self._state.last_project_dir
+        if project:
+            return str(Path(project) / "input")
+        return ""
+
+    def _generation_options(self) -> tuple[SealingOptions, CleanOptions]:
+        """Build mesh-generation options from the GUI advanced settings."""
+        advanced = self._state.advanced
+
+        def _bool(key: str, default: bool) -> bool:
+            return (advanced.get(key, "").strip().lower() == "true") or (
+                not advanced.get(key, "").strip() and default
+            )
+
+        def _int(key: str, default: int) -> int:
+            try:
+                value = int(float(advanced.get(key, "")))
+            except (TypeError, ValueError):
+                return default
+            return value or default
+
+        return (
+            SealingOptions(
+                seal_enabled=_bool("seal_enabled", True),
+                seal_radius=_int("seal_radius", 4),
+            ),
+            CleanOptions(
+                min_component_vertices=_int("cleaner_min_vertices", 100),
+                merge_digits=_int("cleaner_merge_digits", 7),
+            ),
+        )
+
+    def _on_generate_from_nifti(self) -> None:
+        """Segment a NIfTI scan into a scalp mesh using the pure atoms."""
+        path, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            "Generate scalp mesh from NIfTI",
+            self._nifti_start_dir(),
+            "NIfTI scans (*.nii.gz *.nii);;All files (*)",
+        )
+        if not path:
+            return
+        try:
+            mri = import_nifti(path)
+            sealing, cleaning = self._generation_options()
+            surface = generate_scalp_surface(mri, sealing)
+            mesh = clean(surface.mesh, cleaning)
+        except Exception as exc:  # noqa: BLE001 - surfaced to the user
+            QMessageBox.critical(self, "Generate scalp mesh", f"Generation failed:\n{exc}")
+            return
+        self._base_mesh = mesh
+        self._base_path = Path(path)
+        self._preview_mesh = None
+        self._base_label.setText(str(path))
+        self._preview_label.setText(f"Base mesh: {len(mesh.vertices)} vertices")
+        self.previewMesh.emit(mesh)
+        self.status.emit(
+            f"Scalp mesh generated from {Path(path).name}: {len(mesh.vertices)} vertices."
+        )
+
     def _on_generate_ese(self) -> None:
         base = self.current_scalp_mesh()
         if base is None:
@@ -295,37 +367,11 @@ class MeshProcessingTab(QWidget):
         mesh_path = root / "mesh" / _FINAL_MESH_FILENAME
         try:
             export_scalp_mesh(mesh_path, target)
-            self._write_mesh_parameters(root)
         except (OSError, ValueError) as exc:
             QMessageBox.critical(self, "Save mesh", f"Could not save mesh:\n{exc}")
             return
         self.status.emit(f"Saved working mesh ({len(target.vertices)} vertices) to {mesh_path}.")
         self.saved.emit()
-
-    def _write_mesh_parameters(self, project: Path) -> None:
-        """Persist the current density/smoother values into pipeline_config.json."""
-        path = project / "input" / DEFAULT_PIPELINE_CONFIG_FILENAME
-        data: dict[str, Any] = {}
-        if path.is_file():
-            try:
-                loaded = json.loads(path.read_text(encoding="utf-8"))
-                if isinstance(loaded, dict):
-                    data = loaded
-            except (OSError, ValueError):
-                data = {}
-        advanced = data.setdefault("advanced", {})
-        advanced["smoother_type"] = self._smoother_combo.currentData()
-        advanced["smoother_iterations"] = str(self._iterations_spin.value())
-        advanced["smoother_lamb"] = f"{self._lamb_spin.value():g}"
-        advanced["smoother_nu"] = f"{self._nu_spin.value():g}"
-        advanced["mesh_density_percent"] = str(self._density_slider.value())
-        data["smoother_type"] = self._smoother_combo.currentData()
-        data["smoother_iterations"] = self._iterations_spin.value()
-        data["smoother_lamb"] = self._lamb_spin.value()
-        data["smoother_nu"] = self._nu_spin.value()
-        data["mesh_density_percent"] = self._density_slider.value()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
     def _on_reset(self) -> None:
         widgets = (
@@ -369,4 +415,4 @@ class MeshProcessingTab(QWidget):
         self._base_path = None
         self._preview_mesh = None
         self._base_label.setText("No base mesh loaded")
-        self._preview_label.setText("No base mesh loaded. Run Stage 1 or load a mesh.")
+        self._preview_label.setText("No base mesh loaded. Load a mesh or generate from NIfTI.")

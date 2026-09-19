@@ -97,6 +97,7 @@ class FiducialsEditor(QWidget):
     """Editable table of fiducials stored in ``input/fiducials.json``."""
 
     rowsChanged = Signal()  # noqa: N815
+    inputFrameChanged = Signal(object, object)  # noqa: N815  # old_frame: str, new_frame: str
 
     def __init__(
         self,
@@ -108,6 +109,7 @@ class FiducialsEditor(QWidget):
         self._path: Path | None = None
         self._coord_systems: list[str] = []
         self._loading = False
+        self._input_frame: str = FRAME_IDS[0]
 
         self._table = QTableWidget(0, len(FIDUCIAL_HEADERS), self)
         self._table.setHorizontalHeaderLabels(FIDUCIAL_HEADERS)
@@ -125,7 +127,9 @@ class FiducialsEditor(QWidget):
         self._frame_combo = QComboBox(self._frame_row)
         for frame_id in FRAME_IDS:
             self._frame_combo.addItem(frame_label(frame_id), frame_id)
+        self._frame_combo.blockSignals(True)
         self._frame_combo.setCurrentIndex(FRAME_IDS.index(FRAME_IDS[0]))
+        self._frame_combo.blockSignals(False)
         self._frame_combo.currentIndexChanged.connect(self._on_frame_selected)
         self._frame_layout.addWidget(self._frame_combo)
         self._frame_layout.addWidget(
@@ -186,8 +190,14 @@ class FiducialsEditor(QWidget):
             self.rowsChanged.emit()
 
     def _on_frame_selected(self) -> None:
-        if not self._loading:
-            self.rowsChanged.emit()
+        if self._loading:
+            return
+        old_frame = self._input_frame
+        new_frame = self._frame_combo.currentData()
+        if isinstance(new_frame, str) and not isinstance(new_frame, bytes):
+            self._input_frame = new_frame
+            self.inputFrameChanged.emit(old_frame, new_frame)
+        self.rowsChanged.emit()
 
     def input_frame(self) -> str:
         """The coordinate system the X/Y/Z columns are interpreted in."""
@@ -197,6 +207,7 @@ class FiducialsEditor(QWidget):
     def set_input_frame(self, frame: str) -> None:
         """Select the input coordinate system, ignoring unknown frames."""
         if frame in FRAME_IDS:
+            self._input_frame = frame
             self._frame_combo.setCurrentIndex(FRAME_IDS.index(frame))
 
     # ---- table content ----
@@ -736,6 +747,7 @@ class EditorsTab(QWidget):
     """Fiducials and measurements editors stacked vertically in one tab."""
 
     localizeRequested = Signal()  # noqa: N815
+    advancedRequested = Signal()  # noqa: N815
 
     def __init__(self, state: AppState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -750,15 +762,24 @@ class EditorsTab(QWidget):
 
         localize_btn = QPushButton("Localize measurements", self)
         localize_btn.setToolTip(
-            "Run Stage 3 localization on the current scalp mesh using the "
+            "Run localization on the current scalp mesh using the "
             "table rows above, and show the electrodes on the 3D mesh."
         )
         localize_btn.clicked.connect(self._on_localize_clicked)
 
+        advanced_btn = QPushButton("Localization settings...", self)
+        advanced_btn.setToolTip("Open the advanced mesh-generation and localization settings.")
+        advanced_btn.clicked.connect(self._on_advanced_clicked)
+
+        buttons = QHBoxLayout()
+        buttons.addWidget(localize_btn)
+        buttons.addWidget(advanced_btn)
+        buttons.addStretch(1)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.addWidget(splitter)
-        layout.addWidget(localize_btn)
+        layout.addLayout(buttons)
 
     @property
     def fiducials(self) -> FiducialsEditor:
@@ -778,6 +799,9 @@ class EditorsTab(QWidget):
 
     def _on_localize_clicked(self) -> None:
         self.localizeRequested.emit()
+
+    def _on_advanced_clicked(self) -> None:
+        self.advancedRequested.emit()
 
     def prefill_from_project(self, project: str | Path) -> None:
         """Load the project's canonical fiducials and measurements, if any."""
