@@ -18,8 +18,11 @@ from PySide6.QtWidgets import (
 )
 
 from virda.logging_setup import add_log_handler, remove_log_handler
+from virda.models.electrode import Electrode, Electrodes
 from virda.models.ese_mesh import ESEMesh
+from virda.models.fiducial import Fiducial, Fiducials
 from virda.models.scalp_mesh import ScalpMesh
+from virda.pipelines.localize import LocalizationPipeline, LocalizationPipelineContract
 
 from .constants import ADVANCED_FIELD_DEFAULTS
 from .dialogs.project_dialog import ask_create_project_folder, ask_open_project_folder
@@ -33,7 +36,12 @@ from .tabs.config_tab import ConfigTab
 from .tabs.editors_tab import EditorsTab
 from .tabs.mesh_processing_tab import MeshProcessingTab
 from .tabs.preview_tab import PreviewTab
-from .viewer.scene import scene_placement
+from .viewer.frames import (
+    FRAME_SCANNER,
+    frame_to_scene_matrix,
+    scene_to_world_matrix,
+)
+from .viewer.scene import scene_placement, transform_points
 from .viewer.viewer import ViewerWidget
 
 _TAB_RUN = "run-pipeline"
@@ -79,6 +87,8 @@ class IdeWindow(QMainWindow):
         self._config_tab.exportHtml.connect(self._on_export_html)
 
         self._editors_tab = EditorsTab(self._state)
+        self._editors_tab.localizeRequested.connect(self._on_localize_requested)
+        self._editors_tab.measurements.rowsChanged.connect(self._schedule_localization)
         self._mesh_processing_tab = MeshProcessingTab(self._state)
         self._mesh_processing_tab.previewMesh.connect(self._on_mesh_preview)
         self._mesh_processing_tab.eseMesh.connect(self._on_ese_mesh)
@@ -90,6 +100,12 @@ class IdeWindow(QMainWindow):
         self._fiducial_overlay_timer.setInterval(150)
         self._fiducial_overlay_timer.timeout.connect(self._refresh_live_fiducials)
         self._editors_tab.fiducials.rowsChanged.connect(self._on_fiducials_edited)
+
+        self._localize_timer = QTimer(self)
+        self._localize_timer.setSingleShot(True)
+        self._localize_timer.setInterval(200)
+        self._localize_timer.timeout.connect(self._run_localize_auto)
+        self._localized_electrodes: Electrodes | None = None
 
         self._sidebar = ProjectSidebar(self)
         self._sidebar.openViewerRequested.connect(self._on_open_viewer)
@@ -205,6 +221,7 @@ class IdeWindow(QMainWindow):
         self._tabs.removeTab(self._tabs.indexOf(self._mesh_processing_tab))
         self._editors_tab.clear()
         self._mesh_processing_tab.clear()
+        self._localized_electrodes = None
         self.setWindowTitle("VIRDA — Electrode Localization System")
 
     def _create_project(self) -> None:
@@ -505,6 +522,7 @@ class IdeWindow(QMainWindow):
     def _on_fiducials_edited(self) -> None:
         """Debounce fast table edits before pushing rows to the viewer."""
         self._fiducial_overlay_timer.start()
+        self._schedule_localization()
 
     def _refresh_live_fiducials(self) -> None:
         """Push the current fiducials table onto the viewer as a live overlay.
@@ -529,6 +547,132 @@ class IdeWindow(QMainWindow):
             )
         except (ValueError, np.linalg.LinAlgError) as exc:
             self._config_tab.log_viewer.append(f"Live fiducials skipped: {exc}")
+
+    # ------------------------------------------------------------------
+    # Live localization (Stage 3) overlay
+    # ------------------------------------------------------------------
+
+    def _on_localize_requested(self) -> None:
+        """Run localization once from the "Localize measurements" button."""
+        self._run_localize(interactive=True)
+
+    def _schedule_localization(self) -> None:
+        """Re-run an existing localization after rows changed (debounced)."""
+        if self._localized_electrodes is not None:
+            self._localize_timer.start()
+
+    def _run_localize_auto(self) -> None:
+        self._run_localize(interactive=False)
+
+    def _localize_warning(self, message: str, interactive: bool) -> None:
+        self._config_tab.log_viewer.append(f"Localization skipped: {message}")
+        if interactive:
+            QMessageBox.warning(self, "Localize", message)
+
+    def _run_localize(self, *, interactive: bool) -> None:
+        """Run Stage 3 localization on the current scalp mesh and overlay it.
+
+        Fiducial rows typed in the editor's input coordinate system are
+        converted into the mesh's world frame before the localizer runs, using
+        the exact inverse the viewer uses internally.
+        """
+        mesh = self._mesh_processing_tab.current_scalp_mesh()
+        if mesh is None:
+            self._localize_warning(
+                "Load or generate a scalp mesh first (Mesh Processing tab).", interactive
+            )
+            return
+
+        try:
+            fiducial_rows = self._editors_tab.fiducials.fiducial_rows()
+            measurement_rows = self._editors_tab.measurements.measurement_rows()
+            weights = self._editors_tab.measurements.parsed_weights()
+        except (ValueError, np.linalg.LinAlgError) as exc:
+            self._localize_warning(f"Invalid table:\n{exc}", interactive)
+            return
+
+        if len(fiducial_rows) < 3:
+            self._localize_warning(
+                "Add at least three fiducial rows before localizing.", interactive
+            )
+            return
+        if not measurement_rows:
+            self._localize_warning(
+                "Add at least one measurement row before localizing.", interactive
+            )
+            return
+
+        affine, cras_offset, mm_scene = (
+            self._viewer_widget.scene_frame_params
+            if self._viewer_widget is not None
+            else (None, None, True)
+        )
+        frame = self._editors_tab.fiducials.input_frame()
+        to_world = scene_to_world_matrix(affine, mm_scene) @ frame_to_scene_matrix(
+            frame, affine, cras_offset, mm_scene
+        )
+        world_points = transform_points(
+            np.asarray([row.coordinates for row in fiducial_rows], dtype=np.float64), to_world
+        )
+
+        try:
+            fiducials = Fiducials(
+                items=[
+                    Fiducial(
+                        fiducial_id=row.fiducial_id,
+                        name=row.name,
+                        coordinates=point,
+                        coordinate_system="world",
+                        definition_method=row.definition_method,
+                        weight=weights.get(row.fiducial_id, row.weight),
+                    )
+                    for row, point in zip(fiducial_rows, world_points)
+                ]
+            )
+            electrodes = Electrodes(
+                items=[
+                    Electrode(
+                        electrode_id=row.electrode_id,
+                        measured_distances=dict(row.measured_distances),
+                    )
+                    for row in measurement_rows
+                ]
+            )
+            contract = LocalizationPipelineContract(
+                scalp_mesh=mesh, electrodes=electrodes, fiducials=fiducials
+            )
+            context = LocalizationPipeline(contract).run_stage0()
+            localized = context.get_store_notnull(Electrodes)
+        except Exception as exc:  # noqa: BLE001 - surfaced to the user
+            self._localize_warning(f"Localization failed:\n{exc}", interactive)
+            return
+
+        self._localized_electrodes = localized
+        self._show_localized_electrodes(localized)
+        localized_count = sum(1 for electrode in localized.items if electrode.is_localized)
+        self._config_tab.log_viewer.append(
+            f"Localized {localized_count}/{len(localized.items)} electrodes "
+            f"(offset shift {localized.calibrated_offset_shift_mm or 0.0:g} mm)."
+        )
+
+    def _show_localized_electrodes(self, localized: Electrodes) -> None:
+        viewer = self._viewer_widget
+        if viewer is None:
+            return
+        ids: list[str] = []
+        points: list[np.ndarray] = []
+        flags: list[bool] = []
+        for electrode in localized.items:
+            if electrode.ese_coords is not None:
+                ids.append(electrode.electrode_id or "")
+                points.append(electrode.ese_coords)
+                flags.append(electrode.flagged)
+        if not ids:
+            return
+        viewer.set_live_electrodes(
+            ids, np.asarray(points, dtype=np.float64), np.asarray(flags, dtype=bool),
+            frame=FRAME_SCANNER,
+        )
 
     # ------------------------------------------------------------------
     # Mesh processing overlay + save
