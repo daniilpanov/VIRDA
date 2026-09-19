@@ -34,7 +34,7 @@ from virda.pipelines.contracts import ContractValidationError, PipelineContract
 from virda.segmentation.head_segmenter import OtsuHeadSegmenter, OtsuScope
 from virda.segmentation.seal import MaskSealer
 
-SMOOTHER_TYPES = Literal["laplacian", "taubin"]
+SMOOTHER_TYPES = Literal["laplacian", "taubin", "none"]
 
 
 class MeshPipelineContract(PipelineContract):
@@ -125,6 +125,8 @@ class MeshPipeline(AtomicPipeline[MeshPipelineContract]):
 
     def _smooth(self, context: PipelineContext) -> ScalpMesh:
         contract = self.contract
+        if contract.smoother_type == "none":
+            return context.get_store_notnull(ScalpMesh)
         if contract.smoother_type == "taubin":
             smoother: MeshPostprocessor = TaubinSmoother(
                 iterations=contract.smoother_iterations,
