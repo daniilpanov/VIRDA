@@ -24,8 +24,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from virda.config import load_config_file
-from virda.io.fiducial_helpers import load_fiducials
+from virda.io.importers.fiducials import import_fiducials
+from virda.io.importers.pipeline_config import import_pipeline_config
 from virda.models.config import Config
 from virda.models.coordsystem import Coordsystem
 from virda_gui.constants import (
@@ -74,8 +74,8 @@ def serialize_config_for_save(
     ``smoother_lamb``), produced by ``Config.model_dump(exclude_none=True)``,
     merged with a nested ``"advanced"`` object holding the
     ``AppState.advanced`` string values.  The flat keys are exactly the keys
-    :func:`virda.config.build_config` / :func:`virda.config.load_config_file`
-    read, so the file round-trips into a ``Config`` with identical field
+    :func:`virda.io.importers.pipeline_config.import_pipeline_config`
+    reads, so the file round-trips into a ``Config`` with identical field
     values; ``"advanced"`` preserves the GUI-only string settings (such as an
     empty ``mesh_voxel_size_mm`` meaning native NIfTI spacing).  The parsed
     ``coordsystem`` is deliberately not stored: it is a nested model derived
@@ -260,7 +260,7 @@ class ConfigTab(QWidget):
         if not path:
             return
         try:
-            data = load_config_file(path)
+            data = import_pipeline_config(path)
         except Exception as exc:
             QMessageBox.critical(self, "Config error", f"Invalid config file:\n{exc}")
             self._config_file.set("")
@@ -300,7 +300,7 @@ class ConfigTab(QWidget):
         if not path:
             return
         try:
-            load_fiducials(Path(path))
+            import_fiducials(Path(path))
         except Exception as exc:
             QMessageBox.critical(self, "Fiducials error", f"Invalid fiducials file:\n{exc}")
             self._fiducials.set("")

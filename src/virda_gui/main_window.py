@@ -20,18 +20,19 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from virda.logging_setup import add_log_handler, remove_log_handler
 from virda.models.electrode import Electrode, Electrodes
 from virda.models.ese_mesh import ESEMesh
 from virda.models.fiducial import Fiducial, Fiducials
 from virda.models.scalp_mesh import ScalpMesh
-from virda.pipelines.localize import LocalizationPipeline, LocalizationPipelineContract
+from virda.ops.atoms import localize
+from virda.ops.options import LocalizeOptions
 
 from .constants import ADVANCED_FIELD_DEFAULTS
 from .dialogs.project_dialog import ask_create_project_folder, ask_open_project_folder
 from .importing import ImportRole, import_file, import_target
 from .preferences import Preferences
 from .project import classify_artifact
+from .services.logging import add_log_handler, remove_log_handler
 from .services.pipeline_runner import PipelineRunner
 from .sidebar import ProjectSidebar
 from .state import AppState
@@ -591,7 +592,7 @@ class IdeWindow(QMainWindow):
         self._config_tab.log_viewer.append(f"Localization skipped: {message}")
         QMessageBox.warning(self, "Localize", message)
 
-    def _localize_contract_kwargs(self) -> dict[str, Any]:
+    def _localize_options(self) -> LocalizeOptions:
         """The Stage 3 options the full pipeline would use, from the config tab."""
         advanced = self._state.advanced
         calibrate = str(advanced.get("calibrate_ese_offset", "true")).lower() == "true"
@@ -599,7 +600,9 @@ class IdeWindow(QMainWindow):
             threshold = float(advanced.get("residual_threshold_mm", 10.0))
         except (TypeError, ValueError):
             threshold = 10.0
-        return {"calibrate_ese_offset": calibrate, "residual_threshold_mm": threshold}
+        return LocalizeOptions(
+            calibrate_ese_offset=calibrate, residual_threshold_mm=threshold
+        )
 
     def _run_localize(self, *, interactive: bool) -> None:
         """Snapshot the table inputs and localize on a background thread.
@@ -682,33 +685,34 @@ class IdeWindow(QMainWindow):
                     for row in measurement_rows
                 ]
             )
-            contract = LocalizationPipelineContract(
-                scalp_mesh=mesh,
-                electrodes=electrodes,
-                fiducials=fiducials,
-                **self._localize_contract_kwargs(),
-            )
         except ValueError as exc:
             self._localize_warning(f"Invalid table:\n{exc}", interactive)
             return
 
+        options = self._localize_options()
         self._localize_generation += 1
         generation = self._localize_generation
         thread = threading.Thread(
             target=self._localize_worker_thread,
-            args=(contract, generation),
+            args=(mesh, fiducials, electrodes, options, generation),
             daemon=True,
         )
         self._localize_thread = thread
         thread.start()
 
     def _localize_worker_thread(
-        self, contract: LocalizationPipelineContract, generation: int
+        self,
+        surface: ScalpMesh,
+        fiducials: Fiducials,
+        electrodes: Electrodes,
+        options: LocalizeOptions,
+        generation: int,
     ) -> None:
         """Background thread: run the localizer and post the outcome via queue."""
         try:
-            context = LocalizationPipeline(contract).run_stage0()
-            result = context.get_store_notnull(Electrodes)
+            result = localize(
+                surface=surface, fiducials=fiducials, electrodes=electrodes, options=options
+            )
             self._localize_queue.put((generation, result))
         except Exception as exc:  # noqa: BLE001 - surfaced on the main thread
             self._localize_queue.put((generation, exc))

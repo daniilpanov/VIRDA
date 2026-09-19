@@ -18,7 +18,7 @@ from pathlib import Path
 
 import numpy as np
 
-from virda.io.fiducial_helpers import load_fiducials
+from virda.io.importers.fiducials import import_fiducials
 
 ScenePlacement = tuple[np.ndarray, np.ndarray, np.ndarray, bool]
 
@@ -65,11 +65,11 @@ def transform_points(points: np.ndarray, transform: np.ndarray) -> np.ndarray:
 def load_fiducial_points(path: str | Path) -> tuple[np.ndarray, list[str]]:
     """Read a fiducials JSON file into ``(points, labels)``.
 
-    Delegates to :func:`virda.io.fiducial_helpers.load_fiducials`, so both the
+    Delegates to :func:`virda.io.importers.fiducials.import_fiducials`, so both the
     native ``{"fiducials": [...]}`` format and MNE-style ``coordsystem.json``
     files are supported (with unit conversion applied for the latter).
     """
-    fiducials = load_fiducials(Path(path))
+    fiducials = import_fiducials(Path(path))
     points = np.asarray([item.coordinates for item in fiducials.items], dtype=np.float64)
     labels = [f"{item.fiducial_id} ({item.name})" for item in fiducials.items]
     return points, labels

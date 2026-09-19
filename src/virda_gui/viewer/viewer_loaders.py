@@ -21,7 +21,7 @@ import trimesh
 from nibabel import aff2axcodes
 from scipy.spatial import cKDTree
 
-from virda.io.loader.electrodes_table_loader import load_electrodes_table
+from virda.io.importers.electrodes_table import import_electrodes_table
 
 from .scene import (
     compute_normal_lines,
@@ -261,7 +261,7 @@ def _load_electrodes_from_csv(
     ``cras_offset`` is given the positions are treated as FreeSurfer cRAS and
     shifted into scanner RAS.
     """
-    positions, residuals, flags, measured, names = load_electrodes_table(path)
+    positions, residuals, flags, measured, names = import_electrodes_table(path)
     if cras_offset is not None and positions.shape[0] > 0:
         positions = positions + cras_offset
     return positions, residuals, flags, measured, names

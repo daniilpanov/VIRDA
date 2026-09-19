@@ -1,6 +1,5 @@
 """Automatic quality-control checks for a Stage 1 result (temporary disabled)"""
 
-import json
 from collections import defaultdict
 from itertools import product
 from pathlib import Path
@@ -14,10 +13,8 @@ from virda.geometry.transforms import fiducials_world_coordinates
 from virda.models.ese_config import ESEConfig
 from virda.models.fiducial import Fiducials
 from virda.models.mri_volume import MRIVolume
-from virda.models.quality_control_report import QualityControlReport
 from virda.models.scalp_mesh import ScalpMesh
 from virda.models.stage1_result import Stage1Result
-from virda.pipeline_context import PipelineContext
 
 CheckStatus = Literal["ok", "warn", "fail", "skip"]
 FIDUCIAL_TOLERANCE_MM = 3.0
@@ -416,33 +413,3 @@ def run_checks(
         "fiducials": fiducials,
         "warnings": warnings,
     }
-
-
-class Stage1QualityControlStep:
-    """Run automatic QC after the Stage 1 artifacts are exported and store the report."""
-
-    def __init__(
-        self,
-        project_dir: Path,
-        ese_config: ESEConfig | None = None,
-    ) -> None:
-        self._project_dir = project_dir
-        self._ese_config = ese_config
-
-    def run(self, context: PipelineContext) -> QualityControlReport:
-        result = context.get_store_notnull(Stage1Result)
-        report = run_checks(
-            result,
-            nifti_mask_path=self._project_dir / "segmentation" / "head_mask.nii.gz",
-            ese_config=self._ese_config,
-        )
-        qc_dir = self._project_dir / "quality_control"
-        qc_dir.mkdir(parents=True, exist_ok=True)
-        (qc_dir / "report.json").write_text(json.dumps(report, indent=2))
-
-        if report["status"] != "ok":
-            context.get_logger().warning(
-                f"Quality control {report['status'].upper()}: " + "; ".join(report["warnings"])
-            )
-
-        return QualityControlReport(report)

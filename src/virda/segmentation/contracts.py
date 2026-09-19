@@ -3,16 +3,11 @@ from logging import Logger
 
 from virda.models.mri_volume import MRIVolume
 from virda.models.segmentation_mask import SegmentationMask
-from virda.pipeline_context import PipelineContext
 
 
 class HeadSegmenter(ABC):
     def __init__(self) -> None:
         self._logger: Logger | None = None
-
-    def run(self, context: PipelineContext) -> SegmentationMask:
-        self._logger = context.get_logger()
-        return self.process(context.get_store_notnull(MRIVolume))
 
     @abstractmethod
     def process(self, volume: MRIVolume) -> SegmentationMask:
@@ -22,10 +17,6 @@ class HeadSegmenter(ABC):
 class SegmentationMaskPostprocessor(ABC):
     def __init__(self) -> None:
         self._logger: Logger | None = None
-
-    def run(self, context: PipelineContext) -> SegmentationMask:
-        self._logger = context.get_logger()
-        return self.process(context.get_store_notnull(SegmentationMask))
 
     @abstractmethod
     def process(self, mask: SegmentationMask) -> SegmentationMask:

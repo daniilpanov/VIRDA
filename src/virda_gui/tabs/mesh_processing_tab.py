@@ -2,12 +2,14 @@
 
 The tab holds the *base* scalp mesh read once from the project and keeps it
 untouched in memory.  Any change to a smoothing or density parameter
-recomputes a preview from that base mesh (:func:`virda.pipelines.mesh_editing`
-), applies no smoothing when the smoother is set to "none", and never writes
-to disk.  The working mesh is only persisted when the user presses "Save to
-project", which also stores the current density and smoother parameters into
-``input/pipeline_config.json``.  The generated ESE mesh (ESEPipeline with the
-chosen offset) is streamed to the host for overlay, not saved.
+recomputes a preview from that base mesh via the pure ``virda.ops`` atoms (
+:func:`virda.ops.atoms.smooth` / :func:`virda.ops.atoms.decimate`), applies no
+smoothing when the smoother is set to "none", and never writes to disk.  The
+working mesh is only persisted when the user presses "Save to project", which
+also stores the current density and smoother parameters into
+``input/pipeline_config.json``.  The generated ESE mesh
+(:func:`virda.ops.atoms.generate_ese` with the chosen offset) is streamed to
+the host for overlay, not saved.
 
 The tab is host-agnostic: everything the host needs to render or persist
 travels through Qt signals carrying domain objects.
@@ -35,11 +37,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from virda.io.loader.scalp_mesh_loader import load_scalp_mesh, save_scalp_mesh
-from virda.models.ese_mesh import ESEMesh
+from virda.io.exporters.scalp_mesh import export_scalp_mesh
+from virda.io.importers.scalp_mesh import import_scalp_mesh
 from virda.models.scalp_mesh import ScalpMesh
-from virda.pipelines.ese import ESEPipeline, ESEPipelineContract
-from virda.pipelines.mesh_editing import MeshEditingPipelineContract, edit_mesh
+from virda.ops.atoms import decimate, generate_ese, smooth
+from virda.ops.options import DecimateOptions, EseOptions, SmoothOptions
 from virda_gui.constants import DEFAULT_PIPELINE_CONFIG_FILENAME
 from virda_gui.state import AppState
 
@@ -193,15 +195,24 @@ class MeshProcessingTab(QWidget):
         self._density_label.setText(f"{self._density_slider.value()}%")
         self._preview_timer.start()
 
-    def _collect_editing_contract(self, base: ScalpMesh) -> MeshEditingPipelineContract:
-        return MeshEditingPipelineContract(
-            scalp_mesh=base,
-            smoother_type=self._smoother_combo.currentData(),
-            smoother_iterations=self._iterations_spin.value(),
-            smoother_lamb=round(self._lamb_spin.value(), 6),
-            smoother_nu=round(self._nu_spin.value(), 6),
-            mesh_density_percent=self._density_slider.value(),
-        )
+    def _compute_preview(self, base: ScalpMesh) -> ScalpMesh:
+        """Run the configured smoother/density on *base* without mutating it."""
+        mesh = base
+        smoother = self._smoother_combo.currentData()
+        if smoother != "none":
+            mesh = smooth(
+                mesh,
+                SmoothOptions(
+                    smoother=smoother,
+                    iterations=self._iterations_spin.value(),
+                    lamb=round(self._lamb_spin.value(), 6),
+                    nu=round(self._nu_spin.value(), 6),
+                ),
+            )
+        density = self._density_slider.value()
+        if density < 100:
+            mesh = decimate(mesh, DecimateOptions(density_percent=density))
+        return mesh
 
     # ---- preview / actions ----
 
@@ -210,7 +221,7 @@ class MeshProcessingTab(QWidget):
         if base is None:
             return
         try:
-            preview = edit_mesh(self._collect_editing_contract(base))
+            preview = self._compute_preview(base)
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
             self.status.emit(f"Mesh preview failed: {exc}")
             return
@@ -231,7 +242,7 @@ class MeshProcessingTab(QWidget):
     def load_base(self, path: Path) -> bool:
         """Load the base mesh from *path*; returns False when it cannot be read."""
         try:
-            mesh = load_scalp_mesh(path)
+            mesh = import_scalp_mesh(path)
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
             QMessageBox.critical(self, "Load scalp mesh", f"Could not load mesh:\n{exc}")
             return False
@@ -257,11 +268,9 @@ class MeshProcessingTab(QWidget):
             QMessageBox.warning(self, "Generate ESE", "Load a base mesh first.")
             return
         try:
-            contract = ESEPipelineContract(
-                scalp_mesh=base, ese_offset_mm=round(self._ese_offset_spin.value(), 6)
+            ese = generate_ese(
+                base, EseOptions(ese_offset_mm=round(self._ese_offset_spin.value(), 6))
             )
-            context = ESEPipeline(contract).run_stage0()
-            ese: ESEMesh = context.get_store_notnull(ESEMesh)
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
             QMessageBox.critical(self, "Generate ESE", f"ESE generation failed:\n{exc}")
             return
@@ -285,7 +294,7 @@ class MeshProcessingTab(QWidget):
         root = Path(project)
         mesh_path = root / "mesh" / _FINAL_MESH_FILENAME
         try:
-            save_scalp_mesh(mesh_path, target)
+            export_scalp_mesh(mesh_path, target)
             self._write_mesh_parameters(root)
         except (OSError, ValueError) as exc:
             QMessageBox.critical(self, "Save mesh", f"Could not save mesh:\n{exc}")

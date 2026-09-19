@@ -31,7 +31,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from virda.io.fiducial_helpers import load_fiducials, save_fiducials
+from virda.io.exporters.fiducials import export_fiducials
+from virda.io.importers.fiducials import import_fiducials
 from virda.models.fiducial import Fiducial, Fiducials
 from virda_gui.constants import DEFAULT_FIDUCIALS_FILENAME, DEFAULT_MEASUREMENTS_FILENAME
 from virda_gui.state import AppState
@@ -300,7 +301,7 @@ class FiducialsEditor(QWidget):
     def load(self, path: Path, *, interactive: bool = True) -> bool:
         """Load *path* into the table; returns False when *path* is invalid."""
         try:
-            fiducials = load_fiducials(path)
+            fiducials = import_fiducials(path)
             rows = fiducials_to_rows(fiducials)
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
             if interactive:
@@ -318,7 +319,7 @@ class FiducialsEditor(QWidget):
             QMessageBox.critical(self, "Save fiducials", f"Invalid table:\n{exc}")
             return False
         try:
-            save_fiducials(path, fiducials)
+            export_fiducials(path, fiducials)
         except OSError as exc:
             QMessageBox.critical(self, "Save fiducials", f"Could not write file:\n{exc}")
             return False
