@@ -8,6 +8,15 @@ the normal glyphs and per-electrode labels, and a "Boost contrast" checkbox
 sharpens the MRI and the mesh.  :class:`ViewerWidget` wraps the same scene
 that the standalone ``virda-gui-viewer`` CLI (module ``virda_gui.viewer.viewer_cli``)
 shows in a blocking window; the GUI embeds it on its 3D Viewer tab.
+
+A coordinate-frame selector in the Layers panel re-transforms the mesh,
+fiducials, electrode points, links and normal glyphs into Scanner RAS world
+mm, voxel indices or FreeSurfer cRAS without reloading the NIfTI volume (the
+volume actor only lines up in the scene's native frame, where it stays; it is
+hidden in the other frames).  "Export to coordinate system" buttons write the
+mesh (OBJ) and the electrodes/fiducials (TSV) re-expressed in the selected
+frame.  All frame math lives in the Qt-free helper module
+``virda_gui.viewer.frames``.
 """
 
 from collections.abc import Callable
