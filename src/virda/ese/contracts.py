@@ -12,8 +12,8 @@ class ESEBuilder(ABC):
 
     def run(self, context: PipelineContext) -> ESEMesh:
         self._logger = context.get_logger()
-        return self._process(context.get_store_notnull(ScalpMesh))
+        return self.process(context.get_store_notnull(ScalpMesh))
 
     @abstractmethod
-    def _process(self, scalp_mesh: ScalpMesh) -> ESEMesh:
+    def process(self, scalp_mesh: ScalpMesh) -> ESEMesh:
         raise NotImplementedError

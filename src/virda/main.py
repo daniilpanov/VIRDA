@@ -88,7 +88,10 @@ def run_stage3(
     fiducials = load_context.get_store_notnull(Fiducials)
 
     stage3_pipeline = Stage3PipelineBuilder(
-        localizer=BruteForceLocalizer(stage3_config),
+        localizer=BruteForceLocalizer(
+            calibrate_ese_offset=stage3_config.calibrate_ese_offset,
+            residual_threshold_mm=stage3_config.residual_threshold_mm,
+        ),
         stage3_config=stage3_config,
         ese_mesh=ese_mesh,
         electrodes=electrodes,

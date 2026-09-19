@@ -4,7 +4,6 @@ from scipy.spatial import cKDTree
 from virda.ese.contracts import ESEBuilder
 from virda.models.ese_mesh import ESEMesh
 from virda.models.scalp_mesh import ScalpMesh
-from virda.models.stage2_config import Stage2Config
 
 _FALLBACK_K_NEIGHBORS = 20
 
@@ -45,14 +44,26 @@ def _orient_outward(normals: np.ndarray, vertices: np.ndarray) -> np.ndarray:
 
 
 class PCAESEBuilder(ESEBuilder):
-    def __init__(self, config: Stage2Config, ese_offset_mm: float) -> None:
-        self._config = config
+    def __init__(
+        self,
+        ese_offset_mm: float,
+        neighborhood_radius_mm: float = 10.0,
+        k_neighbors: int | None = None,
+        use_weighted_pca: bool = False,
+        pca_sigma_mm: float = 5.0,
+        min_neighbors: int = 5,
+    ) -> None:
         self._ese_offset_mm = ese_offset_mm
+        self._neighborhood_radius_mm = neighborhood_radius_mm
+        self._k_neighbors = k_neighbors
+        self._use_weighted_pca = use_weighted_pca
+        self._pca_sigma_mm = pca_sigma_mm
+        self._min_neighbors = min_neighbors
         super().__init__()
 
-    def _process(self, scalp_mesh: ScalpMesh) -> ESEMesh:
+    def process(self, scalp_mesh: ScalpMesh) -> ESEMesh:
         vertices = scalp_mesh.vertices
-        k = self._config.k_neighbors
+        k = self._k_neighbors
         if k is not None:
             if k >= vertices.shape[0]:
                 raise ValueError(
@@ -63,7 +74,7 @@ class PCAESEBuilder(ESEBuilder):
             mode = f"k-NN k={k}"
         else:
             normals, quality = self._estimate_normals_radius(vertices)
-            mode = f"radius r={self._config.neighborhood_radius_mm} mm"
+            mode = f"radius r={self._neighborhood_radius_mm} mm"
 
         normals = _orient_outward(normals, vertices)
         ese_vertices = vertices + self._ese_offset_mm * normals
@@ -90,15 +101,15 @@ class PCAESEBuilder(ESEBuilder):
         distances = np.asarray(distances)
         neighbor_indices = np.asarray(neighbor_indices)
         neighbors = vertices[neighbor_indices[:, 1:]]
-        if self._config.use_weighted_pca:
-            return _local_pca_weighted(neighbors, distances[:, 1:], self._config.pca_sigma_mm)
+        if self._use_weighted_pca:
+            return _local_pca_weighted(neighbors, distances[:, 1:], self._pca_sigma_mm)
         return _local_pca(neighbors, k)
 
     def _estimate_normals_radius(self, vertices: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        radius = self._config.neighborhood_radius_mm
-        min_neighbors = self._config.min_neighbors
-        weighted = self._config.use_weighted_pca
-        sigma = self._config.pca_sigma_mm
+        radius = self._neighborhood_radius_mm
+        min_neighbors = self._min_neighbors
+        weighted = self._use_weighted_pca
+        sigma = self._pca_sigma_mm
         normals = np.zeros_like(vertices)
         quality = np.zeros(vertices.shape[0], dtype=np.float64)
         tree = cKDTree(vertices)

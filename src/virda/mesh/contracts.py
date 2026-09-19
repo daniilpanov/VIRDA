@@ -8,20 +8,20 @@ from virda.pipeline_context import PipelineContext
 
 class MeshExtractor(ABC):
     def run(self, context: PipelineContext) -> ScalpMesh:
-        return self._process(
+        return self.process(
             context.get_store_notnull(SegmentationMask),
             context.get_store_notnull(MRIVolume),
         )
 
     @abstractmethod
-    def _process(self, mask: SegmentationMask, mri_volume: MRIVolume) -> ScalpMesh:
+    def process(self, mask: SegmentationMask, mri_volume: MRIVolume) -> ScalpMesh:
         raise NotImplementedError
 
 
 class MeshPostprocessor(ABC):
     def run(self, context: PipelineContext) -> ScalpMesh:
-        return self._process(context.get_store_notnull(ScalpMesh))
+        return self.process(context.get_store_notnull(ScalpMesh))
 
     @abstractmethod
-    def _process(self, mesh: ScalpMesh) -> ScalpMesh:
+    def process(self, mesh: ScalpMesh) -> ScalpMesh:
         raise NotImplementedError

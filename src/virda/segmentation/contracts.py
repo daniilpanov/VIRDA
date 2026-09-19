@@ -12,10 +12,10 @@ class HeadSegmenter(ABC):
 
     def run(self, context: PipelineContext) -> SegmentationMask:
         self._logger = context.get_logger()
-        return self._process(context.get_store_notnull(MRIVolume))
+        return self.process(context.get_store_notnull(MRIVolume))
 
     @abstractmethod
-    def _process(self, volume: MRIVolume) -> SegmentationMask:
+    def process(self, volume: MRIVolume) -> SegmentationMask:
         raise NotImplementedError
 
 
@@ -25,8 +25,8 @@ class SegmentationMaskPostprocessor(ABC):
 
     def run(self, context: PipelineContext) -> SegmentationMask:
         self._logger = context.get_logger()
-        return self._process(context.get_store_notnull(SegmentationMask))
+        return self.process(context.get_store_notnull(SegmentationMask))
 
     @abstractmethod
-    def _process(self, mask: SegmentationMask) -> SegmentationMask:
+    def process(self, mask: SegmentationMask) -> SegmentationMask:
         raise NotImplementedError

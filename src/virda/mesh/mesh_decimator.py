@@ -34,7 +34,7 @@ class QuadraticDecimator(MeshPostprocessor):
                     " (or `pip install fast-simplification`)"
                 ) from None
 
-    def _process(self, mesh: ScalpMesh) -> ScalpMesh:
+    def process(self, mesh: ScalpMesh) -> ScalpMesh:
         if mesh.faces.shape[0] == 0:
             logger.info("Mesh has no faces, nothing to decimate")
             return mesh

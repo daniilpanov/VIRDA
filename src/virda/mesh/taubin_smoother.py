@@ -11,7 +11,7 @@ class TaubinSmoother(MeshPostprocessor):
         self._lamb = lamb
         self._nu = nu
 
-    def _process(self, mesh: ScalpMesh) -> ScalpMesh:
+    def process(self, mesh: ScalpMesh) -> ScalpMesh:
         trimesh_mesh = trimesh.Trimesh(vertices=mesh.vertices, faces=mesh.faces)
         trimesh.smoothing.filter_taubin(
             trimesh_mesh, lamb=self._lamb, nu=self._nu, iterations=self._iterations

@@ -10,7 +10,7 @@ class LaplacianSmoother(MeshPostprocessor):
         self._iterations = iterations
         self._lamb = lamb
 
-    def _process(self, mesh: ScalpMesh) -> ScalpMesh:
+    def process(self, mesh: ScalpMesh) -> ScalpMesh:
         trimesh_mesh = trimesh.Trimesh(vertices=mesh.vertices, faces=mesh.faces)
         trimesh.smoothing.filter_laplacian(
             trimesh_mesh, lamb=self._lamb, iterations=self._iterations

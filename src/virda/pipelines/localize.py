@@ -90,7 +90,10 @@ class LocalizationPipeline(AtomicPipeline[LocalizationPipelineContract]):
 
     def build_stage0(self) -> PipelineController:
         contract = self.contract
-        localizer = BruteForceLocalizer(config=contract.to_stage3_config())
+        localizer = BruteForceLocalizer(
+            calibrate_ese_offset=contract.calibrate_ese_offset,
+            residual_threshold_mm=contract.residual_threshold_mm,
+        )
         controller = PipelineController(logger=self._logger)
 
         controller.register_store(ScalpMesh, contract.scalp_mesh)

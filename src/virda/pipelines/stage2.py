@@ -64,8 +64,12 @@ class Stage2PipelineBuilder:
         logger = get_stage_logger(project_dir_path, "stage_2")
 
         ese_builder = PCAESEBuilder(
-            config=stage2_config,
             ese_offset_mm=ese_config.ese_offset_mm,
+            neighborhood_radius_mm=stage2_config.neighborhood_radius_mm,
+            k_neighbors=stage2_config.k_neighbors,
+            use_weighted_pca=stage2_config.use_weighted_pca,
+            pca_sigma_mm=stage2_config.pca_sigma_mm,
+            min_neighbors=stage2_config.min_neighbors,
         )
 
         ese_pipeline = ESEPipeline(

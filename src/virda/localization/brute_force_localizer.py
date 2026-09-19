@@ -9,7 +9,6 @@ from virda.models.electrode import Electrode, Electrodes
 from virda.models.ese_mesh import ESEMesh
 from virda.models.fiducial import Fiducial, Fiducials
 from virda.models.scalp_mesh import ScalpMesh
-from virda.models.stage3_config import Stage3Config
 
 _OFFSET_SEARCH_MIN_MM = -30.0
 _OFFSET_SEARCH_MAX_MM = 30.0
@@ -118,11 +117,12 @@ class BruteForceLocalizer(ElectrodeLocalizer):
     a fallback whenever refinement does not improve the residual.
     """
 
-    def __init__(self, config: Stage3Config) -> None:
-        self._config = config
+    def __init__(self, calibrate_ese_offset: bool = True, residual_threshold_mm: float = 10.0) -> None:
+        self._calibrate_ese_offset = calibrate_ese_offset
+        self._residual_threshold_mm = residual_threshold_mm
         super().__init__()
 
-    def _process(
+    def process(
         self,
         surface: ESEMesh | ScalpMesh,
         fiducials: Fiducials,
@@ -132,7 +132,7 @@ class BruteForceLocalizer(ElectrodeLocalizer):
         fiducial_coords = np.asarray([fiducial.coordinates for fiducial in fiducials.items])
 
         offset_shift = 0.0
-        if self._config.calibrate_ese_offset:
+        if self._calibrate_ese_offset:
             offset_shift = self._calibrate_offset(
                 vertices, normals, fiducial_coords, fiducials, electrodes
             )
@@ -177,7 +177,7 @@ class BruteForceLocalizer(ElectrodeLocalizer):
         return Electrodes(
             items=localized,
             calibrated_offset_shift_mm=(
-                offset_shift if self._config.calibrate_ese_offset else None
+                offset_shift if self._calibrate_ese_offset else None
             ),
         )
 
@@ -240,7 +240,7 @@ class BruteForceLocalizer(ElectrodeLocalizer):
             scalp_coords=np.asarray(scalp_vertices)[best_index],
             residual_error=residual_error,
             confidence=float(quality[best_index]),
-            flagged=residual_error > self._config.residual_threshold_mm,
+            flagged=residual_error > self._residual_threshold_mm,
         )
 
     def _calibrate_offset(

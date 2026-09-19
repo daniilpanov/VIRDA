@@ -17,14 +17,14 @@ class ElectrodeLocalizer(ABC):
         surface = context.get_store(ESEMesh) or context.get_store(ScalpMesh)
         if surface is None:
             raise ValueError("Localization requires a surface store: 'ESEMesh' or 'ScalpMesh'")
-        return self._process(
+        return self.process(
             surface=surface,
             fiducials=context.get_store_notnull(Fiducials),
             electrodes=context.get_store_notnull(Electrodes),
         )
 
     @abstractmethod
-    def _process(
+    def process(
         self,
         surface: ESEMesh | ScalpMesh,
         fiducials: Fiducials,

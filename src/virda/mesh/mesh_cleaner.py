@@ -13,7 +13,7 @@ class TrimeshCleaner(MeshPostprocessor):
         self._min_component_vertices = min_component_vertices
         self._merge_digits = merge_digits
 
-    def _process(self, mesh: ScalpMesh) -> ScalpMesh:
+    def process(self, mesh: ScalpMesh) -> ScalpMesh:
         trimesh_mesh = trimesh.Trimesh(vertices=mesh.vertices, faces=mesh.faces)
         trimesh_mesh.merge_vertices(
             merge_tex=True, merge_norm=True, digits_vertex=self._merge_digits

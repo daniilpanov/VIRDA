@@ -63,7 +63,7 @@ class MaskSealer(SegmentationMaskPostprocessor):
         self._keep_largest = keep_largest
         super().__init__()
 
-    def _process(self, mask: SegmentationMask) -> SegmentationMask:
+    def process(self, mask: SegmentationMask) -> SegmentationMask:
         return SegmentationMask(mask=self._seal_mask(mask.mask))
 
     def _seal_mask(self, mask: np.ndarray) -> np.ndarray:

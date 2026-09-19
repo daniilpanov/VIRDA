@@ -87,8 +87,12 @@ class ESEPipeline(AtomicPipeline[ESEPipelineContract]):
             raise ValueError("Missing mandatory input: 'ese_offset_mm'")
 
         ese_builder: ESEBuilder = PCAESEBuilder(
-            config=contract.to_stage2_config(),
             ese_offset_mm=contract.ese_offset_mm,
+            neighborhood_radius_mm=contract.neighborhood_radius_mm,
+            k_neighbors=contract.k_neighbors,
+            use_weighted_pca=contract.use_weighted_pca,
+            pca_sigma_mm=contract.pca_sigma_mm,
+            min_neighbors=contract.min_neighbors,
         )
 
         controller = PipelineController(logger=self._logger)

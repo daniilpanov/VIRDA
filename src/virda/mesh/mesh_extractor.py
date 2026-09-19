@@ -18,7 +18,7 @@ class MarchingCubesExtractor(MeshExtractor):
         """
         self._voxel_size_mm = voxel_size_mm
 
-    def _process(self, mask: SegmentationMask, mri_volume: MRIVolume) -> ScalpMesh:
+    def process(self, mask: SegmentationMask, mri_volume: MRIVolume) -> ScalpMesh:
         affine = mri_volume.affine
 
         if self._voxel_size_mm is None:

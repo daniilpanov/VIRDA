@@ -49,7 +49,7 @@ class OtsuHeadSegmenter(HeadSegmenter):
         self._threshold_scale: float = threshold_scale
         super().__init__()
 
-    def _process(self, volume: MRIVolume) -> SegmentationMask:
+    def process(self, volume: MRIVolume) -> SegmentationMask:
         base_threshold = self._compute_base_threshold(volume.data)
         intensity_threshold = self._threshold_scale * base_threshold
         above_threshold_mask = volume.data > intensity_threshold
