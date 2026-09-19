@@ -107,7 +107,8 @@ class TestScalpMeshLoader:
         target = save_scalp_mesh(tmp_path / "mesh.ply", source)
         loaded = load_scalp_mesh(target)
 
-        assert np.allclose(loaded.vertices, source.vertices, atol=1e-9)
+        # Binary PLY stores vertices as float32, so allow ~float32 roundoff.
+        assert np.allclose(loaded.vertices, source.vertices, atol=1e-5)
         assert np.allclose(loaded.faces, source.faces, atol=1e-9)
         assert loaded.faces.shape == source.faces.shape
 
@@ -118,7 +119,7 @@ class TestScalpMeshLoader:
         with pytest.raises(ValueError, match="Not a triangular surface mesh"):
             load_scalp_mesh(path)
 
-    def test_edit_mesh_runs_stage1_functions(self) -> None:
+    def test_stage0_registers_the_input_mesh(self) -> None:
         source = _tiny_mesh()
         contract = MeshEditingPipelineContract(scalp_mesh=source, smoother_type="none")
         pipeline = MeshEditingPipeline(contract)
