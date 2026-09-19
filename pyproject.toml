@@ -39,10 +39,10 @@ research = [
 ]
 
 [project.scripts]
-virda = "virda.main:main"
+virda = "virda_cli.main:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/virda"]
+packages = ["src/virda", "src/virda_cli"]
 
 [tool.uv.workspace]
 members = ["src/virda_gui"]
