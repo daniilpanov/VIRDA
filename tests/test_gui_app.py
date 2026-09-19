@@ -17,14 +17,26 @@ import pytest
 from PySide6.QtCore import QSettings, Signal
 from PySide6.QtWidgets import QWidget
 
-from virda_gui.constants import ADVANCED_FIELD_DEFAULTS, CONFIG_KEY_TO_ADVANCED
+from virda.config import VirdaSettings, build_config, load_config_file
+from virda.models.config import Config
+from virda_gui.constants import (
+    ADVANCED_FIELD_DEFAULTS,
+    CONFIG_KEY_TO_ADVANCED,
+    DEFAULT_PIPELINE_CONFIG_FILENAME,
+)
 from virda_gui.dialogs.project_dialog import (
     ProjectStartDialog,
     ask_create_project_folder,
 )
 from virda_gui.main_window import IdeWindow
 from virda_gui.preferences import Preferences
-from virda_gui.tabs.config_tab import ConfigTab
+from virda_gui.state import AppState
+from virda_gui.tabs.config_tab import (
+    ConfigTab,
+    density_percent_from_state,
+    serialize_config_for_save,
+    write_pipeline_config,
+)
 
 
 def _make_prefs(tmp_path: Path) -> Preferences:
@@ -149,6 +161,143 @@ def test_collect_config_rejects_out_of_range_density(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="mesh_density_percent"):
         ConfigTab.collect_config(cast("ConfigTab", _config_tab_stub(tmp_path, advanced)))
+
+
+def test_density_percent_from_state_parses_and_clamps() -> None:
+    assert density_percent_from_state({"mesh_density_percent": "50"}) == 50
+    assert density_percent_from_state({"mesh_density_percent": "57.6"}) == 58
+    assert density_percent_from_state({"mesh_density_percent": ""}) == 100
+    assert density_percent_from_state({}) == 100
+    assert density_percent_from_state({"mesh_density_percent": "junk"}) == 100
+    assert density_percent_from_state({"mesh_density_percent": "0"}) == 1
+    assert density_percent_from_state({"mesh_density_percent": "150"}) == 100
+
+
+def test_config_tab_density_slider_syncs_state_offscreen(tmp_path: Path) -> None:
+    """The density slider writes to ``AppState.advanced`` and reflects it."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+    try:
+        from PySide6.QtWidgets import QApplication
+    except Exception as exc:  # pragma: no cover - depends on local Qt install
+        pytest.skip(f"Qt platform unavailable: {exc}")
+
+    app = QApplication.instance() or QApplication([])
+    state = AppState(advanced=dict(ADVANCED_FIELD_DEFAULTS))
+    tab = ConfigTab(state)
+    try:
+        assert tab.density_slider.value() == 100
+        assert tab.density_value_label.text() == "100%"
+
+        tab.density_slider.setValue(63)
+        assert state.advanced["mesh_density_percent"] == "63"
+        assert tab.density_value_label.text() == "63%"
+
+        state.advanced["mesh_density_percent"] = "30"
+        tab._sync_density_from_state()
+        assert tab.density_slider.value() == 30
+        assert tab.density_value_label.text() == "30%"
+    finally:
+        tab.close()
+        app.quit()
+
+
+def test_config_tab_density_slider_feeds_collected_config_offscreen(
+    tmp_path: Path,
+) -> None:
+    """The slider's value flows into the Config collected for the pipeline."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+    try:
+        from PySide6.QtWidgets import QApplication
+    except Exception as exc:  # pragma: no cover - depends on local Qt install
+        pytest.skip(f"Qt platform unavailable: {exc}")
+
+    nifti = tmp_path / "head.nii.gz"
+    nifti.write_bytes(b"\x00")
+
+    app = QApplication.instance() or QApplication([])
+    state = AppState(advanced=dict(ADVANCED_FIELD_DEFAULTS))
+    tab = ConfigTab(state)
+    try:
+        tab._nifti.set(str(nifti))
+        tab._project_dir.set(str(tmp_path / "proj"))
+        tab.density_slider.setValue(42)
+
+        config = tab.collect_config()
+        assert config.mesh_density_percent == 42.0
+        assert state.advanced["mesh_density_percent"] == "42"
+    finally:
+        tab.close()
+        app.quit()
+
+
+def test_serialize_config_for_save_round_trips_through_file(tmp_path: Path) -> None:
+    config = Config(
+        nifti_path=str(tmp_path / "head.nii.gz"),
+        project_dir=str(tmp_path / "proj"),
+        seal_enabled=False,
+        seal_radius=7,
+        smoother_lamb=0.3,
+        smoother_iterations=9,
+        mesh_voxel_size_mm=2,
+        mesh_density_percent=45,
+        ese_offset_mm=2.5,
+    )
+    advanced = dict(ADVANCED_FIELD_DEFAULTS)
+    data = serialize_config_for_save(config, advanced)
+    target = tmp_path / "saved" / DEFAULT_PIPELINE_CONFIG_FILENAME
+
+    write_pipeline_config(target, data)
+
+    restored = Config.model_validate(load_config_file(target))
+    assert restored.seal_enabled is False
+    assert restored.seal_radius == 7
+    assert restored.smoother_lamb == pytest.approx(0.3)
+    assert restored.smoother_iterations == 9
+    assert restored.mesh_voxel_size_mm == 2
+    assert restored.mesh_density_percent == 45
+    assert restored.ese_offset_mm == 2.5
+    assert data["advanced"] == advanced
+
+
+def test_saved_pipeline_config_parses_through_build_config(tmp_path: Path) -> None:
+    config = Config(
+        nifti_path=str(tmp_path / "head.nii.gz"),
+        project_dir=str(tmp_path / "proj"),
+        mesh_density_percent=25,
+    )
+    target = tmp_path / "pipeline_config.json"
+    write_pipeline_config(target, serialize_config_for_save(config, dict(ADVANCED_FIELD_DEFAULTS)))
+
+    restored = build_config(VirdaSettings(), config_files=[target])
+
+    assert restored.mesh_density_percent == 25.0
+    assert restored.nifti_path == config.nifti_path
+    assert restored.project_dir == config.project_dir
+
+
+def test_default_config_save_path_uses_project_dir(tmp_path: Path) -> None:
+    stub = SimpleNamespace(
+        _project_dir=_FakeSelector(str(tmp_path / "project")),
+        _state=SimpleNamespace(last_project_dir=None),
+    )
+
+    assert ConfigTab._default_config_save_path(cast("ConfigTab", stub)) == str(
+        tmp_path / "project" / "input" / DEFAULT_PIPELINE_CONFIG_FILENAME
+    )
+
+
+def test_default_config_save_path_falls_back_to_filename() -> None:
+    stub = SimpleNamespace(
+        _project_dir=_FakeSelector(""),
+        _state=SimpleNamespace(last_project_dir=None),
+    )
+
+    assert (
+        ConfigTab._default_config_save_path(cast("ConfigTab", stub))
+        == DEFAULT_PIPELINE_CONFIG_FILENAME
+    )
 
 
 def test_collect_electrode_specs_skips_empty_and_duplicates(tmp_path) -> None:
