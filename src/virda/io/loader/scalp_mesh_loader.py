@@ -32,8 +32,3 @@ def save_scalp_mesh(path: str | Path, mesh: ScalpMesh) -> Path:
     target.parent.mkdir(parents=True, exist_ok=True)
     trimesh.Trimesh(vertices=mesh.vertices, faces=mesh.faces).export(str(target))
     return target
-
-
-def scalp_mesh_to_poly(mesh: ScalpMesh) -> trimesh.Trimesh:
-    """Return a :class:`trimesh.Trimesh` sharing the *mesh* geometry."""
-    return trimesh.Trimesh(vertices=mesh.vertices, faces=mesh.faces)
