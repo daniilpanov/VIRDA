@@ -59,12 +59,14 @@ def density_percent_from_state(advanced: dict[str, str]) -> int:
     """
     try:
         value = int(round(float(advanced.get("mesh_density_percent", ""))))
-    except ValueError:
+    except (ValueError, OverflowError):
         value = _MESH_DENSITY_DEFAULT
     return max(_MESH_DENSITY_MIN, min(_MESH_DENSITY_MAX, value))
 
 
-def serialize_config_for_save(config: Config, advanced: dict[str, str]) -> dict[str, Any]:
+def serialize_config_for_save(
+    config: Config, advanced: dict[str, str], measurements_path: str | None = None
+) -> dict[str, Any]:
     """Serialize a pipeline ``Config`` into the ``pipeline_config.json`` schema.
 
     The saved file is a flat JSON object whose keys are the ``Config`` field
@@ -82,6 +84,8 @@ def serialize_config_for_save(config: Config, advanced: dict[str, str]) -> dict[
     """
     data = config.model_dump(exclude_none=True)
     data.pop("coordsystem", None)
+    if measurements_path:
+        data["measurements_path"] = measurements_path
     data["advanced"] = dict(advanced)
     return data
 
@@ -152,6 +156,8 @@ class ConfigTab(QWidget):
         self._groups_inner = QWidget(self)
         self._groups_layout = QVBoxLayout(self._groups_inner)
 
+        self._syncing_density = False
+
         self._build_ui()
 
         self._config_file.textChanged.connect(self._on_config_file_changed)
@@ -162,8 +168,10 @@ class ConfigTab(QWidget):
         self.export_btn.clicked.connect(self.exportHtml)
         self.save_config_btn.clicked.connect(self._on_save_pipeline_config)
         self.save_config_as_btn.clicked.connect(self._on_save_pipeline_config_as)
+        self._project_dir.directory_changed.connect(self._sync_save_buttons)
 
         self._sync_density_from_state()
+        self._sync_save_buttons()
 
     # ---- UI construction ----
 
@@ -297,6 +305,12 @@ class ConfigTab(QWidget):
             QMessageBox.critical(self, "Fiducials error", f"Invalid fiducials file:\n{exc}")
             self._fiducials.set("")
 
+    def _sync_save_buttons(self) -> None:
+        """Enable the config save buttons only when a project dir is present."""
+        enabled = bool(self.project_dir() or self._state.last_project_dir)
+        self.save_config_btn.setEnabled(enabled)
+        self.save_config_as_btn.setEnabled(enabled)
+
     # ---- Advanced settings ----
 
     def _on_density_changed(self, value: int) -> None:
@@ -304,15 +318,23 @@ class ConfigTab(QWidget):
 
         The advanced dict is the single source of truth for the density value;
         the slider is a convenience view that writes back to it so
-        :meth:`collect_config` always sees the slider's value.
+        :meth:`collect_config` always sees the slider's value.  Programmatic
+        updates from :meth:`_sync_density_from_state` skip the write-back so a
+        persisted fractional value (e.g. ``"57.6"``) is not snapped to the
+        integer slider position.
         """
-        self._state.advanced["mesh_density_percent"] = str(value)
+        if not self._syncing_density:
+            self._state.advanced["mesh_density_percent"] = str(value)
         self.density_value_label.setText(f"{value}%")
 
     def _sync_density_from_state(self) -> None:
         """Make the slider (and its label) reflect the advanced density value."""
         value = density_percent_from_state(self._state.advanced)
-        self.density_slider.setValue(value)
+        self._syncing_density = True
+        try:
+            self.density_slider.setValue(value)
+        finally:
+            self._syncing_density = False
         self.density_value_label.setText(f"{value}%")
 
     def _on_show_advanced(self) -> None:
@@ -357,7 +379,10 @@ class ConfigTab(QWidget):
             return
         try:
             write_pipeline_config(
-                path, serialize_config_for_save(config, self._state.advanced)
+                path,
+                serialize_config_for_save(
+                    config, self._state.advanced, measurements_path=self.measurements.get()
+                ),
             )
         except OSError as exc:
             QMessageBox.critical(self, "Save config", f"Could not write file:\n{exc}")

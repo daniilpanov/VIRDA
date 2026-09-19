@@ -169,6 +169,9 @@ def test_density_percent_from_state_parses_and_clamps() -> None:
     assert density_percent_from_state({"mesh_density_percent": ""}) == 100
     assert density_percent_from_state({}) == 100
     assert density_percent_from_state({"mesh_density_percent": "junk"}) == 100
+    assert density_percent_from_state({"mesh_density_percent": "inf"}) == 100
+    assert density_percent_from_state({"mesh_density_percent": "-inf"}) == 100
+    assert density_percent_from_state({"mesh_density_percent": "1e999"}) == 100
     assert density_percent_from_state({"mesh_density_percent": "0"}) == 1
     assert density_percent_from_state({"mesh_density_percent": "150"}) == 100
 
@@ -197,6 +200,11 @@ def test_config_tab_density_slider_syncs_state_offscreen(tmp_path: Path) -> None
         tab._sync_density_from_state()
         assert tab.density_slider.value() == 30
         assert tab.density_value_label.text() == "30%"
+
+        state.advanced["mesh_density_percent"] = "57.6"
+        tab._sync_density_from_state()
+        assert tab.density_slider.value() == 58
+        assert state.advanced["mesh_density_percent"] == "57.6"
     finally:
         tab.close()
         app.quit()
@@ -245,7 +253,7 @@ def test_serialize_config_for_save_round_trips_through_file(tmp_path: Path) -> N
         ese_offset_mm=2.5,
     )
     advanced = dict(ADVANCED_FIELD_DEFAULTS)
-    data = serialize_config_for_save(config, advanced)
+    data = serialize_config_for_save(config, advanced, measurements_path=str(tmp_path / "in.json"))
     target = tmp_path / "saved" / DEFAULT_PIPELINE_CONFIG_FILENAME
 
     write_pipeline_config(target, data)
@@ -259,6 +267,7 @@ def test_serialize_config_for_save_round_trips_through_file(tmp_path: Path) -> N
     assert restored.mesh_density_percent == 45
     assert restored.ese_offset_mm == 2.5
     assert data["advanced"] == advanced
+    assert load_config_file(target)["measurements_path"] == str(tmp_path / "in.json")
 
 
 def test_saved_pipeline_config_parses_through_build_config(tmp_path: Path) -> None:
