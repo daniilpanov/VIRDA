@@ -15,7 +15,6 @@ object each time, so "start over from the original" is always safe.
 from __future__ import annotations
 
 from logging import Logger
-from typing import Literal
 
 from pydantic import ConfigDict
 
@@ -31,8 +30,6 @@ class MeshEditingPipelineContract(MeshPipelineContract):
 
     Carries all mesh-grow parameters (smoother, decimation) but drops the
     NIfTI input requirement; ``scalp_mesh`` is the single mandatory input.
-    ``smoother_type`` gains a ``"none"`` option so the untouched original mesh
-    can be previewed and saved as-is.
     """
 
     model_config = ConfigDict(
@@ -40,7 +37,6 @@ class MeshEditingPipelineContract(MeshPipelineContract):
     )
 
     scalp_mesh: ScalpMesh | None = None
-    smoother_type: Literal["laplacian", "taubin", "none"] = "laplacian"
 
     mandatory_fields = frozenset({"scalp_mesh"})
 
@@ -68,14 +64,14 @@ def edit_mesh(contract: MeshEditingPipelineContract) -> ScalpMesh:
     """Return the smoothed (and optionally decimated) result of ``scalp_mesh``.
 
     Runs the inherited ``smooth`` stage-1 function when ``smoother_type`` is
-    not ``"none"``, then ``decimate`` when ``density_percent`` is below 100.
-    The contract's input mesh is left untouched; the returned
-    :class:`ScalpMesh` is a new object.
+    not ``"none"``, then ``decimate`` when ``mesh_density_percent`` is below
+    100.  The contract's input mesh is left untouched; when no post-processing
+    applies the input instance itself is returned.
     """
     pipeline = MeshEditingPipeline(contract)
     context = pipeline.run_stage0()
     if contract.smoother_type != "none":
         pipeline.run_stage1("smooth", context)
-    if contract.density_percent < 100.0:
+    if contract.mesh_density_percent < 100.0:
         pipeline.run_stage1("decimate", context)
     return context.get_store_notnull(ScalpMesh)
