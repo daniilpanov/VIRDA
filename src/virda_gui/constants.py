@@ -2,6 +2,9 @@
 
 ELECTRODE_PALETTE = ["yellow", "lime", "magenta", "cyan", "orange", "white"]
 
+DEFAULT_FIDUCIALS_FILENAME = "fiducials.json"
+DEFAULT_MEASUREMENTS_FILENAME = "measurements.json"
+
 PROJECT_ARTIFACT_DIRS = [
     "input",
     "segmentation",
