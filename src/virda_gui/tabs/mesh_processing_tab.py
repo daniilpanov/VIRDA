@@ -118,6 +118,7 @@ class MeshProcessingTab(QWidget):
     eseMesh = Signal(object)  # noqa: N815 - the generated ESEMesh in world coords
     saved = Signal()  # noqa: N815 - fired after Save wrote the mesh to disk
     status = Signal(str)  # noqa: N815 - non-blocking log lines
+    baseMeshChanged = Signal(object)  # noqa: N815 - the new base mesh path (Path | None)
 
     def __init__(self, state: AppState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -150,7 +151,9 @@ class MeshProcessingTab(QWidget):
         self._preview_label = QLabel("No base mesh loaded. Load a mesh or generate from NIfTI.", self)
         layout.addWidget(self._preview_label)
 
+        self.baseMeshChanged.connect(self._update_generation_buttons)
         self._connect_parameter_edits()
+        self._update_generation_buttons()
 
     # ---- UI builders ----
 
@@ -306,6 +309,18 @@ class MeshProcessingTab(QWidget):
             return
         self.load_base(Path(path))
 
+    def _set_base_path(self, path: Path | None) -> None:
+        """Record the base mesh path and notify listeners of the change.
+
+        Every mutation of :attr:`_base_path` must go through this setter so the
+        ESE button (and any other listener) is re-evaluated exactly when the
+        base mesh changes, including when the path is cleared.
+        """
+        if path == self._base_path:
+            return
+        self._base_path = Path(path) if path is not None else None
+        self.baseMeshChanged.emit(self._base_path)
+
     def load_base(self, path: Path) -> bool:
         """Load the base mesh from *path*; returns False when it cannot be read."""
         try:
@@ -314,10 +329,11 @@ class MeshProcessingTab(QWidget):
             QMessageBox.critical(self, "Load scalp mesh", f"Could not load mesh:\n{exc}")
             return False
         self._base_mesh = mesh
-        self._base_path = path
+        self._set_base_path(path)
         self._preview_mesh = None
         self._base_label.setText(str(path))
         self._preview_label.setText(f"Base mesh: {len(mesh.vertices)} vertices")
+        self._update_generation_buttons()
         self.previewMesh.emit(mesh)
         return True
 
@@ -434,7 +450,7 @@ class MeshProcessingTab(QWidget):
         self._generation_busy = True
         self._pending_kind = kind
         self._mesh_source_path = source_path
-        self._set_generation_buttons_enabled(False)
+        self._update_generation_buttons()
 
         self._generation_thread = QThread(self)
         self._generation_worker = _BackgroundWorker(fn, seq)
@@ -459,12 +475,13 @@ class MeshProcessingTab(QWidget):
         mesh: ScalpMesh = result  # type: ignore[assignment]
         assert source_path is not None
         self._base_mesh = mesh
-        self._base_path = None  # generated in memory; gains a path only on Save
+        self._set_base_path(None)  # generated in memory; gains a path only on Save
         self._preview_mesh = None
         self._base_label.setText(
             f"Generated from {source_path.name}: {len(mesh.vertices)} vertices (unsaved)"
         )
         self._preview_label.setText(f"Base mesh: {len(mesh.vertices)} vertices")
+        self._update_generation_buttons()
         self.previewMesh.emit(mesh)
         self.status.emit(f"Scalp mesh generated: {len(mesh.vertices)} vertices.")
 
@@ -505,7 +522,7 @@ class MeshProcessingTab(QWidget):
         self._mesh_source_path = None
         self._pending_kind = None
         self._generation_busy = False
-        self._set_generation_buttons_enabled(True)
+        self._update_generation_buttons()
 
     def _cancel_running_generation(self) -> None:
         """Stop an in-flight generation so a newer request replaces it.
@@ -536,12 +553,22 @@ class MeshProcessingTab(QWidget):
         self._mesh_source_path = None
         self._pending_kind = None
         self._generation_busy = False
-        self._set_generation_buttons_enabled(True)
+        self._update_generation_buttons()
 
-    def _set_generation_buttons_enabled(self, enabled: bool) -> None:
-        for button in (self._mesh_generation_btn, self._generate_ese_btn):
-            if button is not None:
-                button.setEnabled(enabled)
+    def _update_generation_buttons(self) -> None:
+        """Reflect the busy flag and ESE's need for a base mesh PLY.
+
+        Nothing can start while a generation runs; the ESE button additionally
+        stays disabled until the base mesh has a ``*.ply`` path (set by
+        ``Load...`` or by "Save to project").  Any change to the base path re-
+        runs this via :attr:`baseMeshChanged`.
+        """
+        ready = not self._generation_busy
+        if self._mesh_generation_btn is not None:
+            self._mesh_generation_btn.setEnabled(ready)
+        if self._generate_ese_btn is not None:
+            base_ready = self._base_path is not None and self._base_path.suffix.lower() == ".ply"
+            self._generate_ese_btn.setEnabled(ready and base_ready)
 
     def shutdown(self) -> None:
         """Stop the generation thread, if any.
@@ -552,6 +579,11 @@ class MeshProcessingTab(QWidget):
         self._cancel_running_generation()
 
     def _on_generate_ese(self) -> None:
+        if self._base_path is None:
+            QMessageBox.warning(
+                self, "Generate ESE", "Generate and save a scalp mesh to the project first."
+            )
+            return
         base = self.current_scalp_mesh()
         if base is None:
             QMessageBox.warning(self, "Generate ESE", "Load a base mesh first.")
@@ -577,8 +609,9 @@ class MeshProcessingTab(QWidget):
             QMessageBox.critical(self, "Save mesh", f"Could not save mesh:\n{exc}")
             return
         self.status.emit(f"Saved working mesh ({len(target.vertices)} vertices) to {mesh_path}.")
-        self._base_path = mesh_path
+        self._set_base_path(mesh_path)
         self._base_label.setText(str(mesh_path))
+        self._update_generation_buttons()
         self.saved.emit()
 
     def _on_reset(self) -> None:
@@ -621,7 +654,7 @@ class MeshProcessingTab(QWidget):
         """Forget the in-memory mesh state without touching the project."""
         self._cancel_running_generation()
         self._base_mesh = None
-        self._base_path = None
+        self._set_base_path(None)
         self._preview_mesh = None
         self._base_label.setText("No base mesh loaded")
         self._preview_label.setText("No base mesh loaded. Load a mesh or generate from NIfTI.")
