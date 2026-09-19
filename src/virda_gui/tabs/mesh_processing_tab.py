@@ -25,11 +25,16 @@ the host on the GUI thread.
 
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
-from PySide6.QtCore import QObject, QThread, Qt, QTimer, Signal
+import numpy as np
+import pyvista as pv
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QFileDialog,
@@ -40,9 +45,11 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSlider,
     QSpinBox,
+    QSplitter,
     QVBoxLayout,
     QWidget,
 )
+from pyvistaqt import QtInteractor
 
 from virda.io.exporters.scalp_mesh import export_scalp_mesh
 from virda.io.importers.nifti import import_nifti
@@ -58,10 +65,14 @@ from virda.ops.options import (
     SmoothOptions,
 )
 from virda_gui.state import AppState
+from virda_gui.viewer.scene import scene_placement
+from virda_gui.viewer.viewer_loaders import SceneData, collect_scene_data
 
 _FINAL_MESH_FILENAME = "final_mesh.ply"
+_NIFTI_PREVIEW_STRIDE = 2
 _MESH_DENSITY_MIN = 1
 _MESH_DENSITY_MAX = 100
+_DENSITY_THROTTLE_S = 0.5
 
 _SMOOTHER_ITEMS = [
     ("none", "None (keep original)"),
@@ -134,22 +145,50 @@ class MeshProcessingTab(QWidget):
         self._generation_busy = False
         self._pending_kind: str | None = None
         self._mesh_source_path: Path | None = None
+        self._interactor: QtInteractor | None = None
+        self._result_actor: Any | None = None
+        self._base_actor: Any | None = None
+        self._nifti_actor: Any | None = None
+        self._nifti_volume: pv.ImageData | None = None
+        self._nifti_transform: np.ndarray = np.eye(4)
+        self._nifti_mm_scene = True
+        self._nifti_path: Path | None = None
+        self._result_hidden = False
+        self._last_density_recompute = 0.0
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(8)
+        panel = QWidget(self)
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(8, 8, 8, 8)
+        panel_layout.setSpacing(8)
 
-        layout.addWidget(self._build_source_box())
-        layout.addWidget(self._build_parameters_box())
-        layout.addWidget(self._build_actions_box())
-        layout.addStretch(1)
+        panel_layout.addWidget(self._build_source_box())
+        panel_layout.addWidget(self._build_parameters_box())
+        panel_layout.addWidget(self._build_actions_box())
+        panel_layout.addStretch(1)
 
         self._preview_timer = QTimer(self)
         self._preview_timer.setSingleShot(True)
         self._preview_timer.setInterval(150)
         self._preview_timer.timeout.connect(self._recompute_preview)
-        self._preview_label = QLabel("No base mesh loaded. Load a mesh or generate from NIfTI.", self)
-        layout.addWidget(self._preview_label)
+        self._preview_label = QLabel(
+            "No base mesh loaded. Load a mesh or generate from NIfTI.", panel
+        )
+        panel_layout.addWidget(self._preview_label)
+
+        self._splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        self._splitter.addWidget(panel)
+        # The embedded 3D pane is part of the tab from the moment it is
+        # created, so the preview area is always visible next to the controls.
+        self._interactor = QtInteractor(parent=self)
+        self._splitter.addWidget(self._interactor)
+        self._splitter.setStretchFactor(0, 0)
+        self._splitter.setStretchFactor(1, 1)
+        self._splitter.setSizes([430, 520])
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        root.addWidget(self._splitter, 1)
 
         self.baseMeshChanged.connect(self._update_generation_buttons)
         self._connect_parameter_edits()
@@ -213,6 +252,22 @@ class MeshProcessingTab(QWidget):
         density_row.addWidget(self._density_label)
         grid.addLayout(density_row)
 
+        display_row = QHBoxLayout()
+        self._show_nifti_chk = QCheckBox("Show NIfTI", box)
+        self._show_base_chk = QCheckBox("Show base mesh", box)
+        self._show_result_chk = QCheckBox("Show result mesh", box)
+        self._show_nifti_chk.setChecked(True)
+        self._show_base_chk.setChecked(False)
+        self._show_result_chk.setChecked(True)
+        self._show_nifti_chk.toggled.connect(self._on_display_toggled)
+        self._show_base_chk.toggled.connect(self._on_display_toggled)
+        self._show_result_chk.toggled.connect(self._on_display_toggled)
+        display_row.addWidget(self._show_nifti_chk)
+        display_row.addWidget(self._show_base_chk)
+        display_row.addWidget(self._show_result_chk)
+        display_row.addStretch(1)
+        grid.addLayout(display_row)
+
         ese_row = QHBoxLayout()
         ese_row.addWidget(QLabel("ESE offset (mm):", box))
         self._ese_offset_spin = QDoubleSpinBox(box)
@@ -257,6 +312,8 @@ class MeshProcessingTab(QWidget):
         self._lamb_spin.valueChanged.connect(self._on_parameter_edited)
         self._nu_spin.valueChanged.connect(self._on_parameter_edited)
         self._density_slider.valueChanged.connect(self._on_density_edited)
+        self._density_slider.sliderMoved.connect(self._on_density_dragged)
+        self._density_slider.sliderReleased.connect(self._on_density_released)
 
     def _on_parameter_edited(self, *_args: Any) -> None:
         self._preview_timer.start()
@@ -264,6 +321,22 @@ class MeshProcessingTab(QWidget):
     def _on_density_edited(self, *_args: Any) -> None:
         self._density_label.setText(f"{self._density_slider.value()}%")
         self._preview_timer.start()
+
+    def _on_density_dragged(self, *_args: Any) -> None:
+        """Live-recompute while dragging, throttled to at most 2 Hz."""
+        self._density_label.setText(f"{self._density_slider.value()}%")
+        now = time.monotonic()
+        if now - self._last_density_recompute >= _DENSITY_THROTTLE_S:
+            self._last_density_recompute = now
+            self._recompute_preview()
+
+    def _on_density_released(self, *_args: Any) -> None:
+        """Recompute once more at the final thumb position on mouse release."""
+        self._last_density_recompute = 0.0
+        self._recompute_preview()
+
+    def _on_display_toggled(self, *_args: Any) -> None:
+        self._render_scene()
 
     def _compute_preview(self, base: ScalpMesh) -> ScalpMesh:
         """Run the configured smoother/density on *base* without mutating it."""
@@ -284,11 +357,72 @@ class MeshProcessingTab(QWidget):
             mesh = decimate(mesh, DecimateOptions(density_percent=density))
         return mesh
 
+    # ---- in-tab live preview ----
+
+    def _ensure_preview_pane(self) -> QtInteractor:
+        """Return the embedded 3D pane created in :meth:`__init__`."""
+        if self._interactor is None:
+            self._interactor = QtInteractor(parent=self)
+        return self._interactor
+
+    def _mesh_to_polydata(self, mesh: ScalpMesh | ESEMesh) -> pv.PolyData:
+        """Build a :class:`pv.PolyData` actor surface from a mesh model."""
+        faces = np.column_stack(
+            [np.full(len(mesh.faces), 3, dtype=np.int64), np.asarray(mesh.faces, dtype=np.int64)]
+        ).ravel()
+        return pv.PolyData(np.asarray(mesh.vertices, dtype=np.float64), faces)
+
+    def _render_scene(self) -> None:
+        """Compose the preview pane from the visible layers and their flags.
+
+        The three checkboxes decide which layer is drawn: the NIfTI volume, the
+        original base mesh and the in-RAM working result.  The base layer is
+        skipped when it *is* the mesh currently shown as the result, and the
+        result layer disappears after a save until the next edit.  The camera
+        is framed only when the pane was empty, so parameter edits, layer
+        toggles and volume loads keep the user's view.
+        """
+        interactor = self._ensure_preview_pane()
+        result = self.current_scalp_mesh()
+        was_empty = (
+            self._result_actor is None and self._base_actor is None and self._nifti_actor is None
+        )
+        interactor.clear()
+        self._nifti_actor = None
+        self._base_actor = None
+        self._result_actor = None
+        if self._show_nifti_chk.isChecked() and self._nifti_volume is not None:
+            self._nifti_actor = interactor.add_volume(
+                self._nifti_volume, cmap="bone", opacity="sigmoid", mapper="smart"
+            )
+        if (
+            self._show_base_chk.isChecked()
+            and result is not None
+            and self._base_mesh is not None
+            and result is not self._base_mesh
+        ):
+            self._base_actor = interactor.add_mesh(
+                self._mesh_to_polydata(self._base_mesh), color="lightgray", opacity=0.6
+            )
+        if self._show_result_chk.isChecked() and not self._result_hidden and result is not None:
+            poly = self._mesh_to_polydata(result)
+            if not self._nifti_mm_scene:
+                poly.transform(self._nifti_transform, inplace=True)
+            self._result_actor = interactor.add_mesh(poly, color="salmon", opacity=0.9)
+        interactor.add_axes(interactive=False)  # type: ignore[call-arg]
+        if was_empty:
+            interactor.reset_camera()  # type: ignore[call-arg]
+        interactor.render()
+
     # ---- preview / actions ----
 
     def _recompute_preview(self) -> None:
+        """Recompute the parameter-adjusted preview mesh whenever a base is set."""
         base = self._base_mesh
         if base is None:
+            self._preview_mesh = None
+            self._result_hidden = False
+            self._render_scene()
             return
         try:
             preview = self._compute_preview(base)
@@ -296,9 +430,11 @@ class MeshProcessingTab(QWidget):
             self.status.emit(f"Mesh preview failed: {exc}")
             return
         self._preview_mesh = preview
+        self._result_hidden = False
         self._preview_label.setText(
             f"Preview: {len(preview.vertices)} vertices (base {len(base.vertices)})"
         )
+        self._render_scene()
         self.previewMesh.emit(preview)
 
     def _on_load_base(self) -> None:
@@ -331,8 +467,10 @@ class MeshProcessingTab(QWidget):
         self._base_mesh = mesh
         self._set_base_path(path)
         self._preview_mesh = None
+        self._result_hidden = False
         self._base_label.setText(str(path))
         self._preview_label.setText(f"Base mesh: {len(mesh.vertices)} vertices")
+        self._render_scene()
         self._update_generation_buttons()
         self.previewMesh.emit(mesh)
         return True
@@ -467,6 +605,17 @@ class MeshProcessingTab(QWidget):
         kind = self._pending_kind
         source_path = self._mesh_source_path
         self._finish_generation()
+        if kind == "nifti_scene":
+            scene: SceneData = result  # type: ignore[assignment]
+            if scene.volume is not None:
+                _, _, transform, mm_scene = scene_placement(scene.affine)
+                self._nifti_path = source_path
+                self._nifti_volume = scene.volume
+                self._nifti_transform = transform
+                self._nifti_mm_scene = mm_scene
+                self.status.emit(f"NIfTI preview loaded ({scene.volume.dimensions}).")
+                self._render_scene()
+            return
         if kind == "ese":
             ese: ESEMesh = result  # type: ignore[assignment]
             self.status.emit(f"ESE mesh generated: {len(ese.vertices)} vertices.")
@@ -481,6 +630,8 @@ class MeshProcessingTab(QWidget):
             f"Generated from {source_path.name}: {len(mesh.vertices)} vertices (unsaved)"
         )
         self._preview_label.setText(f"Base mesh: {len(mesh.vertices)} vertices")
+        self._result_hidden = False
+        self._render_scene()
         self._update_generation_buttons()
         self.previewMesh.emit(mesh)
         self.status.emit(f"Scalp mesh generated: {len(mesh.vertices)} vertices.")
@@ -489,6 +640,10 @@ class MeshProcessingTab(QWidget):
         if seq != self._generation_seq:
             return
         kind = self._pending_kind
+        if kind == "nifti_scene":
+            self._finish_generation()
+            self.status.emit(f"NIfTI preview failed: {message}")
+            return
         if kind == "ese":
             title = "Generate ESE"
             subject = "ESE mesh"
@@ -611,6 +766,8 @@ class MeshProcessingTab(QWidget):
         self.status.emit(f"Saved working mesh ({len(target.vertices)} vertices) to {mesh_path}.")
         self._set_base_path(mesh_path)
         self._base_label.setText(str(mesh_path))
+        self._result_hidden = True
+        self._render_scene()
         self._update_generation_buttons()
         self.saved.emit()
 
@@ -622,6 +779,9 @@ class MeshProcessingTab(QWidget):
             self._nu_spin,
             self._density_slider,
             self._ese_offset_spin,
+            self._show_nifti_chk,
+            self._show_base_chk,
+            self._show_result_chk,
         )
         for widget in widgets:
             widget.blockSignals(True)
@@ -631,6 +791,9 @@ class MeshProcessingTab(QWidget):
         self._nu_spin.setValue(-0.53)
         self._density_slider.setValue(100)
         self._ese_offset_spin.setValue(2.0)
+        self._show_nifti_chk.setChecked(True)
+        self._show_base_chk.setChecked(False)
+        self._show_result_chk.setChecked(True)
         for widget in widgets:
             widget.blockSignals(False)
         self._density_label.setText("100%")
@@ -645,6 +808,35 @@ class MeshProcessingTab(QWidget):
         candidate = root / "mesh" / _FINAL_MESH_FILENAME
         if candidate.is_file():
             self.load_base(candidate)
+        nifti = self._find_project_nifti(root)
+        if nifti is not None:
+            self._start_nifti_scene(nifti)
+
+    def _find_project_nifti(self, project_root: Path) -> Path | None:
+        """The input NIfTI file of *project_root*, if any (used for preview)."""
+        for pattern in ("input/*.nii.gz", "input/*.nii"):
+            matches = sorted(project_root.glob(pattern))
+            if matches:
+                return matches[0]
+        return None
+
+    def _start_nifti_scene(self, path: str | Path) -> None:
+        """Load a NIfTI volume for the preview pane on a background thread."""
+        nifti_path = str(path)
+
+        def _run() -> SceneData:
+            return collect_scene_data(
+                nifti_path=nifti_path,
+                downsample_stride=_NIFTI_PREVIEW_STRIDE,
+                log=lambda _m: None,
+            )
+
+        self._start_generation(
+            _run,
+            kind="nifti_scene",
+            source_path=Path(nifti_path),
+            start_message=f"Loading NIfTI preview from {Path(nifti_path).name}...",
+        )
 
     def current_scalp_mesh(self) -> ScalpMesh | None:
         """The in-memory mesh the user is working on (preview, else the base)."""
@@ -656,5 +848,11 @@ class MeshProcessingTab(QWidget):
         self._base_mesh = None
         self._set_base_path(None)
         self._preview_mesh = None
+        self._nifti_volume = None
+        self._nifti_transform = np.eye(4)
+        self._nifti_mm_scene = True
+        self._nifti_path = None
+        self._result_hidden = False
         self._base_label.setText("No base mesh loaded")
         self._preview_label.setText("No base mesh loaded. Load a mesh or generate from NIfTI.")
+        self._render_scene()
