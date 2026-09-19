@@ -174,7 +174,7 @@ class TestSceneToFrameMatrix:
         world = transform_4x4(scene_pts, scene_to_world_matrix(affine, False))
         voxel = transform_4x4(scene_pts, scene_to_frame_matrix(FRAME_VOXEL, affine, None, False))
         np.testing.assert_allclose(voxel, scene_pts, atol=1e-9)
-        back_to_scene = transform_4x4(world, frame_to_world_matrix(FRAME_VOXEL, affine, None))
+        back_to_scene = transform_4x4(world, world_to_frame_matrix(FRAME_VOXEL, affine, None))
         np.testing.assert_allclose(back_to_scene, scene_pts, atol=1e-8)
 
     def test_selector_helpers(self) -> None:

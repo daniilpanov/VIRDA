@@ -158,10 +158,10 @@ def write_mesh_obj(path: str | Path, points: np.ndarray, faces: np.ndarray, fram
         f"v {x:.6g} {y:.6g} {z:.6g}"
         for x, y, z in np.asarray(points, dtype=np.float64)
     )
-    lines.extend(
-        f"f {i0 + 1} {i1 + 1} {i2 + 1}"
-        for i0, i1, i2 in triangle_faces(np.asarray(faces, dtype=np.int64))
-    )
+    faces = np.asarray(faces, dtype=np.int64)
+    if faces.ndim != 2 or faces.shape[1] != 3:
+        raise ValueError(f"expected triangular (M, 3) faces, got shape {faces.shape}")
+    lines.extend(f"f {i0 + 1} {i1 + 1} {i2 + 1}" for i0, i1, i2 in faces)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
 

@@ -138,6 +138,7 @@ class ViewerWidget(QWidget):
         self._labels_visible = True
         self._mesh_opacity = 0.6
         self._hi_clim: tuple[float, float] | None = None
+        self._contrast_boost = False
 
         self._build_ui()
 
@@ -322,6 +323,7 @@ class ViewerWidget(QWidget):
                 poly, color="salmon", opacity=self._mesh_opacity
             )
             self._point_actors.append(self._mesh_actor)
+            self._apply_mesh_props()
 
         self._fiducial_actor = None
         self._fiducial_label_actor = None
@@ -468,7 +470,7 @@ class ViewerWidget(QWidget):
         combo.setCurrentIndex(FRAME_IDS.index(self._current_frame))
         for index, frame_id in enumerate(FRAME_IDS):
             if not frame_available(frame_id, self._affine, self._cras_offset):
-                combo.setItemData(index, False, role=int(Qt.ItemDataRole.DisableRole))
+                combo.model().item(index).setEnabled(False)
         combo.currentIndexChanged.connect(lambda _index: self._on_frame_selected())
         frame_layout.addWidget(combo)
         frame_layout.addWidget(
@@ -481,7 +483,7 @@ class ViewerWidget(QWidget):
         self._frame_combo = combo
         self._layers_layout.addWidget(box)
 
-    def _add_export_controls(self) -> None:
+    def _add_export_controls(self, scene: SceneData) -> None:
         box = QGroupBox("Export to coordinate system", self._layers_panel)
         export_layout = QVBoxLayout(box)
         export_layout.setContentsMargins(4, 4, 4, 4)
@@ -489,13 +491,20 @@ class ViewerWidget(QWidget):
         export_layout.addWidget(
             QLabel("Writes the loaded data re-expressed in the selected frame.", box)
         )
-        for text, slot in (
-            ("Export mesh (OBJ)...", self._on_export_mesh),
-            ("Export electrodes (TSV)...", self._on_export_electrodes),
-            ("Export fiducials (TSV)...", self._on_export_fiducials),
+        has_mesh = scene.scene_mesh is not None
+        has_electrodes = any(
+            group["points"] is not None and len(group["points"]) > 0
+            for group in scene.electrode_groups
+        )
+        has_fiducials = scene.fiducial_points is not None and len(scene.fiducial_points) > 0
+        for text, slot, available in (
+            ("Export mesh (OBJ)...", self._on_export_mesh, has_mesh),
+            ("Export electrodes (TSV)...", self._on_export_electrodes, has_electrodes),
+            ("Export fiducials (TSV)...", self._on_export_fiducials, has_fiducials),
         ):
             button = QPushButton(text, box)
             button.clicked.connect(slot)
+            button.setEnabled(available)
             export_layout.addWidget(button)
         self._layers_layout.addWidget(box)
 
@@ -588,7 +597,7 @@ class ViewerWidget(QWidget):
                 )
         self._add_layer_check("Boost contrast", False, self._set_contrast)
         self._add_frame_controls()
-        self._add_export_controls()
+        self._add_export_controls(scene)
         self._layers_layout.addStretch(1)
 
     def _add_layer_check(self, text: str, checked: bool, slot: Callable[[bool], None]) -> None:
@@ -648,20 +657,26 @@ class ViewerWidget(QWidget):
         self._group_states[gi] = bool(flag)
         self._apply_group_visibility(gi)
 
+    def _apply_mesh_props(self) -> None:
+        """Apply the boost-contrast mesh material, else the default opacity."""
+        if self._mesh_actor is None:
+            return
+        if self._contrast_boost:
+            self._mesh_actor.prop.opacity = 0.95
+            self._mesh_actor.prop.diffuse = 1.0
+            self._mesh_actor.prop.specular = 0.6
+            self._mesh_actor.prop.specular_power = 40.0
+            self._mesh_actor.prop.ambient = 0.2
+        else:
+            self._mesh_actor.prop.opacity = self._mesh_opacity
+            self._mesh_actor.prop.diffuse = 1.0
+            self._mesh_actor.prop.specular = 0.0
+            self._mesh_actor.prop.specular_power = 100.0
+            self._mesh_actor.prop.ambient = 0.0
+
     def _set_contrast(self, flag: bool) -> None:
-        if self._mesh_actor is not None:
-            if flag:
-                self._mesh_actor.prop.opacity = 0.95
-                self._mesh_actor.prop.diffuse = 1.0
-                self._mesh_actor.prop.specular = 0.6
-                self._mesh_actor.prop.specular_power = 40.0
-                self._mesh_actor.prop.ambient = 0.2
-            else:
-                self._mesh_actor.prop.opacity = self._mesh_opacity
-                self._mesh_actor.prop.diffuse = 1.0
-                self._mesh_actor.prop.specular = 0.0
-                self._mesh_actor.prop.specular_power = 100.0
-                self._mesh_actor.prop.ambient = 0.0
+        self._contrast_boost = bool(flag)
+        self._apply_mesh_props()
         if self._volume is not None and self._mri_actor is not None:
             if "intensity" in self._plotter.scalar_bars:
                 self._plotter.remove_scalar_bar("intensity")
