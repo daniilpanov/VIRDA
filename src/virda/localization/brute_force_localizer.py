@@ -1,12 +1,14 @@
 from dataclasses import replace
 
 import numpy as np
+import trimesh
 from scipy.spatial.distance import cdist
 
 from virda.localization.contracts import ElectrodeLocalizer
 from virda.models.electrode import Electrode, Electrodes
 from virda.models.ese_mesh import ESEMesh
 from virda.models.fiducial import Fiducial, Fiducials
+from virda.models.scalp_mesh import ScalpMesh
 from virda.models.stage3_config import Stage3Config
 
 _OFFSET_SEARCH_MIN_MM = -30.0
@@ -19,6 +21,34 @@ _OFFSET_SHIFT_WARN_MM = 2.0
 _REFINE_MAX_ITERATIONS = 16
 _REFINE_TOLERANCE_MM = 1e-9
 _REFINE_MAX_RESIDUAL_MM = 2.0
+
+
+def _surface_view(
+    surface: ESEMesh | ScalpMesh,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Normalize a surface into (vertices, normals, scalp_vertices, quality).
+
+    The ESE mesh carries precomputed normals and quality; a plain scalp mesh
+    has neither, so vertex normals are derived from the mesh geometry and the
+    quality is set to a neutral 1.0 for every vertex.
+    """
+    vertices = np.asarray(surface.vertices)
+    raw_normals = getattr(surface, "normals", None)
+    normals = np.asarray(raw_normals) if raw_normals is not None else np.empty((0, 3))
+    if normals.ndim == 0 or normals.size == 0:
+        mesh = trimesh.Trimesh(vertices=vertices, faces=np.asarray(surface.faces))
+        normals = np.asarray(mesh.vertex_normals, dtype=np.float64)
+    scalp_vertices = np.asarray(getattr(surface, "scalp_vertices", vertices))
+    quality = np.asarray(getattr(surface, "quality", np.ones(vertices.shape[0])))
+    if normals.shape[0] != vertices.shape[0]:
+        raise ValueError(
+            f"Surface normals count {normals.shape[0]} does not match vertices {vertices.shape[0]}"
+        )
+    if quality.shape != (vertices.shape[0],):
+        raise ValueError(
+            f"Surface quality shape {quality.shape} does not match vertices {vertices.shape[0]}"
+        )
+    return vertices, normals, scalp_vertices, quality
 
 
 def _mirror_plane_mask(
@@ -94,12 +124,11 @@ class BruteForceLocalizer(ElectrodeLocalizer):
 
     def _process(
         self,
-        ese: ESEMesh,
+        surface: ESEMesh | ScalpMesh,
         fiducials: Fiducials,
         electrodes: Electrodes,
     ) -> Electrodes:
-        vertices = np.asarray(ese.vertices)
-        normals = np.asarray(ese.normals)
+        vertices, normals, scalp_vertices, quality = _surface_view(surface)
         fiducial_coords = np.asarray([fiducial.coordinates for fiducial in fiducials.items])
 
         offset_shift = 0.0
@@ -118,7 +147,9 @@ class BruteForceLocalizer(ElectrodeLocalizer):
                 self._localize_one(
                     electrode,
                     fiducials,
-                    ese,
+                    vertices,
+                    scalp_vertices,
+                    quality,
                     fiducial_coords,
                     search_vertices,
                     distances_to_fiducials,
@@ -154,7 +185,9 @@ class BruteForceLocalizer(ElectrodeLocalizer):
         self,
         electrode: Electrode,
         fiducials: Fiducials,
-        ese: ESEMesh,
+        vertices: np.ndarray,
+        scalp_vertices: np.ndarray,
+        quality: np.ndarray,
         fiducial_coords: np.ndarray,
         search_vertices: np.ndarray,
         distances_to_fiducials: np.ndarray,
@@ -203,10 +236,10 @@ class BruteForceLocalizer(ElectrodeLocalizer):
 
         return replace(
             electrode,
-            ese_coords=np.asarray(ese.vertices)[best_index],
-            scalp_coords=np.asarray(ese.scalp_vertices)[best_index],
+            ese_coords=np.asarray(vertices)[best_index],
+            scalp_coords=np.asarray(scalp_vertices)[best_index],
             residual_error=residual_error,
-            confidence=float(ese.quality[best_index]),
+            confidence=float(quality[best_index]),
             flagged=residual_error > self._config.residual_threshold_mm,
         )
 
