@@ -34,6 +34,9 @@ class VirdaSettings(BaseSettings):
     seal_enabled: bool = True
     seal_radius: int = 4
 
+    mesh_voxel_size_mm: float | None = Field(default=None, gt=0)
+    mesh_density_percent: float = Field(default=100.0, ge=1, le=100)
+
     cleaner_min_vertices: int = 100
     cleaner_merge_digits: int = 7
 
