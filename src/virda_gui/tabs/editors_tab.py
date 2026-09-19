@@ -418,6 +418,8 @@ def measurements_rows_to_schema(rows: list[MeasurementRow]) -> dict[str, Any]:
 class MeasurementsEditor(QWidget):
     """Editable table of Stage 3 measurements for ``input/measurements.json``."""
 
+    rowsChanged = Signal()  # noqa: N815
+
     def __init__(
         self,
         parent: QWidget | None = None,
@@ -436,6 +438,7 @@ class MeasurementsEditor(QWidget):
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(COL_ELECTRODE, QHeaderView.ResizeMode.Stretch)
+        self._table.cellChanged.connect(self._on_cell_changed)
 
         self._weights_row = QWidget(self)
         self._weights_layout = QHBoxLayout(self._weights_row)
@@ -478,6 +481,10 @@ class MeasurementsEditor(QWidget):
         item = self._table.item(row, col)
         return item.text() if item is not None else ""
 
+    def _on_cell_changed(self, _row: int, _col: int) -> None:
+        if not self._loading:
+            self.rowsChanged.emit()
+
     def _capture_text_rows(self) -> list[tuple[str, dict[str, str]]]:
         """Snapshot the table as (electrode, {fiducial_id: text}) before a rebuild."""
         captured: list[tuple[str, dict[str, str]]] = []
@@ -511,6 +518,7 @@ class MeasurementsEditor(QWidget):
         finally:
             self._loading = False
         self._rebuild_weights_row()
+        self.rowsChanged.emit()
 
     def set_measurement_rows(
         self, rows: list[MeasurementRow], weights: dict[str, float] | None = None
@@ -528,6 +536,7 @@ class MeasurementsEditor(QWidget):
             self._loading = False
         if weights is not None:
             self.set_weights(weights)
+        self.rowsChanged.emit()
 
     def measurement_rows(self) -> list[MeasurementRow]:
         """Parse the table into rows, raising :class:`ValueError` on bad input."""
@@ -559,11 +568,15 @@ class MeasurementsEditor(QWidget):
         self._table.insertRow(index)
         self._table.scrollToBottom()
         self._table.setCurrentCell(index, COL_ELECTRODE)
+        if not self._loading:
+            self.rowsChanged.emit()
 
     def remove_selected(self) -> None:
         row = self._table.currentRow()
         if row >= 0:
             self._table.removeRow(row)
+            if not self._loading:
+                self.rowsChanged.emit()
 
     def clear(self) -> None:
         """Reset the table, weights and file path without touching the fiducials."""
@@ -614,7 +627,8 @@ class MeasurementsEditor(QWidget):
             if edit.text().strip()
         }
 
-    def _parsed_weights(self) -> dict[str, float]:
+    def parsed_weights(self) -> dict[str, float]:
+        """Parse the weight fields into floats, raising :class:`ValueError`."""
         weights: dict[str, float] = {}
         for fiducial_id, text in self.weight_values().items():
             try:
@@ -675,7 +689,7 @@ class MeasurementsEditor(QWidget):
     def collected_schema(self) -> dict[str, Any]:
         """Return the measurements JSON object for the current table."""
         schema = measurements_rows_to_schema(self.measurement_rows())
-        weights = self._parsed_weights()
+        weights = self.parsed_weights()
         if weights:
             schema["fiducial_weights"] = weights
         return schema
@@ -720,6 +734,8 @@ class MeasurementsEditor(QWidget):
 class EditorsTab(QWidget):
     """Fiducials and measurements editors stacked vertically in one tab."""
 
+    localizeRequested = Signal()  # noqa: N815
+
     def __init__(self, state: AppState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._state = state
@@ -731,9 +747,17 @@ class EditorsTab(QWidget):
         splitter.addWidget(self._fiducials)
         splitter.addWidget(self._measurements)
 
+        localize_btn = QPushButton("Localize measurements", self)
+        localize_btn.setToolTip(
+            "Run Stage 3 localization on the current scalp mesh using the "
+            "table rows above, and show the electrodes on the 3D mesh."
+        )
+        localize_btn.clicked.connect(self._on_localize_clicked)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.addWidget(splitter)
+        layout.addWidget(localize_btn)
 
     @property
     def fiducials(self) -> FiducialsEditor:
@@ -750,6 +774,9 @@ class EditorsTab(QWidget):
 
     def _on_fiducials_changed(self) -> None:
         self._measurements.set_fiducial_ids(self._fiducials.fiducial_ids())
+
+    def _on_localize_clicked(self) -> None:
+        self.localizeRequested.emit()
 
     def prefill_from_project(self, project: str | Path) -> None:
         """Load the project's canonical fiducials and measurements, if any."""
