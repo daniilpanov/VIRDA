@@ -106,6 +106,24 @@ def frame_to_world_matrix(
     return np.eye(4)
 
 
+def frame_to_frame_matrix(
+    old: str,
+    new: str,
+    affine: np.ndarray | None,
+    cras_offset: np.ndarray | None,
+) -> np.ndarray:
+    """Return the 4x4 transform mapping *old* frame points into *new* frame.
+
+    Composes ``world_to_frame_matrix(new) @ frame_to_world_matrix(old)`` so the
+    conversion stays reversible and reuses the same affine/cRAS math as the
+    viewer.  Raises :class:`ValueError` when either frame requires the affine
+    or cRAS offset that is not loaded.
+    """
+    return world_to_frame_matrix(new, affine, cras_offset) @ frame_to_world_matrix(
+        old, affine, cras_offset
+    )
+
+
 def scene_to_world_matrix(affine: np.ndarray | None, mm_scene: bool) -> np.ndarray:
     """Return the 4x4 transform mapping natural-frame scene points to world mm."""
     if mm_scene or affine is None:

@@ -1,6 +1,12 @@
-"""IDE-style main window: file sidebar, closable tabs and project management."""
+"""IDE-style main window: file sidebar, closable tabs and project management.
 
-import json
+The window owns the shared :class:`AppState`, the project-aware sidebar and
+the closable tab bar hosting the live editors, the mesh processing tab, the
+3D viewer (with its electrode-overlay panel) and per-file preview tabs.  It
+has no pipeline runner, no config file and no log viewer: every operation is
+driven from the interface and reported through the status bar or dialogs.
+"""
+
 import queue
 import threading
 from pathlib import Path
@@ -11,12 +17,18 @@ import pyvista as pv
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
+    QCheckBox,
     QFileDialog,
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
     QMainWindow,
     QMenu,
     QMessageBox,
+    QPushButton,
     QSplitter,
     QTabWidget,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -27,31 +39,35 @@ from virda.models.scalp_mesh import ScalpMesh
 from virda.ops.atoms import localize
 from virda.ops.options import LocalizeOptions
 
-from .constants import ADVANCED_FIELD_DEFAULTS
+from .constants import ADVANCED_FIELD_DEFAULTS, ELECTRODE_PALETTE
+from .dialogs.advanced_settings import AdvancedSettingsDialog
 from .dialogs.project_dialog import ask_create_project_folder, ask_open_project_folder
-from .importing import ImportRole, import_file, import_target
+from .importing import (
+    IMPORT_FALLBACK_ROLES,
+    ImportRole,
+    detect_role,
+    import_file,
+    import_target,
+    validate_import_source,
+)
 from .preferences import Preferences
 from .project import classify_artifact
-from .services.logging import add_log_handler, remove_log_handler
-from .services.pipeline_runner import PipelineRunner
 from .sidebar import ProjectSidebar
 from .state import AppState
-from .tabs.config_tab import ConfigTab
-from .tabs.editors_tab import EditorsTab
+from .tabs.editors_tab import EditorsTab, FiducialRow
 from .tabs.mesh_processing_tab import MeshProcessingTab
 from .tabs.preview_tab import PreviewTab
 from .viewer.frames import (
     FRAME_SCANNER,
     frame_available,
     frame_label,
+    frame_to_frame_matrix,
     frame_to_scene_matrix,
     scene_to_world_matrix,
 )
 from .viewer.scene import scene_placement, transform_points
 from .viewer.viewer import ViewerWidget
-
-_TAB_RUN = "run-pipeline"
-_TAB_VIEWER = "3d-viewer"
+from .widgets import ElectrodeGroupRow
 
 
 class IdeWindow(QMainWindow):
@@ -59,15 +75,16 @@ class IdeWindow(QMainWindow):
 
     The left panel is a :class:`~virda_gui.sidebar.ProjectSidebar` listing
     the project artifacts; the right panel is a closable tab bar where the
-    run pipeline form, the 3D viewer and individual project files open in
-    their own tabs.  The window owns the :class:`PipelineRunner`, the shared
-    :class:`AppState` and the log stream forwarded to the active run tab.
+    live editing form, the mesh processing tab, the 3D viewer and individual
+    project files open in their own tabs.
     """
 
     def __init__(self, prefs: Preferences | None = None) -> None:
         super().__init__()
         self._project: Path | None = None
         self._viewer_widget: ViewerWidget | None = None
+        self._viewer_tab_widget: QWidget | None = None
+        self._electrode_group_widgets: list[ElectrodeGroupRow] = []
         self._file_tabs: dict[str, QWidget] = {}
         self._prefs = prefs or Preferences()
 
@@ -76,30 +93,19 @@ class IdeWindow(QMainWindow):
 
         self._state = AppState(advanced=dict(ADVANCED_FIELD_DEFAULTS))
 
-        self._pipe_runner = PipelineRunner(self._state)
-        add_log_handler(self._pipe_runner.log_handler)
-        self._pipe_runner.finished.connect(self._on_pipeline_done)
-        self._pipe_runner.failed.connect(self._on_pipeline_error)
-        self._pipe_runner.exportDone.connect(
-            lambda: self._config_tab.log_viewer.append("HTML export completed.")
-        )
-        self._pipe_runner.exportFailed.connect(
-            lambda: self._config_tab.log_viewer.append("HTML export failed — see log above.")
-        )
-
-        self._config_tab = ConfigTab(self._state)
-        self._config_tab.runRequested.connect(self._on_run)
-        self._config_tab.openViewer.connect(self._on_open_viewer)
-        self._config_tab.exportHtml.connect(self._on_export_html)
-
         self._editors_tab = EditorsTab(self._state)
         self._editors_tab.localizeRequested.connect(self._on_localize_requested)
+        self._editors_tab.advancedRequested.connect(self._on_show_advanced_settings)
         self._editors_tab.measurements.rowsChanged.connect(self._schedule_localization)
+        self._editors_tab.fiducials.inputFrameChanged.connect(self._on_fiducial_frame_changed)
+
         self._mesh_processing_tab = MeshProcessingTab(self._state)
         self._mesh_processing_tab.previewMesh.connect(self._on_mesh_preview)
         self._mesh_processing_tab.eseMesh.connect(self._on_ese_mesh)
         self._mesh_processing_tab.saved.connect(self._on_mesh_saved)
-        self._mesh_processing_tab.status.connect(self._config_tab.log_viewer.append)
+        self._mesh_processing_tab.status.connect(
+            lambda message: self.statusBar().showMessage(message, 5000)
+        )
 
         self._fiducial_overlay_timer = QTimer(self)
         self._fiducial_overlay_timer.setSingleShot(True)
@@ -124,9 +130,8 @@ class IdeWindow(QMainWindow):
 
         self._sidebar = ProjectSidebar(self)
         self._sidebar.openViewerRequested.connect(self._on_open_viewer)
-        self._sidebar.runPipelineRequested.connect(self._show_run_tab)
+        self._sidebar.importFilesRequested.connect(self._on_import_files)
         self._sidebar.fileActivated.connect(self._open_file_tab)
-        self._sidebar.importRequested.connect(self._on_import_role)
 
         self._tabs = QTabWidget(self)
         self._tabs.setTabsClosable(True)
@@ -143,11 +148,6 @@ class IdeWindow(QMainWindow):
 
         self._build_menu()
         self.statusBar().showMessage("")
-
-        self._poll_timer = QTimer()
-        self._poll_timer.setInterval(100)
-        self._poll_timer.timeout.connect(self._poll_log_queue)
-        self._poll_timer.start()
 
     def _build_menu(self) -> None:
         file_menu = self.menuBar().addMenu("&File")
@@ -211,18 +211,16 @@ class IdeWindow(QMainWindow):
         return self._project
 
     def open_project(self, project: Path) -> None:
-        """Open *project*: populate the sidebar and show the run pipeline tab."""
+        """Open *project*: populate the sidebar and prefill the editors."""
         self._project = project
         self._sidebar.set_project(project)
         self._close_action.setEnabled(True)
         self._state.last_project_dir = str(project)
-        self._config_tab.prefill_from_project(project)
         self._editors_tab.prefill_from_project(project)
         self._mesh_processing_tab.prefill_from_project(project)
         self._prefs.note_project_opened(project)
         self._refresh_recent_menu()
         self.setWindowTitle(f"VIRDA — {project.name}")
-        self._show_run_tab()
         self.statusBar().showMessage(f"Project opened: {project}", 5000)
 
     def close_project(self) -> None:
@@ -231,7 +229,6 @@ class IdeWindow(QMainWindow):
         self._sidebar.set_project(None)
         self._close_action.setEnabled(False)
         self._state.last_project_dir = None
-        self._tabs.removeTab(self._tabs.indexOf(self._config_tab))
         self._tabs.removeTab(self._tabs.indexOf(self._editors_tab))
         self._tabs.removeTab(self._tabs.indexOf(self._mesh_processing_tab))
         self._editors_tab.clear()
@@ -265,9 +262,6 @@ class IdeWindow(QMainWindow):
     def _close_tab(self, index: int) -> None:
         widget = self._tabs.widget(index)
         self._tabs.removeTab(index)
-        if widget is self._config_tab:
-            # The run form keeps its state across closes via the sidebar.
-            return
         self._discard_tab_widget(widget)
 
     def _discard_tab_widget(self, widget: QWidget) -> None:
@@ -276,14 +270,15 @@ class IdeWindow(QMainWindow):
             if memo is widget:
                 del self._file_tabs[key]
                 break
-        if widget is self._viewer_widget:
+        if widget is self._viewer_tab_widget:
+            assert self._viewer_widget is not None
+            self._sync_electrode_groups()
             self._viewer_widget.shutdown()
             self._viewer_widget = None
+            self._viewer_tab_widget = None
+            self._electrode_group_widgets = []
         elif isinstance(widget, (ViewerWidget, PreviewTab)):
             widget.shutdown()
-
-    def _show_run_tab(self) -> None:
-        self._add_tab(self._config_tab, "Run Pipeline")
 
     def _show_editors_tab(self) -> None:
         self._add_tab(self._editors_tab, "Live Editing")
@@ -310,7 +305,9 @@ class IdeWindow(QMainWindow):
         key = str(path)
         widget = self._file_tabs.get(key)
         if widget is None:
-            widget = ViewerWidget(log=self._state.log_queue.put)
+            widget = ViewerWidget(
+                log=lambda message: self.statusBar().showMessage(message, 4000)
+            )
             widget.sceneLoaded.connect(lambda _scene, tab=widget: self._on_scene_tab_loaded(tab))
             widget.sceneFailed.connect(
                 lambda message, tab=widget: self._on_scene_tab_failed(tab, message)
@@ -335,22 +332,38 @@ class IdeWindow(QMainWindow):
         widget.open(path)
 
     def _on_scene_tab_loaded(self, _tab: ViewerWidget) -> None:
-        self._config_tab.log_viewer.append("3D viewer scene loaded.")
+        self.statusBar().showMessage("3D viewer scene loaded.", 4000)
 
     def _on_scene_tab_failed(self, _tab: ViewerWidget, message: str) -> None:
-        self._config_tab.log_viewer.append(f"3D viewer failed: {message}")
+        self.statusBar().showMessage(f"3D viewer failed: {message}", 6000)
 
     # ------------------------------------------------------------------
     # Import
     # ------------------------------------------------------------------
 
-    def _on_import_role(self, role: ImportRole) -> None:
-        """Pick a source file for *role* and import it into the project."""
+    def _on_import_files(self) -> None:
+        """Pick a file, detect its role and import it into the project."""
         if self._project is None:
             QMessageBox.warning(self, "No project", "Open a project first to import artifacts.")
             return
-        source, _selected_filter = QFileDialog.getOpenFileName(self, f"Import {role.label}...")
+        source, _selected_filter = QFileDialog.getOpenFileName(self, "Import file...")
         if not source:
+            return
+        role = detect_role(source)
+        if role is None:
+            labels = [candidate.label for candidate in IMPORT_FALLBACK_ROLES]
+            label, ok = QInputDialog.getItem(
+                self, "Import file...", "What does this file contain?", labels, editable=False
+            )
+            if not ok:
+                return
+            role = next(
+                candidate for candidate in IMPORT_FALLBACK_ROLES if candidate.label == label
+            )
+        try:
+            validate_import_source(role, source)
+        except ValueError as exc:
+            QMessageBox.critical(self, "Import error", str(exc))
             return
         self._perform_import(role, Path(source))
 
@@ -370,203 +383,14 @@ class IdeWindow(QMainWindow):
             )
             if answer != QMessageBox.StandardButton.Yes:
                 return None
-        self._config_tab.log_viewer.append(f"Importing {role.label}: {source} -> {target}")
+        self.statusBar().showMessage(f"Importing {role.label}...", 2000)
         import_file(self._project, source, role, overwrite=exists)
         self._sidebar.set_project(self._project)
         self.statusBar().showMessage(f"Imported {role.label} -> {target}", 5000)
         return target
 
     # ------------------------------------------------------------------
-    # Pipeline execution (background thread)
-    # ------------------------------------------------------------------
-
-    def _on_run(self) -> None:
-        try:
-            config = self._config_tab.collect_config()
-        except Exception as exc:  # noqa: BLE001 - surfaced to the user as a dialog
-            QMessageBox.critical(self, "Validation error", str(exc))
-            return
-
-        self._config_tab.run_btn.setEnabled(False)
-        self._config_tab.viewer_btn.setEnabled(False)
-        self._config_tab.export_btn.setEnabled(False)
-        self._config_tab.log_viewer.clear()
-        self._state.log_queue.put("Starting pipeline...")
-        self._state.last_project_dir = str(config.project_dir)
-        self._state.stage3_summary = None
-
-        measurements_path = self._config_tab.measurements.get().strip() or None
-        if measurements_path and not Path(measurements_path).is_file():
-            QMessageBox.critical(
-                self,
-                "Measurements error",
-                f"Measurements file not found:\n{measurements_path}",
-            )
-            self._config_tab.run_btn.setEnabled(True)
-            self._config_tab.viewer_btn.setEnabled(True)
-            self._config_tab.export_btn.setEnabled(True)
-            return
-
-        self._pipe_runner.submit(config, measurements_path)
-
-    # ------------------------------------------------------------------
-    # Log queue polling (main thread)
-    # ------------------------------------------------------------------
-
-    def _poll_log_queue(self) -> None:
-        self._pipe_runner.poll(self._config_tab.log_viewer.append)
-
-    def _on_pipeline_done(self) -> None:
-        added = self._config_tab.ensure_stage3_electrodes_group()
-        if added:
-            self._config_tab.log_viewer.append(f"Electrode group added: {added}")
-        self._config_tab.run_btn.setEnabled(True)
-        self._config_tab.viewer_btn.setEnabled(True)
-        self._config_tab.export_btn.setEnabled(True)
-        if self._state.last_project_dir:
-            self._sidebar.set_project(Path(self._state.last_project_dir))
-        self._update_results_info(success=True)
-
-    def _on_pipeline_error(self) -> None:
-        self._config_tab.run_btn.setEnabled(True)
-        self._config_tab.viewer_btn.setEnabled(True)
-        self._config_tab.export_btn.setEnabled(True)
-        self._update_results_info(success=False)
-
-    def _update_results_info(self, *, success: bool) -> None:
-        project = self._state.last_project_dir
-        if success:
-            if project:
-                self._open_viewer(Path(project))
-            summary = self._state.stage3_summary
-            if summary:
-                shift = summary["offset_shift_mm"]
-                shift_text = f", offset shift {shift:.2f} mm" if shift is not None else ""
-                self._config_tab.log_viewer.append(
-                    "Pipeline completed. "
-                    f"Stage 3: {summary['localized']}/{summary['total']} electrodes "
-                    f"localized ({summary['flagged']} flagged{shift_text})."
-                )
-            elif project:
-                self._config_tab.log_viewer.append(
-                    f"Pipeline completed. Project directory: {project}"
-                )
-        else:
-            self._config_tab.log_viewer.append("Pipeline failed. Check the log for details.")
-
-    # ------------------------------------------------------------------
-    # 3D viewer
-    # ------------------------------------------------------------------
-
-    def _build_viewer_widget(self) -> None:
-        if self._viewer_widget is not None:
-            return
-        self._viewer_widget = ViewerWidget(log=self._state.log_queue.put)
-        self._viewer_widget.sceneLoaded.connect(self._on_viewer_scene_loaded)
-        self._viewer_widget.sceneFailed.connect(self._on_viewer_scene_failed)
-
-    def _on_open_viewer(self) -> None:
-        resolved = self._state.last_project_dir or self._project
-        if not resolved:
-            QMessageBox.warning(
-                self,
-                "No project directory",
-                "No project directory selected. Run the pipeline or pick a Project dir.",
-            )
-            return
-        self._open_viewer(Path(resolved))
-
-    def _open_viewer(self, project: Path) -> None:
-        kwargs = self._collect_viewer_kwargs(project)
-        if not kwargs:
-            QMessageBox.warning(
-                self, "Nothing to view", "No mesh or NIfTI file found in the project."
-            )
-            return
-        if self._state.viewer_loading:
-            QMessageBox.warning(
-                self,
-                "Viewer still loading",
-                "The 3D viewer is still loading a scene. Wait for it to finish.",
-            )
-            return
-
-        self._config_tab.log_viewer.append("Opening 3D viewer...")
-        self._config_tab.viewer_btn.setEnabled(False)
-        self._state.viewer_loading = True
-        self._build_viewer_widget()
-        self._add_tab(self._viewer_widget, "3D Viewer")
-        self._tabs.setCurrentWidget(self._viewer_widget)
-        self._viewer_widget.load(**kwargs)
-
-    def _collect_viewer_kwargs(self, project: Path) -> dict[str, Any]:
-        mesh_path = project / "mesh" / "final_mesh.ply"
-        fiducials_path = project / "input" / "fiducials.json"
-        normals_path = project / "ese" / "normals.npy"
-
-        nifti = self._config_tab.nifti_path()
-        kwargs: dict[str, Any] = {}
-        if nifti:
-            kwargs["nifti_path"] = nifti
-        else:
-            for pattern in ("input/*.nii.gz", "input/*.nii"):
-                found = sorted(project.glob(pattern))
-                if found:
-                    kwargs["nifti_path"] = str(found[0])
-                    break
-        if mesh_path.exists():
-            kwargs["mesh_path"] = str(mesh_path)
-        if fiducials_path.exists():
-            kwargs["fiducials_path"] = str(fiducials_path)
-        if normals_path.exists():
-            kwargs["normals_path"] = str(normals_path)
-
-        self._config_tab.ensure_stage3_electrodes_group(project)
-        electrode_specs = self._config_tab.collect_electrode_specs()
-        if electrode_specs:
-            kwargs["electrode_specs"] = electrode_specs
-            kwargs["electrodes_cras"] = self._config_tab.electrodes_cras_check.isChecked()
-        return kwargs
-
-    def _on_viewer_scene_loaded(self, _scene: Any) -> None:
-        self._state.viewer_loading = False
-        self._config_tab.log_viewer.append("3D viewer scene loaded.")
-        self._config_tab.viewer_btn.setEnabled(True)
-        self._refresh_live_fiducials()
-        if self._localized_electrodes is not None:
-            self._show_localized_electrodes(self._localized_electrodes)
-
-    def _on_fiducials_edited(self) -> None:
-        """Debounce fast table edits before pushing rows to the viewer."""
-        self._fiducial_overlay_timer.start()
-        self._schedule_localization()
-
-    def _refresh_live_fiducials(self) -> None:
-        """Push the current fiducials table onto the viewer as a live overlay.
-
-        Rows are interpreted in the editor's input coordinate system; the
-        viewer converts them into the scene frame before rendering, so a
-        coordinate-system switch immediately re-places the points on the mesh.
-        """
-        viewer = self._viewer_widget
-        if viewer is None:
-            return
-        try:
-            rows = self._editors_tab.fiducials.fiducial_rows()
-            ids = [row.fiducial_id for row in rows]
-            points = (
-                np.asarray([row.coordinates for row in rows], dtype=np.float64)
-                if rows
-                else np.empty((0, 3))
-            )
-            viewer.set_live_fiducials(
-                ids, points, frame=self._editors_tab.fiducials.input_frame()
-            )
-        except (ValueError, np.linalg.LinAlgError) as exc:
-            self._config_tab.log_viewer.append(f"Live fiducials skipped: {exc}")
-
-    # ------------------------------------------------------------------
-    # Live localization (Stage 3) overlay
+    # Live localization overlay
     # ------------------------------------------------------------------
 
     def _on_localize_requested(self) -> None:
@@ -586,14 +410,14 @@ class IdeWindow(QMainWindow):
             if message == self._localize_last_auto_skip:
                 return
             self._localize_last_auto_skip = message
-            self._config_tab.log_viewer.append(f"Localization skipped: {message}")
+            self.statusBar().showMessage(f"Localization skipped: {message}", 5000)
             return
         self._localize_last_auto_skip = ""
-        self._config_tab.log_viewer.append(f"Localization skipped: {message}")
+        self.statusBar().showMessage(f"Localization skipped: {message}", 5000)
         QMessageBox.warning(self, "Localize", message)
 
     def _localize_options(self) -> LocalizeOptions:
-        """The Stage 3 options the full pipeline would use, from the config tab."""
+        """The localization options, from the advanced GUI settings."""
         advanced = self._state.advanced
         calibrate = str(advanced.get("calibrate_ese_offset", "true")).lower() == "true"
         try:
@@ -607,11 +431,10 @@ class IdeWindow(QMainWindow):
     def _run_localize(self, *, interactive: bool) -> None:
         """Snapshot the table inputs and localize on a background thread.
 
-        The brute-force search is heavy, so it runs on a daemon thread (the
-        same pattern as :class:`PipelineRunner`); the result is applied back on
-        the main thread by :meth:`_drain_localize_queue`.  Only the latest
-        snapshot is rendered, so an in-flight run can never overwrite a newer
-        one (a follow-up run is queued instead of overlapping).
+        The brute-force search is heavy, so it runs on a daemon thread; the
+        result is applied back on the main thread by :meth:`_drain_localize_queue`.
+        Only the latest snapshot is rendered, so an in-flight run can never
+        overwrite a newer one (a follow-up run is queued instead of overlapping).
         """
         if self._localize_thread is not None and self._localize_thread.is_alive():
             self._localize_rerun_pending = True
@@ -734,9 +557,10 @@ class IdeWindow(QMainWindow):
             self._localized_electrodes = payload
             self._show_localized_electrodes(payload)
             localized_count = sum(1 for electrode in payload.items if electrode.is_localized)
-            self._config_tab.log_viewer.append(
+            self.statusBar().showMessage(
                 f"Localized {localized_count}/{len(payload.items)} electrodes "
-                f"(offset shift {payload.calibrated_offset_shift_mm or 0.0:g} mm)."
+                f"(offset shift {payload.calibrated_offset_shift_mm or 0.0:g} mm).",
+                5000,
             )
         if self._localize_rerun_pending:
             self._localize_rerun_pending = False
@@ -760,6 +584,244 @@ class IdeWindow(QMainWindow):
             ids, np.asarray(points, dtype=np.float64), np.asarray(flags, dtype=bool),
             frame=FRAME_SCANNER,
         )
+
+    # ------------------------------------------------------------------
+    # Fiducial frame conversion
+    # ------------------------------------------------------------------
+
+    def _on_fiducial_frame_changed(self, old_frame: str, new_frame: str) -> None:
+        """Recalculate the fiducial X/Y/Z cells when the coordinate system changes."""
+        editor = self._editors_tab.fiducials
+        affine, cras_offset, _mm_scene = (
+            self._viewer_widget.scene_frame_params
+            if self._viewer_widget is not None
+            else (None, None, True)
+        )
+        if not frame_available(new_frame, affine, cras_offset):
+            QMessageBox.warning(
+                self,
+                "Coordinate system",
+                f"The {frame_label(new_frame)} frame requires a loaded NIfTI scan.",
+            )
+            editor.set_input_frame(old_frame)
+            return
+        try:
+            matrix = frame_to_frame_matrix(old_frame, new_frame, affine, cras_offset)
+            rows = editor.fiducial_rows()
+        except (ValueError, np.linalg.LinAlgError) as exc:
+            QMessageBox.warning(
+                self, "Coordinate system", f"Cannot convert coordinates:\n{exc}"
+            )
+            editor.set_input_frame(old_frame)
+            return
+        if not rows:
+            return
+        points = np.asarray([row.coordinates for row in rows], dtype=np.float64)
+        converted = transform_points(points, matrix)
+        coordinate_system = "voxel" if new_frame == "voxel" else "world"
+        new_rows = [
+            FiducialRow(
+                fiducial_id=row.fiducial_id,
+                name=row.name,
+                coordinates=tuple(float(value) for value in point),
+                coordinate_system=coordinate_system,
+                definition_method=row.definition_method,
+                weight=row.weight,
+            )
+            for row, point in zip(rows, converted)
+        ]
+        editor.set_rows(new_rows)
+
+    # ------------------------------------------------------------------
+    # 3D viewer + electrode overlays
+    # ------------------------------------------------------------------
+
+    def _sync_electrode_groups(self) -> None:
+        """Persist the current overlay rows into the state record."""
+        if self._electrode_group_widgets:
+            self._state.electrode_rows = [
+                (widget.get().strip(), widget.get_color())
+                for widget in self._electrode_group_widgets
+                if widget.get().strip()
+            ]
+
+    def _on_show_advanced_settings(self) -> None:
+        dialog = AdvancedSettingsDialog(self, self._state.advanced)
+        if dialog.exec():
+            self._state.advanced = dict(dialog.result_values)
+            self.statusBar().showMessage("Advanced settings applied.", 5000)
+
+    def _build_viewer_widget(self) -> None:
+        if self._viewer_widget is not None:
+            return
+        viewer = ViewerWidget(
+            log=lambda message: self.statusBar().showMessage(message, 4000)
+        )
+        self._viewer_widget = viewer
+        panel = self._build_electrode_overlay_panel()
+        wrapper = QWidget()
+        layout = QVBoxLayout(wrapper)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(panel)
+        layout.addWidget(viewer, 1)
+        self._viewer_tab_widget = wrapper
+        viewer.sceneLoaded.connect(self._on_viewer_scene_loaded)
+        viewer.sceneFailed.connect(self._on_viewer_scene_failed)
+
+    def _build_electrode_overlay_panel(self) -> QWidget:
+        """Rebuild the electrode-overlay controls from the state's row record."""
+        outer = QWidget()
+        layout = QVBoxLayout(outer)
+        layout.setContentsMargins(6, 4, 6, 0)
+        layout.setSpacing(2)
+
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.addWidget(QLabel("Electrode overlays:"))
+        add_group_btn = QPushButton("Add group")
+        add_group_btn.clicked.connect(self._on_add_electrode_group)
+        header.addWidget(add_group_btn)
+        self._electrodes_cras_check = QCheckBox("Force cRAS conversion")
+        self._electrodes_cras_check.setChecked(self._state.electrodes_cras)
+        self._electrodes_cras_check.toggled.connect(self._on_electrodes_cras_toggled)
+        header.addWidget(self._electrodes_cras_check)
+        header.addStretch(1)
+        layout.addLayout(header)
+
+        self._electrode_groups_layout = QVBoxLayout()
+        self._electrode_groups_layout.setContentsMargins(0, 0, 0, 0)
+        self._electrode_groups_layout.setSpacing(2)
+        layout.addLayout(self._electrode_groups_layout)
+
+        self._electrode_group_widgets = []
+        for path, color in self._state.electrode_rows:
+            self._add_electrode_group_row(path=path, color=color)
+        return outer
+
+    def _on_add_electrode_group(self) -> None:
+        self._add_electrode_group_row()
+
+    def _add_electrode_group_row(self, path: str = "", color: str | None = None) -> None:
+        if color is None:
+            color = ELECTRODE_PALETTE[self._state.palette_index % len(ELECTRODE_PALETTE)]
+            self._state.palette_index += 1
+        row = ElectrodeGroupRow(
+            on_remove=lambda: self._on_remove_electrode_group(row),
+            color=color,
+        )
+        if path:
+            row.set(path)
+        self._electrode_groups_layout.addWidget(row)
+        self._electrode_group_widgets.append(row)
+
+    def _on_remove_electrode_group(self, row: ElectrodeGroupRow) -> None:
+        if row in self._electrode_group_widgets:
+            self._electrode_group_widgets.remove(row)
+            self._electrode_groups_layout.removeWidget(row)
+        row.deleteLater()
+        self._sync_electrode_groups()
+
+    def _on_electrodes_cras_toggled(self, checked: bool) -> None:
+        self._state.electrodes_cras = checked
+
+    def _on_open_viewer(self) -> None:
+        resolved = self._state.last_project_dir or self._project
+        if not resolved:
+            QMessageBox.warning(
+                self,
+                "No project directory",
+                "No project directory selected. Open or create a project first.",
+            )
+            return
+        self._open_viewer(Path(resolved))
+
+    def _open_viewer(self, project: Path) -> None:
+        kwargs = self._collect_viewer_kwargs(project)
+        if not kwargs:
+            QMessageBox.warning(
+                self, "Nothing to view", "No mesh or NIfTI file found in the project."
+            )
+            return
+        if self._state.viewer_loading:
+            QMessageBox.warning(
+                self,
+                "Viewer still loading",
+                "The 3D viewer is still loading a scene. Wait for it to finish.",
+            )
+            return
+
+        self.statusBar().showMessage("Opening 3D viewer...", 2000)
+        self._state.viewer_loading = True
+        self._build_viewer_widget()
+        assert self._viewer_tab_widget is not None
+        self._add_tab(self._viewer_tab_widget, "3D Viewer")
+        self._tabs.setCurrentWidget(self._viewer_tab_widget)
+        self._viewer_widget.load(**kwargs)
+
+    def _collect_viewer_kwargs(self, project: Path) -> dict[str, Any]:
+        mesh_path = project / "mesh" / "final_mesh.ply"
+        fiducials_path = project / "input" / "fiducials.json"
+        normals_path = project / "ese" / "normals.npy"
+
+        kwargs: dict[str, Any] = {}
+        for pattern in ("input/*.nii.gz", "input/*.nii"):
+            found = sorted(project.glob(pattern))
+            if found:
+                kwargs["nifti_path"] = str(found[0])
+                break
+        if mesh_path.exists():
+            kwargs["mesh_path"] = str(mesh_path)
+        if fiducials_path.exists():
+            kwargs["fiducials_path"] = str(fiducials_path)
+        if normals_path.exists():
+            kwargs["normals_path"] = str(normals_path)
+
+        self._sync_electrode_groups()
+        if self._state.electrode_rows:
+            kwargs["electrode_specs"] = list(self._state.electrode_rows)
+            kwargs["electrodes_cras"] = self._state.electrodes_cras
+        return kwargs
+
+    def _on_viewer_scene_loaded(self, _scene: Any) -> None:
+        self._state.viewer_loading = False
+        self.statusBar().showMessage("3D viewer scene loaded.", 4000)
+        self._refresh_live_fiducials()
+        if self._localized_electrodes is not None:
+            self._show_localized_electrodes(self._localized_electrodes)
+
+    def _on_viewer_scene_failed(self, message: str) -> None:
+        self._state.viewer_loading = False
+        self.statusBar().showMessage(f"3D viewer failed: {message}", 6000)
+
+    def _on_fiducials_edited(self) -> None:
+        """Debounce fast table edits before pushing rows to the viewer."""
+        self._fiducial_overlay_timer.start()
+        self._schedule_localization()
+
+    def _refresh_live_fiducials(self) -> None:
+        """Push the current fiducials table onto the viewer as a live overlay.
+
+        Rows are interpreted in the editor's input coordinate system; the
+        viewer converts them into the scene frame before rendering, so a
+        coordinate-system switch immediately re-places the points on the mesh.
+        """
+        viewer = self._viewer_widget
+        if viewer is None:
+            return
+        try:
+            rows = self._editors_tab.fiducials.fiducial_rows()
+            ids = [row.fiducial_id for row in rows]
+            points = (
+                np.asarray([row.coordinates for row in rows], dtype=np.float64)
+                if rows
+                else np.empty((0, 3))
+            )
+            viewer.set_live_fiducials(
+                ids, points, frame=self._editors_tab.fiducials.input_frame()
+            )
+        except (ValueError, np.linalg.LinAlgError) as exc:
+            self.statusBar().showMessage(f"Live fiducials skipped: {exc}", 5000)
 
     # ------------------------------------------------------------------
     # Mesh processing overlay + save
@@ -792,34 +854,9 @@ class IdeWindow(QMainWindow):
     def _on_mesh_saved(self) -> None:
         if self._state.last_project_dir:
             self._sidebar.set_project(Path(self._state.last_project_dir))
-        self._config_tab.log_viewer.append(
-            "Mesh saved. Re-open the 3D viewer to inspect the persisted surface."
+        self.statusBar().showMessage(
+            "Mesh saved. Re-open the 3D viewer to inspect the persisted surface.", 5000
         )
-
-    def _on_viewer_scene_failed(self, message: str) -> None:
-        self._state.viewer_loading = False
-        self._config_tab.viewer_btn.setEnabled(True)
-        self._config_tab.log_viewer.append(f"3D viewer failed: {message}")
-
-    # ------------------------------------------------------------------
-    # Actions
-    # ------------------------------------------------------------------
-
-    def _on_export_html(self) -> None:
-        resolved = self._state.last_project_dir or self._project
-        if not resolved:
-            QMessageBox.warning(
-                self,
-                "No project directory",
-                "No project directory selected. Run the pipeline or pick a Project dir.",
-            )
-            return
-        self._export_html(Path(resolved))
-
-    def _export_html(self, project: Path) -> None:
-        output = project / "viewer.html"
-        self._config_tab.log_viewer.append(f"Exporting HTML viewer to {output}...")
-        self._pipe_runner.start_html_export(project, output)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -833,11 +870,9 @@ class IdeWindow(QMainWindow):
 
     def _on_close(self) -> None:
         self._state.closed = True
-        self._poll_timer.stop()
+        self._localize_poll.stop()
         for widget in self._file_tabs.values():
             if isinstance(widget, (PreviewTab, ViewerWidget)):
                 widget.shutdown()
         if self._viewer_widget is not None:
             self._viewer_widget.shutdown()
-        self._pipe_runner.shutdown()
-        remove_log_handler(self._pipe_runner.log_handler)
