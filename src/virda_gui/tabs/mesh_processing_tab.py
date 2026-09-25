@@ -364,6 +364,14 @@ class MeshProcessingTab(QWidget):
     def _on_export_faces(self) -> None:
         self._export_active_mesh_array("faces")
 
+    def _export_start_path(self, mesh_kind: MeshKind, array_kind: MeshArray) -> str:
+        """Default location for the NPY export dialog (project folder when known)."""
+        filename = f"{mesh_kind}_{array_kind}.npy"
+        project = self._state.last_project_dir
+        if project:
+            return str(Path(project) / filename)
+        return filename
+
     def _export_active_mesh_array(self, array_kind: MeshArray) -> None:
         active = self._active_mesh()
         if active is None:
@@ -372,7 +380,7 @@ class MeshProcessingTab(QWidget):
         path, _selected_filter = QFileDialog.getSaveFileName(
             self,
             f"Export {mesh_kind} {array_kind}",
-            f"{mesh_kind}_{array_kind}.npy",
+            self._export_start_path(mesh_kind, array_kind),
             "NumPy array (*.npy);;All files (*)",
         )
         if not path:

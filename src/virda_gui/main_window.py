@@ -230,6 +230,8 @@ class IdeWindow(QMainWindow):
         self._sidebar.set_project(None)
         self._close_action.setEnabled(False)
         self._state.last_project_dir = None
+        if self._viewer_widget is not None:
+            self._viewer_widget.set_project_dir(None)
         self._tabs.removeTab(self._tabs.indexOf(self._editors_tab))
         self._tabs.removeTab(self._tabs.indexOf(self._mesh_processing_tab))
         self._editors_tab.clear()
@@ -325,6 +327,7 @@ class IdeWindow(QMainWindow):
                 lambda message, tab=widget: self._on_scene_tab_failed(tab, message)
             )
             self._file_tabs[key] = widget
+        widget.set_project_dir(self._project)
         if self._tabs.indexOf(widget) < 0:
             self._add_tab(widget, path.name)
             self._tabs.setTabToolTip(self._tabs.indexOf(widget), str(path))
@@ -788,6 +791,8 @@ class IdeWindow(QMainWindow):
         self._state.viewer_loading = True
         self._build_viewer_widget()
         assert self._viewer_tab_widget is not None
+        assert self._viewer_widget is not None
+        self._viewer_widget.set_project_dir(project)
         self._add_tab(self._viewer_tab_widget, "3D Viewer")
         self._tabs.setCurrentWidget(self._viewer_tab_widget)
         self._viewer_widget.load(**kwargs)
