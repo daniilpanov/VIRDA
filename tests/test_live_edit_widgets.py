@@ -469,3 +469,13 @@ def test_editors_tab_has_no_localize_button_but_keeps_advanced_offscreen() -> No
     finally:
         tab.close()
         app.quit()
+
+
+def test_localization_csv_export_defaults_to_csv_offscreen(tmp_path: Path) -> None:
+    app = _qt_app()
+    preview = LocalizationPreview(default_dir=lambda: str(tmp_path))
+    try:
+        assert preview._start_path() == str(tmp_path / "input" / "localization.csv")
+    finally:
+        preview.close()
+        app.quit()
