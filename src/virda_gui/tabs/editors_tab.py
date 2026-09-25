@@ -887,7 +887,7 @@ class LocalizationPreview(QWidget):
     def _start_path(self) -> str:
         """Default location for the CSV export dialog."""
         default_dir = self._default_dir() if self._default_dir else None
-        filename = DEFAULT_MEASUREMENTS_FILENAME.replace("measurements", "localization")
+        filename = DEFAULT_MEASUREMENTS_FILENAME.replace("measurements.json", "localization.csv")
         if default_dir:
             return str(Path(default_dir) / "input" / filename)
         return filename
