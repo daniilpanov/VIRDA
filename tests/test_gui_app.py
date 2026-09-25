@@ -873,3 +873,54 @@ def test_open_project_autoloads_ese_mesh_offscreen(tmp_path: Path) -> None:
     finally:
         window.close()
         app.quit()
+
+
+def test_viewer_open_restores_ese_overlay_offscreen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A freshly loaded viewer scene re-applies the tab's ESE mesh overlay."""
+    import json
+
+    app = _offscreen_app()
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
+    try:
+        project = tmp_path / "sample-project"
+        (project / "mesh").mkdir(parents=True)
+        _write_triangle_ply(project / "mesh" / "final_mesh.ply")
+
+        vertices = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
+        ese_dir = project / "ese"
+        ese_dir.mkdir()
+        np.save(ese_dir / "ese_vertices.npy", np.array(vertices))
+        np.save(ese_dir / "ese_faces.npy", np.array([[0, 1, 2]]))
+        np.save(ese_dir / "normals.npy", np.array([[0.0, 0.0, 1.0]] * 3))
+        np.save(ese_dir / "quality.npy", np.array([1.0, 1.0, 1.0]))
+        (ese_dir / "point_pairs.json").write_text(
+            json.dumps({"scalp_vertices": vertices}), encoding="utf-8"
+        )
+        (ese_dir / "ese_mesh.ply").write_text("placeholder", encoding="utf-8")
+        window.open_project(project)
+        assert window._mesh_processing_tab.current_ese_mesh() is not None
+
+        class _Viewer:
+            def __init__(self) -> None:
+                self.scene_frame_params = (None, None, True)
+                self.extra_meshes: list[str] = []
+
+            def set_live_fiducials(self, *args: object, **kwargs: object) -> None:
+                return None
+
+            def shutdown(self) -> None:
+                return None
+
+            def set_extra_mesh(self, poly: object, kind: str = "scalp") -> None:
+                self.extra_meshes.append(kind)
+
+        viewer = _Viewer()
+        monkeypatch.setattr(window, "_viewer_widget", viewer)
+        window._on_viewer_scene_loaded(object())
+        assert viewer.extra_meshes == ["ese"]
+    finally:
+        window.close()
+        app.quit()

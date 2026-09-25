@@ -832,9 +832,18 @@ class IdeWindow(QMainWindow):
         self._state.viewer_loading = False
         self.statusBar().showMessage("3D viewer scene loaded.", 4000)
         self._refresh_live_fiducials()
+        self._restore_ese_overlay()
         if self._localized_electrodes is not None:
             self._show_localized_electrodes(self._localized_electrodes)
         self._refresh_localization_preview()
+
+    def _restore_ese_overlay(self) -> None:
+        """Re-apply the tab's ESE mesh over a freshly loaded viewer scene."""
+        viewer = self._viewer_widget
+        ese = self._mesh_processing_tab.current_ese_mesh()
+        if viewer is None or ese is None:
+            return
+        viewer.set_extra_mesh(self._mesh_to_scene_poly(ese.vertices, ese.faces), "ese")
 
     def _on_viewer_scene_failed(self, message: str) -> None:
         self._state.viewer_loading = False
