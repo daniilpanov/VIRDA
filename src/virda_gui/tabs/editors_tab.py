@@ -906,7 +906,7 @@ class EditorsTab(QWidget):
         splitter.addWidget(self._measurements)
         splitter.addWidget(self._localization)
 
-        advanced_btn = QPushButton("Localization settings...", self)
+        advanced_btn = QPushButton("Advanced settings...", self)
         advanced_btn.setToolTip("Open the advanced mesh-generation and localization settings.")
         advanced_btn.clicked.connect(self._on_advanced_clicked)
 
