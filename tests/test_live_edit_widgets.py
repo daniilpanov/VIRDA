@@ -22,6 +22,7 @@ from virda_gui.main_window import IdeWindow
 from virda_gui.preferences import Preferences
 from virda_gui.tabs.editors_tab import (
     COL_X,
+    FIDUCIAL_HEADERS,
     FiducialRow,
     FiducialsEditor,
     MeasurementRow,
@@ -193,6 +194,34 @@ def test_fiducials_editor_saves_loaded_rows_offscreen(tmp_path: Path) -> None:
         item.setText("abc")
         with pytest.raises(ValueError, match="X must be a number"):
             editor.fiducial_rows()
+    finally:
+        editor.close()
+        app.quit()
+
+
+def test_fiducials_editor_has_no_name_method_weight_columns_offscreen() -> None:
+    app = _qt_app()
+    editor = FiducialsEditor()
+    try:
+        assert FIDUCIAL_HEADERS == ["ID", "X", "Y", "Z"]
+        assert editor._table.columnCount() == len(FIDUCIAL_HEADERS)
+
+        editor.set_rows(
+            [
+                FiducialRow(
+                    fiducial_id="NAS",
+                    name="Nasion",
+                    coordinates=(0.0, 1.0, 2.0),
+                    coordinate_system="world",
+                    definition_method="auto",
+                    weight=2.5,
+                )
+            ]
+        )
+        (row,) = editor.fiducial_rows()
+        assert row.name == "NAS"
+        assert row.definition_method == "manual"
+        assert row.weight == 1.0
     finally:
         editor.close()
         app.quit()
