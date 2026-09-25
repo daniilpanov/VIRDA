@@ -117,7 +117,9 @@ class BruteForceLocalizer(ElectrodeLocalizer):
     a fallback whenever refinement does not improve the residual.
     """
 
-    def __init__(self, calibrate_ese_offset: bool = True, residual_threshold_mm: float = 10.0) -> None:
+    def __init__(
+        self, calibrate_ese_offset: bool = True, residual_threshold_mm: float = 10.0
+    ) -> None:
         self._calibrate_ese_offset = calibrate_ese_offset
         self._residual_threshold_mm = residual_threshold_mm
         super().__init__()
@@ -176,9 +178,7 @@ class BruteForceLocalizer(ElectrodeLocalizer):
                 self._logger.info("No electrodes localized (%d provided)", len(localized))
         return Electrodes(
             items=localized,
-            calibrated_offset_shift_mm=(
-                offset_shift if self._calibrate_ese_offset else None
-            ),
+            calibrated_offset_shift_mm=(offset_shift if self._calibrate_ese_offset else None),
         )
 
     def _localize_one(

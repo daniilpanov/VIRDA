@@ -33,7 +33,11 @@ from virda_gui.importing import (
 from virda_gui.main_window import IdeWindow
 from virda_gui.preferences import Preferences
 from virda_gui.state import AppState
-from virda_gui.viewer.frames import frame_to_frame_matrix, frame_to_world_matrix, world_to_frame_matrix
+from virda_gui.viewer.frames import (
+    frame_to_frame_matrix,
+    frame_to_world_matrix,
+    world_to_frame_matrix,
+)
 from virda_gui.viewer.scene import transform_points
 
 
@@ -134,9 +138,7 @@ def test_import_fallback_roles_cover_six_artifact_kinds() -> None:
 
 def test_validate_mesh_source_accepts_ply(tmp_path: Path) -> None:
     mesh = _write_triangle_ply(tmp_path / "final_mesh.ply")
-    validate_import_source(
-        next(role for role in ROLE_REGISTRY if role.key == "mesh"), mesh
-    )
+    validate_import_source(next(role for role in ROLE_REGISTRY if role.key == "mesh"), mesh)
 
 
 def test_validate_mesh_source_rejects_npy_mesh_part(tmp_path: Path) -> None:
@@ -524,9 +526,7 @@ def test_ide_window_prefills_editors_from_project_offscreen(tmp_path: Path) -> N
         (inputs / "measurements.json").write_text(
             json.dumps(
                 {
-                    "electrodes": [
-                        {"electrode_id": "Cz", "measured_distances": {"nas": 100.0}}
-                    ],
+                    "electrodes": [{"electrode_id": "Cz", "measured_distances": {"nas": 100.0}}],
                     "fiducial_weights": {"nas": 1.0},
                 }
             ),

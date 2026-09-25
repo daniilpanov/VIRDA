@@ -20,7 +20,6 @@ from virda_gui.viewer.frames import (
     collect_fiducials_export,
     collect_mesh_export,
     frame_label,
-    frame_to_scene_matrix,
     frame_to_world_matrix,
     natural_frame,
     scene_to_frame_matrix,

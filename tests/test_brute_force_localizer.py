@@ -32,9 +32,7 @@ def _reweighted(fiducials: Fiducials, weights: dict[str, float]) -> Fiducials:
 def _localize(electrodes: Electrodes, threshold_mm: float = 10.0) -> Electrodes:
     ese = make_ese()
     fiducials = make_fiducials()
-    localizer = BruteForceLocalizer(
-        residual_threshold_mm=threshold_mm, calibrate_ese_offset=False
-    )
+    localizer = BruteForceLocalizer(residual_threshold_mm=threshold_mm, calibrate_ese_offset=False)
     return localizer.process(ese, fiducials, electrodes)
 
 
@@ -68,9 +66,9 @@ class TestBruteForceLocalizer:
         electrodes = Electrodes(items=[Electrode(electrode_id="E0", measured_distances=distances)])
 
         weighted = _reweighted(fiducials, weights={"NAS": 1e9, "LPA": 0.01, "RPA": 1.0})
-        weighted_result = BruteForceLocalizer(
-            calibrate_ese_offset=False
-        ).process(ese, weighted, electrodes)
+        weighted_result = BruteForceLocalizer(calibrate_ese_offset=False).process(
+            ese, weighted, electrodes
+        )
         unweighted_result = _localize(electrodes)
 
         weighted_electrode = weighted_result.items[0]
@@ -195,9 +193,9 @@ class TestOffsetCalibration:
     def test_disabled_when_flag_off(self):
         ese = make_ese()
         electrodes, _ = self._shifted_electrodes(ese, [0], shift_mm=-2.0)
-        result = BruteForceLocalizer(
-            calibrate_ese_offset=False
-        ).process(ese, make_fiducials(), electrodes)
+        result = BruteForceLocalizer(calibrate_ese_offset=False).process(
+            ese, make_fiducials(), electrodes
+        )
 
         assert result.calibrated_offset_shift_mm is None
         assert result.items[0].is_localized
@@ -218,9 +216,7 @@ class TestOffsetCalibration:
         assert len(indices) == 2
 
         electrodes = make_electrodes(vertices[indices], fiducials)
-        result = BruteForceLocalizer(
-            calibrate_ese_offset=True
-        ).process(ese, fiducials, electrodes)
+        result = BruteForceLocalizer(calibrate_ese_offset=True).process(ese, fiducials, electrodes)
 
         assert result.calibrated_offset_shift_mm == pytest.approx(0.0, abs=1e-9)
         for electrode in result.items:

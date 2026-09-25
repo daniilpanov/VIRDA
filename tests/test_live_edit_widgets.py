@@ -232,7 +232,9 @@ def test_fiducials_editor_load_invalid_file_returns_false(tmp_path: Path) -> Non
     editor = FiducialsEditor()
     try:
         bad = tmp_path / "bad.json"
-        bad.write_text(json.dumps({"fiducials": [{"id": {"nas": [0.0, 0.0]}, "name": None}]}), encoding="utf-8")
+        bad.write_text(
+            json.dumps({"fiducials": [{"id": {"nas": [0.0, 0.0]}, "name": None}]}), encoding="utf-8"
+        )
         assert editor.load(bad, interactive=False) is False
 
         not_json = tmp_path / "garbage.json"
@@ -264,6 +266,7 @@ def test_editors_clear_resets_rows_and_path_offscreen(tmp_path: Path) -> None:
     fiducials_editor = FiducialsEditor()
     measurements_editor = MeasurementsEditor()
     from virda_gui.tabs.editors_tab import MEASUREMENT_HEADERS
+
     try:
         fiducials_editor.set_rows(fiducials_to_rows(make_fiducials()))
         fiducials_editor.save_to(tmp_path / "f.json")
@@ -316,7 +319,9 @@ def test_ide_window_opens_live_editing_tab_offscreen(tmp_path: Path) -> None:
 
         window.open_project(project)
         window._show_editors_tab()
-        assert window._tabs.count() == 0  # no renderable mesh/brain -> no viewer (nor its HUD) is built
+        assert (
+            window._tabs.count() == 0
+        )  # no renderable mesh/brain -> no viewer (nor its HUD) is built
         assert window._editors_tab._fiducials.fiducial_ids() == ["NAS", "LPA", "RPA"]
         assert window._editors_tab._measurements._table.rowCount() == 2
         assert window._editors_tab._localization._table.rowCount() == 0
@@ -364,7 +369,11 @@ def test_measurements_rows_emit_canonical_keys_offscreen() -> None:
             ]
         )
         rows = editor.measurement_rows()
-        assert rows == [MeasurementRow(electrode_id="E0", measured_distances={"LPA": 2.0, "RPA": 3.0, "NAS": 1.0})]
+        assert rows == [
+            MeasurementRow(
+                electrode_id="E0", measured_distances={"LPA": 2.0, "RPA": 3.0, "NAS": 1.0}
+            )
+        ]
     finally:
         editor.close()
         app.quit()

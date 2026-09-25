@@ -311,7 +311,10 @@ class TestRunChecks:
             face_adjacency=np.zeros((0, 2), dtype=np.int64),
         )
         report = run_checks(
-            mesh, SegmentationMask(mask=np.zeros((16, 16, 16), dtype=bool)), _volume(), Fiducials([])
+            mesh,
+            SegmentationMask(mask=np.zeros((16, 16, 16), dtype=bool)),
+            _volume(),
+            Fiducials([]),
         )
         assert report["status"] == "fail"
 
@@ -319,7 +322,10 @@ class TestRunChecks:
         mask = _ball_mask()
         mask_path = _save_mask(tmp_path / "m.nii.gz", mask)
         report = run_checks(
-            _triangle_mesh(), SegmentationMask(mask=mask), _volume(), Fiducials([]),
+            _triangle_mesh(),
+            SegmentationMask(mask=mask),
+            _volume(),
+            Fiducials([]),
             nifti_mask_path=mask_path,
         )
         ese = next(check for check in report["checks"] if check["name"] == "ese_offset")

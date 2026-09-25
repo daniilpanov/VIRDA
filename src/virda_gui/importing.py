@@ -93,7 +93,7 @@ def detect_json_role(path: Path) -> ImportRole | None:
     try:
         with path.open(encoding="utf-8") as fh:
             data = json.load(fh)
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return None
     if isinstance(data, list):
         if data and all(isinstance(item, dict) for item in data):
@@ -164,9 +164,7 @@ def _validate_normals(source: Path) -> None:
 
     array = np.load(source)
     if array.ndim != 2 or array.shape[1] != 3 or array.shape[0] == 0:
-        raise ValueError(
-            f"Normals: expected an (N, 3) point array, got shape {array.shape}"
-        )
+        raise ValueError(f"Normals: expected an (N, 3) point array, got shape {array.shape}")
 
 
 def _validate_electrodes(source: Path) -> None:
@@ -176,13 +174,9 @@ def _validate_electrodes(source: Path) -> None:
         raise ValueError("Localized electrodes: expected a JSON array of electrodes.")
     for index, item in enumerate(data):
         if not isinstance(item, dict):
-            raise ValueError(
-                f"Localized electrodes: item {index} is not an electrode object."
-            )
+            raise ValueError(f"Localized electrodes: item {index} is not an electrode object.")
         if not any(key in item for key in ("ese_coords", "scalp_coords", "coords")):
-            raise ValueError(
-                f"Localized electrodes: item {index} has no coordinate field."
-            )
+            raise ValueError(f"Localized electrodes: item {index} has no coordinate field.")
 
 
 def import_target(role: ImportRole, project: Path, source: Path) -> Path:

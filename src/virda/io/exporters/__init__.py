@@ -1,7 +1,7 @@
 """Pure file exporters: write virda models to disk.
 
-Each function takes a filesystem path and a virda model and persists it;
-none of them knows about the pipeline or the GUI.
+Each function takes a filesystem path and domain data and persists it; none of
+them knows about the pipeline or the GUI.
 """
 
 from virda.io.exporters.electrodes import export_electrodes
@@ -10,6 +10,7 @@ from virda.io.exporters.fiducials import export_fiducials
 from virda.io.exporters.head_mask import export_head_mask
 from virda.io.exporters.localization_table import export_localization_table
 from virda.io.exporters.measurements import export_measurements
+from virda.io.exporters.mesh_arrays import export_mesh_faces, export_mesh_vertices
 from virda.io.exporters.scalp_mesh import export_scalp_mesh
 
 __all__ = [
@@ -19,5 +20,7 @@ __all__ = [
     "export_head_mask",
     "export_localization_table",
     "export_measurements",
+    "export_mesh_faces",
+    "export_mesh_vertices",
     "export_scalp_mesh",
 ]

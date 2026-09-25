@@ -88,9 +88,7 @@ class TestGenerateScalpSurface:
         assert surface.mesh.vertices.shape[0] > 0
 
     def test_sealing_disabled_option(self, sphere_volume: MRIVolume) -> None:
-        surface = generate_scalp_surface(
-            sphere_volume, sealing=SealingOptions(seal_enabled=False)
-        )
+        surface = generate_scalp_surface(sphere_volume, sealing=SealingOptions(seal_enabled=False))
 
         assert surface.mesh.faces.shape[0] > 0
 
