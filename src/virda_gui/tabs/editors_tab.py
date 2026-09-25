@@ -40,11 +40,10 @@ from virda_gui.constants import DEFAULT_FIDUCIALS_FILENAME, DEFAULT_MEASUREMENTS
 from virda_gui.state import AppState
 from virda_gui.viewer.frames import FRAME_HEAD, FRAME_SCANNER, frame_label
 
-FIDUCIAL_HEADERS = ["ID", "Name", "X", "Y", "Z", "Method", "Weight"]
-COL_ID, COL_NAME, COL_X, COL_Y, COL_Z, COL_METHOD, COL_WEIGHT = range(7)
+FIDUCIAL_HEADERS = ["ID", "X", "Y", "Z"]
+COL_ID, COL_X, COL_Y, COL_Z = range(4)
 COL_ELECTRODE = 0
 COORDINATE_SYSTEMS = ["world", "voxel"]
-DEFINITION_METHODS = ["manual", "auto", "imported"]
 
 #: The coordinate systems the fiducial X/Y/Z columns are entered in.  ``head``
 #: is scanner RAS relative to the NIfTI volume centre (same maths as cRAS).
@@ -157,7 +156,7 @@ class FiducialsEditor(QWidget):
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(COL_NAME, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(COL_ID, QHeaderView.ResizeMode.Stretch)
         self._table.cellChanged.connect(self._on_cell_changed)
 
         self._frame_row = QWidget(self)
@@ -213,19 +212,6 @@ class FiducialsEditor(QWidget):
         item = self._table.item(row, col)
         return item.text() if item is not None else ""
 
-    def _method(self, row: int) -> str:
-        combo = self._table.cellWidget(row, COL_METHOD)
-        if isinstance(combo, QComboBox):
-            return combo.currentText()
-        return "manual"
-
-    def _make_method_combo(self, method: str) -> QComboBox:
-        combo = QComboBox(self._table)
-        combo.addItems(DEFINITION_METHODS)
-        if method in DEFINITION_METHODS:
-            combo.setCurrentText(method)
-        return combo
-
     def _on_cell_changed(self, _row: int, _col: int) -> None:
         if not self._loading:
             self.rowsChanged.emit()
@@ -261,14 +247,9 @@ class FiducialsEditor(QWidget):
             self._table.setRowCount(len(rows))
             for index, row in enumerate(rows):
                 self._set_item(index, COL_ID, row.fiducial_id)
-                self._set_item(index, COL_NAME, row.name)
                 self._set_item(index, COL_X, f"{row.coordinates[0]}")
                 self._set_item(index, COL_Y, f"{row.coordinates[1]}")
                 self._set_item(index, COL_Z, f"{row.coordinates[2]}")
-                self._table.setCellWidget(
-                    index, COL_METHOD, self._make_method_combo(row.definition_method)
-                )
-                self._set_item(index, COL_WEIGHT, f"{row.weight}")
         finally:
             self._loading = False
         self.rowsChanged.emit()
@@ -291,7 +272,7 @@ class FiducialsEditor(QWidget):
             rows.append(
                 FiducialRow(
                     fiducial_id=fiducial_id,
-                    name=self._text(index, COL_NAME).strip(),
+                    name=fiducial_id,
                     coordinates=(
                         self._parse_float(index, COL_X, fiducial_id),
                         self._parse_float(index, COL_Y, fiducial_id),
@@ -302,8 +283,8 @@ class FiducialsEditor(QWidget):
                         if index < len(self._coord_systems)
                         else COORDINATE_SYSTEMS[0]
                     ),
-                    definition_method=self._method(index),
-                    weight=self._parse_weight(index, fiducial_id),
+                    definition_method="manual",
+                    weight=1.0,
                 )
             )
         return rows
@@ -317,23 +298,10 @@ class FiducialsEditor(QWidget):
                 f"Fiducial {fiducial_id!r} row {row + 1}: {FIDUCIAL_HEADERS[col]} must be a number"
             ) from None
 
-    def _parse_weight(self, row: int, fiducial_id: str) -> float:
-        text = self._text(row, COL_WEIGHT).strip()
-        if not text:
-            return 1.0
-        try:
-            return float(text)
-        except ValueError:
-            raise ValueError(
-                f"Fiducial {fiducial_id!r} row {row + 1}: Weight must be a number"
-            ) from None
-
     def add_row(self) -> None:
         index = self._table.rowCount()
         self._table.insertRow(index)
         self._coord_systems.append(COORDINATE_SYSTEMS[0])
-        self._table.setCellWidget(index, COL_METHOD, self._make_method_combo("manual"))
-        self._set_item(index, COL_WEIGHT, "1.0")
         self._table.scrollToBottom()
 
     def remove_selected(self) -> None:
