@@ -425,6 +425,56 @@ def test_hud_panel_drags_between_sides_offscreen() -> None:
         app.quit()
 
 
+def test_live_overlay_rebuild_purges_stale_actors_offscreen(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rebuilding the live overlay removes flagged actors and drops dead refs."""
+    from virda_gui.viewer.viewer import ViewerWidget
+
+    app = _offscreen_app()
+    viewer = ViewerWidget()
+    try:
+
+        class _Plotter:
+            def __init__(self) -> None:
+                self.removed: list[object] = []
+                self.created = 0
+
+            def _actor(self) -> object:
+                self.created += 1
+                return object()
+
+            def add_points(self, *args: object, **kwargs: object) -> object:
+                return self._actor()
+
+            def add_point_labels(self, *args: object, **kwargs: object) -> object:
+                return self._actor()
+
+            def add_mesh(self, *args: object, **kwargs: object) -> object:
+                return self._actor()
+
+            def remove_actor(self, actor: object) -> None:
+                self.removed.append(actor)
+
+        plotter = _Plotter()
+        monkeypatch.setattr(viewer, "_plotter", plotter)
+        viewer.set_live_electrodes(["E1"], np.array([[1.0, 0.0, 0.0]]), np.array([True]))
+
+        viewer._rebuild_live_overlay(np.eye(4))
+        first_point_actors = list(viewer._point_actors)
+        assert len(first_point_actors) == 3  # lime, flagged red, labels
+        assert plotter.removed == []
+
+        viewer._rebuild_live_overlay(np.eye(4))
+        assert len(viewer._point_actors) == 3  # no accumulation
+        assert len(plotter.removed) == 3  # lime, flagged red, labels
+        assert all(actor not in viewer._point_actors for actor in plotter.removed)
+    finally:
+        viewer.shutdown()
+        viewer.close()
+        app.quit()
+
+
 def test_advanced_dialog_exposes_only_gui_keys_offscreen() -> None:
     """The advanced dialog is trimmed to GUI-only mesh/localization knobs."""
     app = _offscreen_app()
