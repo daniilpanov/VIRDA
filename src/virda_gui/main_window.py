@@ -611,10 +611,12 @@ class IdeWindow(QMainWindow):
 
     def _refresh_localization_preview(self) -> None:
         """Repopulate the read-only localization table from the cached result."""
-        cras_offset = (
-            self._viewer_widget.scene_frame_params[1] if self._viewer_widget is not None else None
+        affine, cras_offset = (
+            (self._viewer_widget.scene_frame_params[0], self._viewer_widget.scene_frame_params[1])
+            if self._viewer_widget is not None
+            else (None, None)
         )
-        self._editors_tab.localization.set_result(self._localized_electrodes, cras_offset)
+        self._editors_tab.localization.set_result(self._localized_electrodes, cras_offset, affine)
 
     # ------------------------------------------------------------------
     # Fiducial frame conversion

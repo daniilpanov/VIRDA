@@ -17,6 +17,7 @@ from tests.helpers.measurements import make_fiducials
 from virda.io.exporters.fiducials import export_fiducials
 from virda.io.importers.fiducials import import_fiducials
 from virda.io.importers.measurements import import_measurements
+from virda.models.electrode import Electrode, Electrodes
 from virda.models.fiducial import Fiducial, Fiducials
 from virda_gui.main_window import IdeWindow
 from virda_gui.preferences import Preferences
@@ -25,6 +26,7 @@ from virda_gui.tabs.editors_tab import (
     FIDUCIAL_HEADERS,
     FiducialRow,
     FiducialsEditor,
+    LocalizationPreview,
     MeasurementRow,
     MeasurementsEditor,
     fiducials_to_rows,
@@ -224,6 +226,45 @@ def test_fiducials_editor_has_no_name_method_weight_columns_offscreen() -> None:
         assert row.weight == 1.0
     finally:
         editor.close()
+        app.quit()
+
+
+def test_localization_preview_frame_selector_offscreen() -> None:
+    app = _qt_app()
+    preview = LocalizationPreview()
+    try:
+        electrodes = Electrodes(
+            items=[
+                Electrode(
+                    electrode_id="E1",
+                    measured_distances={"NAS": 10.0},
+                    ese_coords=np.array([11.0, 0.0, 0.0]),
+                    scalp_coords=np.array([10.0, 0.0, 0.0]),
+                    residual_error=0.5,
+                )
+            ]
+        )
+
+        def _cell(row: int, col: int) -> str:
+            item = preview._table.item(row, col)
+            assert item is not None
+            return item.text()
+
+        preview.set_result(electrodes, np.array([1.0, 0.0, 0.0]), np.eye(4))
+        assert preview._table.columnCount() == 9
+        assert _cell(0, 1) == "11.000"  # world X
+
+        preview._frame_combo.setCurrentIndex(1)  # Head
+        assert _cell(0, 1) == "10.000"
+
+        preview._frame_combo.setCurrentIndex(2)  # Voxel
+        assert _cell(0, 1) == "11.000"
+
+        preview.set_result(electrodes, np.array([1.0, 0.0, 0.0]), None)
+        preview._frame_combo.setCurrentIndex(2)  # Voxel unavailable: no coords
+        assert _cell(0, 1) == ""
+    finally:
+        preview.close()
         app.quit()
 
 
