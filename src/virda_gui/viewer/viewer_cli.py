@@ -81,6 +81,7 @@ def show_viewer(
 
     if QApplication.instance() is app:
         app.exec()
+    widget.shutdown()
 
 
 def main() -> None:

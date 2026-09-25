@@ -456,6 +456,9 @@ def test_live_overlay_rebuild_purges_stale_actors_offscreen(
             def remove_actor(self, actor: object) -> None:
                 self.removed.append(actor)
 
+            def close(self) -> None:
+                return None
+
         plotter = _Plotter()
         monkeypatch.setattr(viewer, "_plotter", plotter)
         viewer.set_live_electrodes(["E1"], np.array([[1.0, 0.0, 0.0]]), np.array([True]))

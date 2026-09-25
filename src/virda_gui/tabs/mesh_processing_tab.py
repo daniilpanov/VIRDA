@@ -837,8 +837,12 @@ class MeshProcessingTab(QWidget):
         """Stop the generation thread, if any.
 
         Safe to call at application teardown for tabs whose ``closeEvent`` is
-        never delivered (children of a main window).
+        never delivered (children of a main window).  Finalizes the embedded
+        preview pane first so no VTK observer can fire after the GL context
+        is gone.
         """
+        if self._interactor is not None:
+            self._interactor.close()
         self._cancel_running_generation()
 
     def _on_generate_ese(self) -> None:
