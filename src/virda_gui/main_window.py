@@ -70,6 +70,11 @@ from .viewer.scene import scene_placement, transform_points
 from .viewer.viewer import ViewerWidget
 from .widgets import ElectrodeGroupRow
 
+_ESE_BLOCKED_REASON = (
+    "Generate the ESE mesh first (Mesh Processing tab -> Generate ESE mesh): "
+    "localization runs on the ESE surface."
+)
+
 
 class IdeWindow(QMainWindow):
     """IDE-style main window of the VIRDA GUI.
@@ -411,11 +416,12 @@ class IdeWindow(QMainWindow):
     def _schedule_localization(self) -> None:
         """Re-run live localization after inputs change (debounced by the timer).
 
-        Runs once the prerequisites are in place (scalp mesh, the three
+        Runs once the prerequisites are in place (ESE mesh, the three
         canonical fiducials and at least one measurement row) so the read-only
         preview self-fills without a manual "Localize" trigger.
         """
-        if self._mesh_processing_tab.current_scalp_mesh() is None:
+        if self._mesh_processing_tab.current_ese_mesh() is None:
+            self._editors_tab.localization.set_blocked(_ESE_BLOCKED_REASON)
             return
         try:
             if len(self._editors_tab.fiducials.fiducial_rows()) < 3:
@@ -462,11 +468,10 @@ class IdeWindow(QMainWindow):
             self._localize_rerun_pending = True
             return
 
-        mesh = self._mesh_processing_tab.current_scalp_mesh()
+        mesh = self._mesh_processing_tab.current_ese_mesh()
         if mesh is None:
-            self._localize_warning(
-                "Load or generate a scalp mesh first (Mesh Processing tab).", interactive
-            )
+            self._localize_warning(_ESE_BLOCKED_REASON, interactive)
+            self._editors_tab.localization.set_blocked(_ESE_BLOCKED_REASON)
             return
 
         try:
@@ -546,7 +551,7 @@ class IdeWindow(QMainWindow):
 
     def _localize_worker_thread(
         self,
-        surface: ScalpMesh,
+        surface: ESEMesh | ScalpMesh,
         fiducials: Fiducials,
         electrodes: Electrodes,
         options: LocalizeOptions,
@@ -889,6 +894,7 @@ class IdeWindow(QMainWindow):
         if self._viewer_widget is None:
             return
         self._viewer_widget.set_extra_mesh(self._mesh_to_scene_poly(ese.vertices, ese.faces), "ese")
+        self._schedule_localization()
 
     def _on_mesh_saved(self) -> None:
         if self._state.last_project_dir:

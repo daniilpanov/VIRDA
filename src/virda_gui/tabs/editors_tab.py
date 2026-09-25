@@ -745,6 +745,7 @@ class LocalizationPreview(QWidget):
         )
         self._hint.setWordWrap(True)
         self._hint.setVisible(True)
+        self._default_hint = self._hint.text()
 
         export_btn = QPushButton("Export CSV...", self)
         export_btn.setToolTip("Save the table below as a CSV file.")
@@ -827,6 +828,7 @@ class LocalizationPreview(QWidget):
         electrodes = self._electrodes
         self._table.setRowCount(0)
         if electrodes is None or not electrodes.items:
+            self._hint.setText(self._default_hint)
             self._hint.setVisible(True)
             self._export_btn.setEnabled(False)
             return
@@ -851,6 +853,14 @@ class LocalizationPreview(QWidget):
                 ),
             )
             self._set_item(index, LOC_COL_FLAGGED, "yes" if electrode.flagged else "no")
+
+    def set_blocked(self, reason: str) -> None:
+        """Show *reason* instead of the table until the blocker is resolved."""
+        self._electrodes = None
+        self._table.setRowCount(0)
+        self._hint.setText(reason)
+        self._hint.setVisible(True)
+        self._export_btn.setEnabled(False)
 
     def _distance(self, distances: dict[str, float], fiducial_id: str) -> float | None:
         fiducial_lower = fiducial_id.lower()
