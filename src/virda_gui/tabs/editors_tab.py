@@ -16,6 +16,7 @@ from typing import Any
 
 import numpy as np
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QStandardItemModel
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -38,7 +39,15 @@ from virda.models.electrode import Electrodes
 from virda.models.fiducial import Fiducial, Fiducials
 from virda_gui.constants import DEFAULT_FIDUCIALS_FILENAME, DEFAULT_MEASUREMENTS_FILENAME
 from virda_gui.state import AppState
-from virda_gui.viewer.frames import FRAME_HEAD, FRAME_SCANNER, frame_label
+from virda_gui.viewer.frames import (
+    FRAME_HEAD,
+    FRAME_SCANNER,
+    FRAME_VOXEL,
+    frame_available,
+    frame_label,
+    world_to_frame_matrix,
+)
+from virda_gui.viewer.scene import transform_points
 
 FIDUCIAL_HEADERS = ["ID", "X", "Y", "Z"]
 COL_ID, COL_X, COL_Y, COL_Z = range(4)
@@ -53,21 +62,25 @@ EDITOR_FRAME_IDS: tuple[str, str] = (FRAME_SCANNER, FRAME_HEAD)
 CANONICAL_FIDUCIALS: tuple[str, str, str] = ("LPA", "RPA", "NAS")
 MEASUREMENT_HEADERS = ["Electrode", *CANONICAL_FIDUCIALS]
 
-#: Read-only preview table columns for the live localization output.
+#: Read-only preview table columns for the live localization output.  The X/Y/Z
+#: columns show the localized coordinates in the frame picked with the
+#: coordinate-system combo above the table.
 LOCALIZATION_HEADERS = [
     "Name",
-    "World X",
-    "World Y",
-    "World Z",
-    "Head X",
-    "Head Y",
-    "Head Z",
+    "X",
+    "Y",
+    "Z",
     "LPA",
     "RPA",
     "NAS",
     "Residual (mm)",
     "Flagged",
 ]
+LOC_COL_NAME = 0
+LOC_COL_COORDS = 1
+LOC_COL_DISTANCES = 4
+LOC_COL_RESIDUAL = 7
+LOC_COL_FLAGGED = 8
 
 
 def canonical_fiducial_id(fiducial_id: str) -> str:
@@ -688,9 +701,9 @@ class MeasurementsEditor(QWidget):
 class LocalizationPreview(QWidget):
     """Read-only preview of the live localization results.
 
-    Shows each electrode's localized coordinates in the world and head frames
-    side by side with the measured fiducial distances, plus the residual error
-    and flag.  The backing CSV export is Qt-free.
+    Shows each electrode's localized coordinates in the selected frame side by
+    side with the measured fiducial distances, plus the residual error and
+    flag.  The backing CSV export is Qt-free.
     """
 
     def __init__(
@@ -702,6 +715,8 @@ class LocalizationPreview(QWidget):
         self._default_dir = default_dir
         self._electrodes: Electrodes | None = None
         self._cras_offset: np.ndarray | None = None
+        self._affine: np.ndarray | None = None
+        self._coord_frame: str = FRAME_SCANNER
 
         self._table = QTableWidget(0, len(LOCALIZATION_HEADERS), self)
         self._table.setHorizontalHeaderLabels(LOCALIZATION_HEADERS)
@@ -710,6 +725,18 @@ class LocalizationPreview(QWidget):
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+
+        self._frame_row = QWidget(self)
+        self._frame_layout = QHBoxLayout(self._frame_row)
+        self._frame_layout.setContentsMargins(0, 0, 0, 0)
+        self._frame_layout.setSpacing(6)
+        self._frame_layout.addWidget(QLabel("Coordinates:", self))
+        self._frame_combo = QComboBox(self._frame_row)
+        for frame_id in (FRAME_SCANNER, FRAME_HEAD, FRAME_VOXEL):
+            self._frame_combo.addItem(frame_label(frame_id), frame_id)
+        self._frame_combo.currentIndexChanged.connect(self._on_frame_selected)
+        self._frame_layout.addWidget(self._frame_combo)
+        self._frame_layout.addStretch(1)
 
         self._hint = QLabel(
             "Load or generate a scalp mesh and fill in the NAS/LPA/RPA fiducials and at "
@@ -732,6 +759,7 @@ class LocalizationPreview(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
         layout.addWidget(self._hint)
+        layout.addWidget(self._frame_row)
         layout.addWidget(self._table, 1)
         layout.addLayout(buttons)
 
@@ -741,19 +769,62 @@ class LocalizationPreview(QWidget):
         self._table.setItem(row, col, QTableWidgetItem(text))
 
     def _set_coordinate_row(self, row: int, start_col: int, coordinates: np.ndarray | None) -> None:
-        if coordinates is None:
-            return
         for axis in range(3):
-            self._set_item(row, start_col + axis, f"{float(coordinates[axis]):.3f}")
+            text = f"{float(coordinates[axis]):.3f}" if coordinates is not None else ""
+            self._set_item(row, start_col + axis, text)
 
     # ---- result population ----
 
-    def set_result(self, electrodes: Electrodes | None, cras_offset: np.ndarray | None) -> None:
+    def set_result(
+        self,
+        electrodes: Electrodes | None,
+        cras_offset: np.ndarray | None,
+        affine: np.ndarray | None = None,
+    ) -> None:
         """Replace the table with the given localization result."""
         self._electrodes = electrodes
         self._cras_offset = (
             np.asarray(cras_offset, dtype=np.float64) if cras_offset is not None else None
         )
+        self._affine = np.asarray(affine, dtype=np.float64) if affine is not None else None
+        self._update_frame_availability()
+        self._render()
+
+    def _on_frame_selected(self) -> None:
+        frame = self._frame_combo.currentData()
+        if isinstance(frame, str):
+            self._coord_frame = frame
+        self._render()
+
+    def _update_frame_availability(self) -> None:
+        """Grey out coordinate systems the loaded scene cannot express."""
+        model = self._frame_combo.model()
+        if isinstance(model, QStandardItemModel):
+            for index in range(self._frame_combo.count()):
+                frame = self._frame_combo.itemData(index)
+                item = model.item(index)
+                if item is not None:
+                    item.setEnabled(
+                        isinstance(frame, str)
+                        and frame_available(frame, self._affine, self._cras_offset)
+                    )
+        if not frame_available(self._coord_frame, self._affine, self._cras_offset):
+            self._coord_frame = FRAME_SCANNER
+            self._frame_combo.setCurrentIndex(0)
+
+    def _frame_coords(self, world_coords: np.ndarray | None) -> np.ndarray | None:
+        if world_coords is None:
+            return None
+        try:
+            matrix = world_to_frame_matrix(self._coord_frame, self._affine, self._cras_offset)
+        except ValueError:
+            return None
+        points = transform_points(np.asarray([world_coords], dtype=np.float64), matrix)
+        return np.asarray(points[0], dtype=np.float64)
+
+    def _render(self) -> None:
+        """Repopulate the table from the cached result in the selected frame."""
+        electrodes = self._electrodes
         self._table.setRowCount(0)
         if electrodes is None or not electrodes.items:
             self._hint.setVisible(True)
@@ -763,29 +834,23 @@ class LocalizationPreview(QWidget):
         self._export_btn.setEnabled(True)
         self._table.setRowCount(len(electrodes.items))
         for index, electrode in enumerate(electrodes.items):
-            self._set_item(index, 0, electrode.electrode_id or "")
-            self._set_coordinate_row(index, 1, electrode.ese_coords)
-            head_coords = self._head_coords(electrode.ese_coords)
-            self._set_coordinate_row(index, 4, head_coords)
-            for col, fiducial_id in enumerate(CANONICAL_FIDUCIALS, start=7):
+            self._set_item(index, LOC_COL_NAME, electrode.electrode_id or "")
+            self._set_coordinate_row(
+                index, LOC_COL_COORDS, self._frame_coords(electrode.ese_coords)
+            )
+            for col, fiducial_id in enumerate(CANONICAL_FIDUCIALS, start=LOC_COL_DISTANCES):
                 distance = self._distance(electrode.measured_distances, fiducial_id)
                 self._set_item(index, col, f"{distance}" if distance is not None else "")
             self._set_item(
                 index,
-                10,
+                LOC_COL_RESIDUAL,
                 (
                     f"{float(electrode.residual_error):.3f}"
                     if electrode.is_localized and electrode.residual_error is not None
                     else ""
                 ),
             )
-            self._set_item(index, 11, "yes" if electrode.flagged else "no")
-
-    def _head_coords(self, world_coords: np.ndarray | None) -> np.ndarray | None:
-        if world_coords is None or self._cras_offset is None:
-            return None
-        head = world_coords.astype(np.float64) - self._cras_offset
-        return np.asarray(head, dtype=np.float64)
+            self._set_item(index, LOC_COL_FLAGGED, "yes" if electrode.flagged else "no")
 
     def _distance(self, distances: dict[str, float], fiducial_id: str) -> float | None:
         fiducial_lower = fiducial_id.lower()
