@@ -77,21 +77,18 @@ class _SceneLoader(QObject):
 
     loaded = Signal(int, object)
     failed = Signal(int, str)
+    progress = Signal(str)
 
-    def __init__(
-        self,
-        log: Callable[[str], None],
-        kwargs: dict[str, Any],
-        seq: int,
-    ) -> None:
+    def __init__(self, kwargs: dict[str, Any], seq: int) -> None:
         super().__init__()
-        self._log = log
         self._kwargs = kwargs
         self._seq = seq
 
     def run(self) -> None:
         try:
-            scene = collect_scene_data(log=self._log, **self._kwargs)
+            # Progress is relayed via a signal so the widget-level log (e.g. a
+            # status bar with its own timers) runs in the GUI thread, never here.
+            scene = collect_scene_data(log=self.progress.emit, **self._kwargs)
         except Exception as exc:
             self.failed.emit(self._seq, str(exc))
         else:
@@ -200,12 +197,17 @@ class ViewerWidget(QWidget):
         self._cancel_running_load()
 
         self._thread = QThread(self)
-        self._worker = _SceneLoader(self._log, kwargs, seq)
+        self._worker = _SceneLoader(kwargs, seq)
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
         self._worker.loaded.connect(self._on_scene_loaded)
         self._worker.failed.connect(self._on_scene_failed)
+        self._worker.progress.connect(self._on_scene_progress)
         self._thread.start()
+
+    def _on_scene_progress(self, message: str) -> None:
+        """Forward worker-thread progress to the widget log in the GUI thread."""
+        self._log(message)
 
     def _on_scene_loaded(self, seq: int, scene: object) -> None:
         if seq != self._load_seq:
@@ -248,6 +250,7 @@ class ViewerWidget(QWidget):
         if worker is not None:
             worker.loaded.disconnect(self._on_scene_loaded)
             worker.failed.disconnect(self._on_scene_failed)
+            worker.progress.disconnect(self._on_scene_progress)
             # deleteLater() must be posted while the worker's event loop is
             # still live, otherwise the DeferredDelete event is never processed.
             worker.deleteLater()
@@ -1000,6 +1003,7 @@ class ViewerWidget(QWidget):
             if self._worker is not None:
                 self._worker.loaded.disconnect(self._on_scene_loaded)
                 self._worker.failed.disconnect(self._on_scene_failed)
+                self._worker.progress.disconnect(self._on_scene_progress)
                 # deleteLater() must be posted while the worker's event loop is
                 # still live, otherwise the DeferredDelete event is never processed.
                 self._worker.deleteLater()
