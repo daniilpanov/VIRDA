@@ -892,18 +892,18 @@ class IdeWindow(QMainWindow):
         return poly
 
     def _on_mesh_preview(self, mesh: ScalpMesh) -> None:
+        self._schedule_localization()
         if self._viewer_widget is None:
             return
         self._viewer_widget.set_extra_mesh(
             self._mesh_to_scene_poly(mesh.vertices, mesh.faces), "scalp"
         )
-        self._schedule_localization()
 
     def _on_ese_mesh(self, ese: ESEMesh) -> None:
+        self._schedule_localization()
         if self._viewer_widget is None:
             return
         self._viewer_widget.set_extra_mesh(self._mesh_to_scene_poly(ese.vertices, ese.faces), "ese")
-        self._schedule_localization()
 
     def _on_mesh_saved(self) -> None:
         if self._state.last_project_dir:

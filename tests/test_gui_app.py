@@ -924,3 +924,74 @@ def test_viewer_open_restores_ese_overlay_offscreen(
     finally:
         window.close()
         app.quit()
+
+
+def test_ese_signal_schedules_localization_without_viewer_offscreen(tmp_path: Path) -> None:
+    """Mesh/ESE signals schedule localization even when the 3D viewer is closed."""
+    import json
+
+    app = _offscreen_app()
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
+    try:
+        project = tmp_path / "sample-project"
+        (project / "mesh").mkdir(parents=True)
+        _write_triangle_ply(project / "mesh" / "final_mesh.ply")
+
+        vertices = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
+        ese_dir = project / "ese"
+        ese_dir.mkdir()
+        np.save(ese_dir / "ese_vertices.npy", np.array(vertices))
+        np.save(ese_dir / "ese_faces.npy", np.array([[0, 1, 2]]))
+        np.save(ese_dir / "normals.npy", np.array([[0.0, 0.0, 1.0]] * 3))
+        np.save(ese_dir / "quality.npy", np.array([1.0, 1.0, 1.0]))
+        (ese_dir / "point_pairs.json").write_text(
+            json.dumps({"scalp_vertices": vertices}), encoding="utf-8"
+        )
+        (ese_dir / "ese_mesh.ply").write_text("placeholder", encoding="utf-8")
+
+        inputs = project / "input"
+        inputs.mkdir()
+        (inputs / "fiducials.json").write_text(
+            json.dumps(
+                {
+                    "fiducials": [
+                        {
+                            "fiducial_id": fiducial_id,
+                            "name": fiducial_id,
+                            "coordinates": [1.0, 2.0, 3.0],
+                            "coordinate_system": "world",
+                            "definition_method": "manual",
+                            "weight": 1.0,
+                        }
+                        for fiducial_id in ("NAS", "LPA", "RPA")
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        (inputs / "measurements.json").write_text(
+            json.dumps(
+                {
+                    "electrodes": [
+                        {
+                            "electrode_id": "E1",
+                            "measured_distances": {"NAS": 1.0, "LPA": 2.0, "RPA": 3.0},
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        window.open_project(project)
+        assert window._viewer_widget is None
+        ese = window._mesh_processing_tab.current_ese_mesh()
+        assert ese is not None
+
+        window._localize_timer.stop()
+        window._on_ese_mesh(ese)
+        assert window._localize_timer.isActive()
+    finally:
+        window.close()
+        app.quit()
