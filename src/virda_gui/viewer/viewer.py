@@ -156,6 +156,7 @@ class ViewerWidget(QWidget):
         self._live_electrode_flags: np.ndarray | None = None
         self._live_electrode_actor: Any = None
         self._live_electrode_label_actor: Any = None
+        self._flagged_actor: Any = None
         self._extra_mesh: pv.PolyData | None = None
         self._extra_mesh_kind: MeshKind = "scalp"
         self._extra_mesh_actor: Any = None
@@ -278,6 +279,7 @@ class ViewerWidget(QWidget):
         self._live_electrode_flags = None
         self._live_electrode_actor = None
         self._live_electrode_label_actor = None
+        self._flagged_actor = None
         self._extra_mesh = None
         self._extra_mesh_kind = "scalp"
         self._extra_mesh_actor = None
@@ -474,10 +476,25 @@ class ViewerWidget(QWidget):
             self._live_fiducial_label_actor,
             self._live_electrode_actor,
             self._live_electrode_label_actor,
+            self._flagged_actor,
             self._extra_mesh_actor,
         ):
             if actor is not None:
                 self._plotter.remove_actor(actor)
+        dead = {
+            id(actor)
+            for actor in (
+                self._live_fiducial_actor,
+                self._live_fiducial_label_actor,
+                self._live_electrode_actor,
+                self._live_electrode_label_actor,
+                self._flagged_actor,
+                self._extra_mesh_actor,
+            )
+            if actor is not None
+        }
+        if dead:
+            self._point_actors = [actor for actor in self._point_actors if id(actor) not in dead]
         self._live_fiducial_actor = None
         self._live_fiducial_label_actor = None
         if self._live_fiducial_points is not None and len(self._live_fiducial_points) > 0:
@@ -505,6 +522,7 @@ class ViewerWidget(QWidget):
 
         self._live_electrode_actor = None
         self._live_electrode_label_actor = None
+        self._flagged_actor = None
         if self._live_electrode_points is not None and len(self._live_electrode_points) > 0:
             if len(self._live_electrode_ids) != len(self._live_electrode_points):
                 raise ValueError(
@@ -524,10 +542,10 @@ class ViewerWidget(QWidget):
             )
             self._point_actors.append(self._live_electrode_actor)
             if (~healthy).any():
-                flagged_actor = self._plotter.add_points(
+                self._flagged_actor = self._plotter.add_points(
                     pts[~healthy], color="red", point_size=17, render_points_as_spheres=True
                 )
-                self._point_actors.append(flagged_actor)
+                self._point_actors.append(self._flagged_actor)
             self._live_electrode_label_actor = self._plotter.add_point_labels(
                 pts,
                 self._live_electrode_ids,
