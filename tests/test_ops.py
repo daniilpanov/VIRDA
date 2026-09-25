@@ -163,6 +163,7 @@ class TestLocalize:
         assert len(result.items) == 3
         for i, electrode in enumerate(result.items):
             assert electrode.is_localized
+            assert electrode.ese_coords is not None
             assert np.array_equal(electrode.ese_coords, ese.vertices[true_indices[i]])
             assert electrode.residual_error is not None
             assert electrode.residual_error < 1e-6
