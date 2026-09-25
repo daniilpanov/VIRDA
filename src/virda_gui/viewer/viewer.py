@@ -998,7 +998,10 @@ class ViewerWidget(QWidget):
 
         Safe to call at application teardown for embedded widgets whose
         :meth:`closeEvent` is never delivered (children of a main window).
+        Finalizes the embedded plotter first so no VTK observer can fire
+        after the GL context is gone.
         """
+        self._plotter.close()
         if self._thread is not None and self._thread.isRunning():
             if self._worker is not None:
                 self._worker.loaded.disconnect(self._on_scene_loaded)
