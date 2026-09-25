@@ -1,6 +1,10 @@
+import json
+from pathlib import Path
+
 import numpy as np
 import pytest
 
+from virda.io.importers.ese_mesh import import_ese_mesh
 from virda.models.ese_mesh import ESEMesh
 
 
@@ -94,3 +98,50 @@ class TestESEMesh:
                 normals=mesh.normals,
                 quality=mesh.quality,
             )
+
+
+def _write_ese_project_files(ese_dir: Path, mesh: ESEMesh) -> Path:
+    """Write a project ``ese/`` directory for *mesh*; return the PLY path."""
+    ese_dir.mkdir(parents=True, exist_ok=True)
+    np.save(ese_dir / "ese_vertices.npy", mesh.vertices)
+    np.save(ese_dir / "ese_faces.npy", mesh.faces)
+    np.save(ese_dir / "normals.npy", mesh.normals)
+    np.save(ese_dir / "quality.npy", mesh.quality)
+    (ese_dir / "point_pairs.json").write_text(
+        json.dumps(
+            {
+                "n_points": len(mesh.vertices),
+                "scalp_vertices": mesh.scalp_vertices.tolist(),
+                "ese_vertices": mesh.vertices.tolist(),
+                "normals": mesh.normals.tolist(),
+                "quality": mesh.quality.tolist(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    ply = ese_dir / "ese_mesh.ply"
+    ply.write_text("placeholder", encoding="utf-8")
+    return ply
+
+
+class TestImportEseMesh:
+    def test_round_trip_through_project_files(self, tmp_path: Path) -> None:
+        mesh = make_ese_mesh()
+        ply = _write_ese_project_files(tmp_path / "ese", mesh)
+
+        restored = import_ese_mesh(ply)
+
+        assert np.array_equal(restored.vertices, mesh.vertices)
+        assert np.array_equal(restored.faces, mesh.faces)
+        assert np.array_equal(restored.scalp_vertices, mesh.scalp_vertices)
+        assert np.array_equal(restored.normals, mesh.normals)
+        assert np.array_equal(restored.quality, mesh.quality)
+
+    def test_missing_companion_raises(self, tmp_path: Path) -> None:
+        ese_dir = tmp_path / "ese"
+        ese_dir.mkdir()
+        ply = ese_dir / "ese_mesh.ply"
+        ply.write_text("placeholder", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="Cannot import ESE mesh"):
+            import_ese_mesh(ply)

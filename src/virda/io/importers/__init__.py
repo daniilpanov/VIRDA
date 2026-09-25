@@ -5,6 +5,7 @@ knows about the pipeline or the GUI.
 """
 
 from virda.io.importers.electrodes_table import ElectrodesTable, import_electrodes_table
+from virda.io.importers.ese_mesh import import_ese_mesh
 from virda.io.importers.fiducials import import_fiducials
 from virda.io.importers.measurements import import_measurements
 from virda.io.importers.nifti import import_nifti
@@ -14,6 +15,7 @@ from virda.io.importers.scalp_mesh import import_scalp_mesh
 __all__ = [
     "ElectrodesTable",
     "import_electrodes_table",
+    "import_ese_mesh",
     "import_fiducials",
     "import_measurements",
     "import_nifti",

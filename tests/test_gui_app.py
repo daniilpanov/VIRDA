@@ -781,3 +781,45 @@ def test_localization_blocked_until_ese_mesh_offscreen(tmp_path: Path) -> None:
     finally:
         window.close()
         app.quit()
+
+
+def test_open_project_autoloads_ese_mesh_offscreen(tmp_path: Path) -> None:
+    """Opening a project with ese/ese_mesh.ply restores the in-memory ESE mesh."""
+    import json
+
+    app = _offscreen_app()
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
+    try:
+        project = tmp_path / "sample-project"
+        (project / "mesh").mkdir(parents=True)
+        _write_triangle_ply(project / "mesh" / "final_mesh.ply")
+
+        vertices = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
+        ese_dir = project / "ese"
+        ese_dir.mkdir()
+        np.save(ese_dir / "ese_vertices.npy", np.array(vertices))
+        np.save(ese_dir / "ese_faces.npy", np.array([[0, 1, 2]]))
+        np.save(ese_dir / "normals.npy", np.array([[0.0, 0.0, 1.0]] * 3))
+        np.save(ese_dir / "quality.npy", np.array([1.0, 1.0, 1.0]))
+        (ese_dir / "point_pairs.json").write_text(
+            json.dumps(
+                {
+                    "n_points": 3,
+                    "scalp_vertices": vertices,
+                    "ese_vertices": vertices,
+                    "normals": [[0.0, 0.0, 1.0]] * 3,
+                    "quality": [1.0, 1.0, 1.0],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (ese_dir / "ese_mesh.ply").write_text("placeholder", encoding="utf-8")
+
+        window.open_project(project)
+        ese = window._mesh_processing_tab.current_ese_mesh()
+        assert ese is not None
+        assert len(ese.vertices) == 3
+    finally:
+        window.close()
+        app.quit()

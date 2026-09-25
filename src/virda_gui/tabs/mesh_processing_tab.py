@@ -53,6 +53,7 @@ from pyvistaqt import QtInteractor
 
 from virda.io.exporters.mesh_arrays import export_mesh_faces, export_mesh_vertices
 from virda.io.exporters.scalp_mesh import export_scalp_mesh
+from virda.io.importers.ese_mesh import import_ese_mesh
 from virda.io.importers.nifti import import_nifti
 from virda.io.importers.scalp_mesh import import_scalp_mesh
 from virda.models.ese_mesh import ESEMesh
@@ -70,6 +71,7 @@ from virda_gui.viewer.scene import scene_placement
 from virda_gui.viewer.viewer_loaders import SceneData, collect_scene_data
 
 _FINAL_MESH_FILENAME = "final_mesh.ply"
+_ESE_MESH_FILENAME = "ese_mesh.ply"
 _NIFTI_PREVIEW_STRIDE = 2
 _MESH_DENSITY_MIN = 1
 _MESH_DENSITY_MAX = 100
@@ -906,12 +908,23 @@ class MeshProcessingTab(QWidget):
     # ---- project lifecycle ----
 
     def prefill_from_project(self, project: str | Path) -> None:
-        """Load the project's final scalp mesh, if any, as the base."""
+        """Load the project's final scalp mesh as the base plus its ESE mesh, if any."""
         self.clear()
         root = Path(project)
         candidate = root / "mesh" / _FINAL_MESH_FILENAME
         if candidate.is_file():
             self.load_base(candidate)
+        ese_candidate = root / "ese" / _ESE_MESH_FILENAME
+        if ese_candidate.is_file():
+            try:
+                ese = import_ese_mesh(ese_candidate)
+            except ValueError as exc:
+                self.status.emit(f"ESE mesh not loaded: {exc}")
+            else:
+                self._ese_mesh = ese
+                self._update_export_controls()
+                self.eseMesh.emit(ese)
+                self.status.emit(f"ESE mesh loaded: {len(ese.vertices)} vertices.")
         nifti = self._find_project_nifti(root)
         if nifti is not None:
             self._start_nifti_scene(nifti)
