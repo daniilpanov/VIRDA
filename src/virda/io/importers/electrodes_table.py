@@ -7,13 +7,10 @@ the same result without importing ``virda_gui``.
 
 import csv
 from pathlib import Path
-from typing import TypeAlias
 
 import numpy as np
 
-ElectrodesTable: TypeAlias = tuple[
-    np.ndarray, np.ndarray, np.ndarray, list[dict[str, float]], list[str]
-]
+type ElectrodesTable = tuple[np.ndarray, np.ndarray, np.ndarray, list[dict[str, float]], list[str]]
 
 
 def import_electrodes_table(path: str | Path) -> ElectrodesTable:

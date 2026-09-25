@@ -300,4 +300,4 @@ class TestCollectExports:
 
 
 def transform_4x4(points: np.ndarray, matrix: np.ndarray) -> np.ndarray:
-    return points @ matrix[:3, :3].T + matrix[:3, 3]
+    return np.asarray(points @ matrix[:3, :3].T + matrix[:3, 3], dtype=np.float64)

@@ -52,14 +52,12 @@ def smooth(mesh: ScalpMesh, options: SmoothOptions) -> ScalpMesh:
     if options.smoother == "none":
         return mesh
     if options.smoother == "taubin":
-        smoother = TaubinSmoother(
+        return TaubinSmoother(
             iterations=options.iterations,
             lamb=options.lamb,
             nu=options.nu,
-        )
-    else:
-        smoother = LaplacianSmoother(iterations=options.iterations, lamb=options.lamb)
-    return smoother.process(mesh)
+        ).process(mesh)
+    return LaplacianSmoother(iterations=options.iterations, lamb=options.lamb).process(mesh)
 
 
 def decimate(mesh: ScalpMesh, options: DecimateOptions) -> ScalpMesh:

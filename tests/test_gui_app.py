@@ -32,7 +32,6 @@ from virda_gui.importing import (
 )
 from virda_gui.main_window import IdeWindow
 from virda_gui.preferences import Preferences
-from virda_gui.state import AppState
 from virda_gui.viewer.frames import (
     frame_to_frame_matrix,
     frame_to_world_matrix,
@@ -83,12 +82,20 @@ def _write_mini_nifti(path: Path) -> Path:
 
 
 def test_detect_role_by_extension_and_name() -> None:
-    assert detect_role("scan.nii").key == "nifti"
-    assert detect_role("scan.nii.gz").key == "nifti"
-    assert detect_role("ese_mesh.ply").key == "ese_mesh"
+    nifti = detect_role("scan.nii")
+    assert nifti is not None
+    assert nifti.key == "nifti"
+    nifti_gz = detect_role("scan.nii.gz")
+    assert nifti_gz is not None
+    assert nifti_gz.key == "nifti"
+    ese_mesh = detect_role("ese_mesh.ply")
+    assert ese_mesh is not None
+    assert ese_mesh.key == "ese_mesh"
     assert detect_role("final_mesh.ply") is None  # ambiguous between mesh / ese_mesh
     assert detect_role("mesh.ply") is None
-    assert detect_role("normals.npy").key == "normals"
+    normals = detect_role("normals.npy")
+    assert normals is not None
+    assert normals.key == "normals"
     assert detect_role("volume_002.npy") is None
     assert detect_role("blob.bin") is None
 
@@ -105,15 +112,21 @@ def test_detect_role_json_by_structure(tmp_path: Path) -> None:
     electrodes.write_text(
         json.dumps([{"name": "Cz", "ese_coords": [1.0, 2.0, 3.0]}]), encoding="utf-8"
     )
-    assert detect_role(electrodes).key == "electrodes"
+    electrodes_role = detect_role(electrodes)
+    assert electrodes_role is not None
+    assert electrodes_role.key == "electrodes"
 
     measurements = tmp_path / "measurements.json"
     measurements.write_text(json.dumps({"electrodes": []}), encoding="utf-8")
-    assert detect_role(measurements).key == "measurements"
+    measurements_role = detect_role(measurements)
+    assert measurements_role is not None
+    assert measurements_role.key == "measurements"
 
     fiducials = tmp_path / "fiducials.json"
     fiducials.write_text(json.dumps({"fiducials": []}), encoding="utf-8")
-    assert detect_role(fiducials).key == "fiducials"
+    fiducials_role = detect_role(fiducials)
+    assert fiducials_role is not None
+    assert fiducials_role.key == "fiducials"
 
     unknown = tmp_path / "config.json"
     unknown.write_text(json.dumps({"nifti_path": "x"}), encoding="utf-8")
@@ -599,7 +612,6 @@ def test_ide_window_deletes_no_config_or_run_tab(tmp_path: Path) -> None:
 def test_advanced_dialog_updates_state_offscreen(tmp_path: Path) -> None:
     """Accepting the advanced dialog writes its values back into state."""
     app = _offscreen_app()
-    state = AppState(advanced=dict(ADVANCED_FIELD_DEFAULTS))
 
     class _Dialog:
         def __init__(self, parent, values) -> None:
@@ -613,7 +625,7 @@ def test_advanced_dialog_updates_state_offscreen(tmp_path: Path) -> None:
     import virda_gui.main_window as main_window_module
 
     try:
-        main_window_module.AdvancedSettingsDialog = _Dialog  # type: ignore[assignment]
+        vars(main_window_module)["AdvancedSettingsDialog"] = _Dialog
         prefs = _make_prefs(tmp_path)
         window = IdeWindow(prefs=prefs)
         try:
@@ -623,5 +635,5 @@ def test_advanced_dialog_updates_state_offscreen(tmp_path: Path) -> None:
         finally:
             window.close()
     finally:
-        main_window_module.AdvancedSettingsDialog = original
+        vars(main_window_module)["AdvancedSettingsDialog"] = original
         app.quit()

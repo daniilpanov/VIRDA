@@ -67,7 +67,8 @@ class TestHeadMaskExporter:
         path = export_head_mask(tmp_path / "head_mask.nii.gz", segmentation, mri)
 
         image = nib.load(path)
+        assert isinstance(image, nib.Nifti1Image)
         stored = np.asanyarray(image.dataobj).astype(bool)
         assert stored.shape == mask.shape
         np.testing.assert_array_equal(stored, mask)
-        np.testing.assert_allclose(image.affine, np.eye(4))
+        assert np.allclose(np.asanyarray(image.affine), np.eye(4))

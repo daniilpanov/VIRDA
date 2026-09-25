@@ -396,7 +396,9 @@ def run_checks(
                 mri_volume.affine,
             )
         )
-    fiducials = check_fiducials(fiducials, mesh, mri_volume, tolerance_mm=fiducial_tolerance_mm)
+    fiducials_check = check_fiducials(
+        fiducials, mesh, mri_volume, tolerance_mm=fiducial_tolerance_mm
+    )
 
     warnings: list[str] = []
     for check in checks:
@@ -404,15 +406,15 @@ def run_checks(
             warnings.append(f"{check['name']}: {check['message']}")
         elif check["status"] == "fail":
             warnings.append(f"FAIL {check['name']}: {check['message']}")
-    warnings.extend(fiducials["warnings"])
+    warnings.extend(fiducials_check["warnings"])
 
     statuses: list[CheckStatus] = [c["status"] for c in checks if c["status"] != "skip"] + [
-        fiducials["status"]
+        fiducials_check["status"]
     ]
     overall = "fail" if "fail" in statuses else ("warn" if "warn" in statuses else "ok")
     return {
         "status": overall,
         "checks": checks,
-        "fiducials": fiducials,
+        "fiducials": fiducials_check,
         "warnings": warnings,
     }
