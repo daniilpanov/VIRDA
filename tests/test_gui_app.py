@@ -374,6 +374,57 @@ def test_viewer_widget_importable_from_main_window() -> None:
     assert vars(main_window_module)["ViewerWidget"] is ViewerWidget
 
 
+def test_hud_panel_drags_between_sides_offscreen() -> None:
+    """Dragging the HUD header re-anchors it; a click without drag does not move it."""
+    from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtWidgets import QApplication, QLabel
+
+    from virda_gui.viewer.hud import HUDContainer, HudPanel
+
+    app = _offscreen_app()
+    hud = HUDContainer()
+    hud.resize(1000, 600)
+    panel = HudPanel("Live editing", hud)
+    panel.set_body(QLabel("body", panel))
+    hud.add_overlay(panel, Qt.AlignmentFlag.AlignLeft, fixed_width=430)
+    hud.show()
+    try:
+        assert panel.property("hud_side") == "left"
+
+        press_global = panel.mapToGlobal(QPoint(10, 5))
+        drop_global = hud.mapToGlobal(QPoint(800, 300))
+
+        def _send(
+            kind: QEvent.Type, local: QPoint, global_pos: QPoint, buttons: Qt.MouseButton
+        ) -> None:
+            QApplication.sendEvent(
+                panel,
+                QMouseEvent(
+                    kind,
+                    QPointF(local),
+                    global_pos,
+                    Qt.MouseButton.LeftButton,
+                    buttons,
+                    Qt.KeyboardModifier.NoModifier,
+                ),
+            )
+
+        _send(QEvent.Type.MouseButtonPress, QPoint(10, 5), press_global, Qt.MouseButton.NoButton)
+        _send(QEvent.Type.MouseMove, QPoint(400, 150), drop_global, Qt.MouseButton.LeftButton)
+        _send(
+            QEvent.Type.MouseButtonRelease, QPoint(400, 150), drop_global, Qt.MouseButton.NoButton
+        )
+        assert panel.property("hud_side") == "right"
+
+        _send(QEvent.Type.MouseButtonPress, QPoint(10, 5), press_global, Qt.MouseButton.NoButton)
+        _send(QEvent.Type.MouseButtonRelease, QPoint(10, 5), press_global, Qt.MouseButton.NoButton)
+        assert panel.property("hud_side") == "right"
+    finally:
+        hud.close()
+        app.quit()
+
+
 def test_advanced_dialog_exposes_only_gui_keys_offscreen() -> None:
     """The advanced dialog is trimmed to GUI-only mesh/localization knobs."""
     app = _offscreen_app()
