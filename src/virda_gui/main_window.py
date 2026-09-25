@@ -421,6 +421,7 @@ class IdeWindow(QMainWindow):
         preview self-fills without a manual "Localize" trigger.
         """
         if self._mesh_processing_tab.current_ese_mesh() is None:
+            self._localized_electrodes = None
             self._editors_tab.localization.set_blocked(_ESE_BLOCKED_REASON)
             return
         try:
@@ -473,6 +474,7 @@ class IdeWindow(QMainWindow):
             self._localize_warning(_ESE_BLOCKED_REASON, interactive)
             self._editors_tab.localization.set_blocked(_ESE_BLOCKED_REASON)
             return
+        surface: ESEMesh | ScalpMesh = mesh
 
         try:
             fiducial_rows = self._editors_tab.fiducials.fiducial_rows()
@@ -543,7 +545,7 @@ class IdeWindow(QMainWindow):
         generation = self._localize_generation
         thread = threading.Thread(
             target=self._localize_worker_thread,
-            args=(mesh, fiducials, electrodes, options, generation),
+            args=(surface, fiducials, electrodes, options, generation),
             daemon=True,
         )
         self._localize_thread = thread
