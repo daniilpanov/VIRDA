@@ -461,7 +461,7 @@ def test_editors_tab_has_no_localize_button_but_keeps_advanced_offscreen() -> No
     try:
         labels = [button.text() for button in tab.findChildren(QPushButton)]
         assert "Localize measurements" not in labels
-        assert "Localization settings..." in labels
+        assert "Advanced settings..." in labels
 
         spy = QSignalSpy(tab.advancedRequested)
         tab._on_advanced_clicked()
