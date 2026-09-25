@@ -73,9 +73,7 @@ class TestMeasurementsImporter:
             json.dumps(
                 {
                     "fiducial_weights": {"NAS": 2.0},
-                    "electrodes": [
-                        {"electrode_id": "Fz", "measured_distances": {"NAS": 1.0}}
-                    ],
+                    "electrodes": [{"electrode_id": "Fz", "measured_distances": {"NAS": 1.0}}],
                 }
             )
         )

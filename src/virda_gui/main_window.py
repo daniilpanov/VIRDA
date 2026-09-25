@@ -295,9 +295,7 @@ class IdeWindow(QMainWindow):
 
     def _has_renderable_viewer_data(self, project: Path) -> bool:
         """Return whether *project* holds something the 3D viewer can render."""
-        return (project / "mesh" / "final_mesh.ply").is_file() or any(
-            project.glob("input/*.nii*")
-        )
+        return (project / "mesh" / "final_mesh.ply").is_file() or any(project.glob("input/*.nii*"))
 
     def _show_mesh_processing_tab(self) -> None:
         self._add_tab(self._mesh_processing_tab, "Mesh Processing")
@@ -516,7 +514,7 @@ class IdeWindow(QMainWindow):
                         definition_method=row.definition_method,
                         weight=row.weight,
                     )
-                    for row, point in zip(fiducial_rows, world_points)
+                    for row, point in zip(fiducial_rows, world_points, strict=True)
                 ]
             )
             electrodes = Electrodes(
@@ -655,7 +653,7 @@ class IdeWindow(QMainWindow):
                 definition_method=row.definition_method,
                 weight=row.weight,
             )
-            for row, point in zip(rows, converted)
+            for row, point in zip(rows, converted, strict=True)
         ]
         editor.set_rows(new_rows)
 
@@ -875,13 +873,15 @@ class IdeWindow(QMainWindow):
     def _on_mesh_preview(self, mesh: ScalpMesh) -> None:
         if self._viewer_widget is None:
             return
-        self._viewer_widget.set_extra_mesh(self._mesh_to_scene_poly(mesh.vertices, mesh.faces))
+        self._viewer_widget.set_extra_mesh(
+            self._mesh_to_scene_poly(mesh.vertices, mesh.faces), "scalp"
+        )
         self._schedule_localization()
 
     def _on_ese_mesh(self, ese: ESEMesh) -> None:
         if self._viewer_widget is None:
             return
-        self._viewer_widget.set_extra_mesh(self._mesh_to_scene_poly(ese.vertices, ese.faces))
+        self._viewer_widget.set_extra_mesh(self._mesh_to_scene_poly(ese.vertices, ese.faces), "ese")
 
     def _on_mesh_saved(self) -> None:
         if self._state.last_project_dir:

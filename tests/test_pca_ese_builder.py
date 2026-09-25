@@ -61,9 +61,7 @@ class TestPCAESEBuilder:
 
     def test_sphere_normals_radial_outward_radius(self) -> None:
         mesh = make_sphere()
-        result = run_builder(
-            mesh, neighborhood_radius_mm=20.0, k_neighbors=None, min_neighbors=5
-        )
+        result = run_builder(mesh, neighborhood_radius_mm=20.0, k_neighbors=None, min_neighbors=5)
 
         radial = mesh.vertices / np.linalg.norm(mesh.vertices, axis=1, keepdims=True)
         dots = np.sum(result.normals * radial, axis=1)
@@ -79,9 +77,7 @@ class TestPCAESEBuilder:
 
     def test_radius_falls_back_to_knn(self) -> None:
         mesh = make_sphere()
-        result = run_builder(
-            mesh, neighborhood_radius_mm=1.0, k_neighbors=None, min_neighbors=5
-        )
+        result = run_builder(mesh, neighborhood_radius_mm=1.0, k_neighbors=None, min_neighbors=5)
 
         radial = mesh.vertices / np.linalg.norm(mesh.vertices, axis=1, keepdims=True)
         dots = np.sum(result.normals * radial, axis=1)

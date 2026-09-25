@@ -396,9 +396,7 @@ def run_checks(
                 mri_volume.affine,
             )
         )
-    fiducials = check_fiducials(
-        fiducials, mesh, mri_volume, tolerance_mm=fiducial_tolerance_mm
-    )
+    fiducials = check_fiducials(fiducials, mesh, mri_volume, tolerance_mm=fiducial_tolerance_mm)
 
     warnings: list[str] = []
     for check in checks:

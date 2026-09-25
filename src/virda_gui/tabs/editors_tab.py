@@ -297,9 +297,11 @@ class FiducialsEditor(QWidget):
                         self._parse_float(index, COL_Y, fiducial_id),
                         self._parse_float(index, COL_Z, fiducial_id),
                     ),
-                    coordinate_system=self._coord_systems[index]
-                    if index < len(self._coord_systems)
-                    else COORDINATE_SYSTEMS[0],
+                    coordinate_system=(
+                        self._coord_systems[index]
+                        if index < len(self._coord_systems)
+                        else COORDINATE_SYSTEMS[0]
+                    ),
                     definition_method=self._method(index),
                     weight=self._parse_weight(index, fiducial_id),
                 )
@@ -803,9 +805,11 @@ class LocalizationPreview(QWidget):
             self._set_item(
                 index,
                 10,
-                f"{float(electrode.residual_error):.3f}"
-                if electrode.is_localized and electrode.residual_error is not None
-                else "",
+                (
+                    f"{float(electrode.residual_error):.3f}"
+                    if electrode.is_localized and electrode.residual_error is not None
+                    else ""
+                ),
             )
             self._set_item(index, 11, "yes" if electrode.flagged else "no")
 

@@ -28,7 +28,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import pyvista as pv
@@ -51,6 +51,7 @@ from PySide6.QtWidgets import (
 )
 from pyvistaqt import QtInteractor
 
+from virda.io.exporters.mesh_arrays import export_mesh_faces, export_mesh_vertices
 from virda.io.exporters.scalp_mesh import export_scalp_mesh
 from virda.io.importers.nifti import import_nifti
 from virda.io.importers.scalp_mesh import import_scalp_mesh
@@ -79,6 +80,9 @@ _SMOOTHER_ITEMS = [
     ("laplacian", "Laplacian"),
     ("taubin", "Taubin"),
 ]
+
+MeshKind = Literal["scalp", "ese"]
+MeshArray = Literal["vertices", "faces"]
 
 
 def generate_mesh_from_nifti(
@@ -137,6 +141,10 @@ class MeshProcessingTab(QWidget):
         self._base_mesh: ScalpMesh | None = None
         self._base_path: Path | None = None
         self._preview_mesh: ScalpMesh | None = None
+        self._ese_mesh: ESEMesh | None = None
+        self._active_mesh_label: QLabel | None = None
+        self._vertices_export_button: QPushButton | None = None
+        self._faces_export_button: QPushButton | None = None
         self._mesh_generation_btn: QPushButton | None = None
         self._generate_ese_btn: QPushButton | None = None
         self._generation_thread: QThread | None = None
@@ -164,6 +172,7 @@ class MeshProcessingTab(QWidget):
         panel_layout.addWidget(self._build_source_box())
         panel_layout.addWidget(self._build_parameters_box())
         panel_layout.addWidget(self._build_actions_box())
+        panel_layout.addWidget(self._build_export_box())
         panel_layout.addStretch(1)
 
         self._preview_timer = QTimer(self)
@@ -193,6 +202,7 @@ class MeshProcessingTab(QWidget):
         self.baseMeshChanged.connect(self._update_generation_buttons)
         self._connect_parameter_edits()
         self._update_generation_buttons()
+        self._update_export_controls()
 
     # ---- UI builders ----
 
@@ -303,6 +313,86 @@ class MeshProcessingTab(QWidget):
         reset_btn.clicked.connect(self._on_reset)
         row.addWidget(reset_btn)
         return box
+
+    def _build_export_box(self) -> QGroupBox:
+        box = QGroupBox("Export mesh arrays", self)
+        layout = QVBoxLayout(box)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(4)
+        layout.addWidget(QLabel("Writes active mesh arrays in world coordinates.", box))
+        self._active_mesh_label = QLabel(box)
+        layout.addWidget(self._active_mesh_label)
+
+        self._vertices_export_button = QPushButton(box)
+        self._vertices_export_button.clicked.connect(self._on_export_vertices)
+        layout.addWidget(self._vertices_export_button)
+        self._faces_export_button = QPushButton(box)
+        self._faces_export_button.clicked.connect(self._on_export_faces)
+        layout.addWidget(self._faces_export_button)
+        return box
+
+    def _active_mesh(self) -> tuple[ScalpMesh | ESEMesh, MeshKind] | None:
+        if self._ese_mesh is not None:
+            return self._ese_mesh, "ese"
+        scalp = self.current_scalp_mesh()
+        if scalp is not None:
+            return scalp, "scalp"
+        return None
+
+    def _update_export_controls(self) -> None:
+        active = self._active_mesh()
+        if self._active_mesh_label is not None:
+            self._active_mesh_label.setText(
+                "Active mesh: none" if active is None else f"Active mesh: {active[1]}"
+            )
+        if self._vertices_export_button is not None:
+            self._vertices_export_button.setEnabled(active is not None)
+            self._vertices_export_button.setText(
+                "Export vertices (NPY)..."
+                if active is None
+                else f"Export {active[1]} vertices (NPY)..."
+            )
+        if self._faces_export_button is not None:
+            self._faces_export_button.setEnabled(active is not None)
+            self._faces_export_button.setText(
+                "Export faces (NPY)..." if active is None else f"Export {active[1]} faces (NPY)..."
+            )
+
+    def _on_export_vertices(self) -> None:
+        self._export_active_mesh_array("vertices")
+
+    def _on_export_faces(self) -> None:
+        self._export_active_mesh_array("faces")
+
+    def _export_active_mesh_array(self, array_kind: MeshArray) -> None:
+        active = self._active_mesh()
+        if active is None:
+            return
+        mesh, mesh_kind = active
+        path, _selected_filter = QFileDialog.getSaveFileName(
+            self,
+            f"Export {mesh_kind} {array_kind}",
+            f"{mesh_kind}_{array_kind}.npy",
+            "NumPy array (*.npy);;All files (*)",
+        )
+        if not path:
+            return
+        try:
+            if array_kind == "vertices":
+                target = export_mesh_vertices(path, mesh.vertices)
+            elif array_kind == "faces":
+                target = export_mesh_faces(path, mesh.faces)
+            else:
+                raise ValueError(f"unknown mesh array {array_kind!r}")
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(
+                self,
+                f"Export {mesh_kind} {array_kind}",
+                f"Could not export {mesh_kind} {array_kind}:\n{exc}",
+            )
+            return
+        frame_suffix = " in world coordinates" if array_kind == "vertices" else ""
+        self.status.emit(f"Exported {mesh_kind} {array_kind} to {target}{frame_suffix}")
 
     # ---- parameter plumbing ----
 
@@ -421,8 +511,10 @@ class MeshProcessingTab(QWidget):
         base = self._base_mesh
         if base is None:
             self._preview_mesh = None
+            self._ese_mesh = None
             self._result_hidden = False
             self._render_scene()
+            self._update_export_controls()
             return
         try:
             preview = self._compute_preview(base)
@@ -430,11 +522,13 @@ class MeshProcessingTab(QWidget):
             self.status.emit(f"Mesh preview failed: {exc}")
             return
         self._preview_mesh = preview
+        self._ese_mesh = None
         self._result_hidden = False
         self._preview_label.setText(
             f"Preview: {len(preview.vertices)} vertices (base {len(base.vertices)})"
         )
         self._render_scene()
+        self._update_export_controls()
         self.previewMesh.emit(preview)
 
     def _on_load_base(self) -> None:
@@ -467,11 +561,13 @@ class MeshProcessingTab(QWidget):
         self._base_mesh = mesh
         self._set_base_path(path)
         self._preview_mesh = None
+        self._ese_mesh = None
         self._result_hidden = False
         self._base_label.setText(str(path))
         self._preview_label.setText(f"Base mesh: {len(mesh.vertices)} vertices")
         self._render_scene()
         self._update_generation_buttons()
+        self._update_export_controls()
         self.previewMesh.emit(mesh)
         return True
 
@@ -501,7 +597,7 @@ class MeshProcessingTab(QWidget):
         def _int(key: str, default: int) -> int:
             try:
                 value = int(float(advanced.get(key, "")))
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 return default
             return value or default
 
@@ -618,7 +714,9 @@ class MeshProcessingTab(QWidget):
             return
         if kind == "ese":
             ese: ESEMesh = result  # type: ignore[assignment]
+            self._ese_mesh = ese
             self.status.emit(f"ESE mesh generated: {len(ese.vertices)} vertices.")
+            self._update_export_controls()
             self.eseMesh.emit(ese)
             return
         mesh: ScalpMesh = result  # type: ignore[assignment]
@@ -626,6 +724,7 @@ class MeshProcessingTab(QWidget):
         self._base_mesh = mesh
         self._set_base_path(None)  # generated in memory; gains a path only on Save
         self._preview_mesh = None
+        self._ese_mesh = None
         self._base_label.setText(
             f"Generated from {source_path.name}: {len(mesh.vertices)} vertices (unsaved)"
         )
@@ -633,6 +732,7 @@ class MeshProcessingTab(QWidget):
         self._result_hidden = False
         self._render_scene()
         self._update_generation_buttons()
+        self._update_export_controls()
         self.previewMesh.emit(mesh)
         self.status.emit(f"Scalp mesh generated: {len(mesh.vertices)} vertices.")
 
@@ -652,9 +752,7 @@ class MeshProcessingTab(QWidget):
             title = "Generate scalp mesh"
             subject = "Scalp mesh"
             name = (
-                self._mesh_source_path.name
-                if self._mesh_source_path is not None
-                else "NIfTI scan"
+                self._mesh_source_path.name if self._mesh_source_path is not None else "NIfTI scan"
             )
             detail = f"Generation failed for {name}:\n{message}"
         self._finish_generation()
@@ -748,9 +846,7 @@ class MeshProcessingTab(QWidget):
     def _on_save(self) -> None:
         project = self._state.last_project_dir
         if not project:
-            QMessageBox.warning(
-                self, "Save mesh", "Open a project first so the mesh has a home."
-            )
+            QMessageBox.warning(self, "Save mesh", "Open a project first so the mesh has a home.")
             return
         target = self._preview_mesh if self._preview_mesh is not None else self._base_mesh
         if target is None:
@@ -848,6 +944,7 @@ class MeshProcessingTab(QWidget):
         self._base_mesh = None
         self._set_base_path(None)
         self._preview_mesh = None
+        self._ese_mesh = None
         self._nifti_volume = None
         self._nifti_transform = np.eye(4)
         self._nifti_mm_scene = True
@@ -856,3 +953,4 @@ class MeshProcessingTab(QWidget):
         self._base_label.setText("No base mesh loaded")
         self._preview_label.setText("No base mesh loaded. Load a mesh or generate from NIfTI.")
         self._render_scene()
+        self._update_export_controls()

@@ -29,6 +29,7 @@ import csv
 from pathlib import Path
 
 import numpy as np
+import pyvista as pv
 
 from .scene import transform_points
 from .viewer_loaders import SceneData
@@ -206,10 +207,7 @@ def write_mesh_obj(path: str | Path, points: np.ndarray, faces: np.ndarray, fram
     """Write *points* (N, 3) and triangular *faces* (M, 3) as a Wavefront OBJ file."""
     path = Path(path)
     lines = ["# VIRDA scalp mesh export", f"# coordinate frame: {frame}"]
-    lines.extend(
-        f"v {x:.6g} {y:.6g} {z:.6g}"
-        for x, y, z in np.asarray(points, dtype=np.float64)
-    )
+    lines.extend(f"v {x:.6g} {y:.6g} {z:.6g}" for x, y, z in np.asarray(points, dtype=np.float64))
     faces = np.asarray(faces, dtype=np.int64)
     if faces.ndim != 2 or faces.shape[1] != 3:
         raise ValueError(f"expected triangular (M, 3) faces, got shape {faces.shape}")
@@ -236,13 +234,24 @@ def write_points_tsv(path: str | Path, names: list[str], points: np.ndarray) -> 
     return path
 
 
+def collect_polydata_mesh_export(
+    mesh: pv.PolyData, matrix: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return a PyVista mesh's ``(points, faces)`` for export.
+
+    Points are transformed into the chosen frame. Faces are connectivity
+    indices, so they are returned unchanged.
+    """
+    points = transform_points(np.asarray(mesh.points, dtype=np.float64), matrix)
+    faces = triangle_faces(np.asarray(mesh.faces))
+    return points, faces
+
+
 def collect_mesh_export(scene: SceneData, matrix: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Return the scalp mesh ``(points, faces)`` transformed into a chosen frame."""
     if scene.scene_mesh is None:
         raise ValueError("no scalp mesh is loaded to export")
-    points = transform_points(np.asarray(scene.scene_mesh.points, dtype=np.float64), matrix)
-    faces = triangle_faces(np.asarray(scene.scene_mesh.faces))
-    return points, faces
+    return collect_polydata_mesh_export(scene.scene_mesh, matrix)
 
 
 def collect_electrodes_export(scene: SceneData, matrix: np.ndarray) -> tuple[list[str], np.ndarray]:

@@ -7,15 +7,12 @@ import nibabel as nib
 import numpy as np
 import pytest
 
-from tests.helpers.measurements import make_electrodes, make_fiducials, make_ese
-from virda.io.exporters.electrodes import export_electrodes
+from tests.helpers.measurements import make_electrodes, make_ese, make_fiducials
 from virda.io.exporters.ese_mesh import export_ese_mesh
 from virda.io.exporters.head_mask import export_head_mask
 from virda.io.exporters.measurements import export_measurements
-from virda.io.importers.electrodes_table import import_electrodes_table
 from virda.io.importers.measurements import import_measurements
 from virda.io.importers.scalp_mesh import import_scalp_mesh
-from virda.localization.brute_force_localizer import BruteForceLocalizer
 from virda.models.mri_volume import MRIVolume
 from virda.models.segmentation_mask import SegmentationMask
 

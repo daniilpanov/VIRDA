@@ -14,17 +14,18 @@ fiducials, electrode points, links and normal glyphs into Scanner RAS world
 mm, voxel indices or FreeSurfer cRAS without reloading the NIfTI volume (the
 volume actor only lines up in the scene's native frame, where it stays; it is
 hidden in the other frames).  "Export to coordinate system" buttons write the
-mesh (OBJ) and the electrodes/fiducials (TSV) re-expressed in the selected
-frame.  All frame math lives in the Qt-free helper module
+active mesh vertices (NPY) in the selected frame, the frame-independent active
+mesh faces (NPY), and the electrodes/fiducials (TSV) in the selected frame.
+All frame math lives in the Qt-free helper module
 ``virda_gui.viewer.frames``.
 """
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import pyvista as pv
-from PySide6.QtCore import QObject, Qt, QThread, Signal
+from PySide6.QtCore import QObject, QThread, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -39,18 +40,19 @@ from PySide6.QtWidgets import (
 )
 from pyvistaqt import QtInteractor
 
+from virda.io.exporters.mesh_arrays import export_mesh_faces, export_mesh_vertices
+
 from .frames import (
     FRAME_IDS,
     FRAME_SCANNER,
     collect_electrodes_export,
     collect_fiducials_export,
-    collect_mesh_export,
+    collect_polydata_mesh_export,
     frame_available,
     frame_label,
     frame_to_scene_points,
     natural_frame,
     scene_to_frame_matrix,
-    write_mesh_obj,
     write_points_tsv,
 )
 from .scene import transform_points
@@ -60,6 +62,9 @@ from .viewer_loaders import (
     collect_scene_data,
     intensify_color,
 )
+
+MeshKind = Literal["scalp", "ese"]
+MeshArray = Literal["vertices", "faces"]
 
 
 class _SceneLoader(QObject):
@@ -151,7 +156,11 @@ class ViewerWidget(QWidget):
         self._live_electrode_actor: Any = None
         self._live_electrode_label_actor: Any = None
         self._extra_mesh: pv.PolyData | None = None
+        self._extra_mesh_kind: MeshKind = "scalp"
         self._extra_mesh_actor: Any = None
+        self._active_mesh_label: QLabel | None = None
+        self._vertices_export_button: QPushButton | None = None
+        self._faces_export_button: QPushButton | None = None
 
         self._build_ui()
 
@@ -268,7 +277,11 @@ class ViewerWidget(QWidget):
         self._live_electrode_actor = None
         self._live_electrode_label_actor = None
         self._extra_mesh = None
+        self._extra_mesh_kind = "scalp"
         self._extra_mesh_actor = None
+        self._active_mesh_label = None
+        self._vertices_export_button = None
+        self._faces_export_button = None
 
     def _clear_layers(self) -> None:
         while self._layers_layout.count():
@@ -604,16 +617,24 @@ class ViewerWidget(QWidget):
         export_layout.setContentsMargins(4, 4, 4, 4)
         export_layout.setSpacing(4)
         export_layout.addWidget(
-            QLabel("Writes the loaded data re-expressed in the selected frame.", box)
+            QLabel("Writes active mesh arrays; vertices use the selected frame.", box)
         )
-        has_mesh = scene.scene_mesh is not None
+        self._active_mesh_label = QLabel(box)
+        export_layout.addWidget(self._active_mesh_label)
+
+        self._vertices_export_button = QPushButton(box)
+        self._vertices_export_button.clicked.connect(self._on_export_vertices)
+        export_layout.addWidget(self._vertices_export_button)
+        self._faces_export_button = QPushButton(box)
+        self._faces_export_button.clicked.connect(self._on_export_faces)
+        export_layout.addWidget(self._faces_export_button)
+
         has_electrodes = any(
             group["points"] is not None and len(group["points"]) > 0
             for group in scene.electrode_groups
         )
         has_fiducials = scene.fiducial_points is not None and len(scene.fiducial_points) > 0
         for text, slot, available in (
-            ("Export mesh (OBJ)...", self._on_export_mesh, has_mesh),
             ("Export electrodes (TSV)...", self._on_export_electrodes, has_electrodes),
             ("Export fiducials (TSV)...", self._on_export_fiducials, has_fiducials),
         ):
@@ -621,31 +642,76 @@ class ViewerWidget(QWidget):
             button.clicked.connect(slot)
             button.setEnabled(available)
             export_layout.addWidget(button)
+        self._update_mesh_export_controls()
         self._layers_layout.addWidget(box)
+
+    def _active_mesh(self) -> tuple[pv.PolyData, MeshKind] | None:
+        if self._extra_mesh is not None:
+            return self._extra_mesh, self._extra_mesh_kind
+        if self._scene is not None and self._scene.scene_mesh is not None:
+            return self._scene.scene_mesh, "scalp"
+        return None
+
+    def _update_mesh_export_controls(self) -> None:
+        active = self._active_mesh()
+        if self._active_mesh_label is not None:
+            self._active_mesh_label.setText(
+                "Active mesh: none" if active is None else f"Active mesh: {active[1]}"
+            )
+        if self._vertices_export_button is not None:
+            self._vertices_export_button.setEnabled(active is not None)
+            self._vertices_export_button.setText(
+                "Export vertices (NPY)..."
+                if active is None
+                else f"Export {active[1]} vertices (NPY)..."
+            )
+        if self._faces_export_button is not None:
+            self._faces_export_button.setEnabled(active is not None)
+            self._faces_export_button.setText(
+                "Export faces (NPY)..." if active is None else f"Export {active[1]} faces (NPY)..."
+            )
 
     def _current_export_matrix(self) -> np.ndarray:
         return scene_to_frame_matrix(
             self._current_frame, self._affine, self._cras_offset, self._mm_scene
         )
 
-    def _on_export_mesh(self) -> None:
-        if self._scene is None:
+    def _on_export_vertices(self) -> None:
+        self._export_active_mesh_array("vertices")
+
+    def _on_export_faces(self) -> None:
+        self._export_active_mesh_array("faces")
+
+    def _export_active_mesh_array(self, array_kind: MeshArray) -> None:
+        active = self._active_mesh()
+        if active is None:
             return
+        mesh, mesh_kind = active
         path, _selected_filter = QFileDialog.getSaveFileName(
             self,
-            "Export scalp mesh",
-            f"scalp_mesh_{self._current_frame}.obj",
-            "OBJ (*.obj);;All files (*)",
+            f"Export {mesh_kind} {array_kind}",
+            f"{mesh_kind}_{array_kind}.npy",
+            "NumPy array (*.npy);;All files (*)",
         )
         if not path:
             return
         try:
-            points, faces = collect_mesh_export(self._scene, self._current_export_matrix())
-            write_mesh_obj(path, points, faces, self._current_frame)
+            points, faces = collect_polydata_mesh_export(mesh, self._current_export_matrix())
+            if array_kind == "vertices":
+                target = export_mesh_vertices(path, points)
+            elif array_kind == "faces":
+                target = export_mesh_faces(path, faces)
+            else:
+                raise ValueError(f"unknown mesh array {array_kind!r}")
         except (OSError, ValueError) as exc:
-            QMessageBox.critical(self, "Export scalp mesh", f"Could not export mesh:\n{exc}")
+            QMessageBox.critical(
+                self,
+                f"Export {mesh_kind} {array_kind}",
+                f"Could not export {mesh_kind} {array_kind}:\n{exc}",
+            )
             return
-        self._log(f"Exported scalp mesh to {path} in {frame_label(self._current_frame)}")
+        frame_suffix = f" in {frame_label(self._current_frame)}" if array_kind == "vertices" else ""
+        self._log(f"Exported {mesh_kind} {array_kind} to {target}{frame_suffix}")
 
     def _on_export_electrodes(self) -> None:
         if self._scene is None:
@@ -864,9 +930,7 @@ class ViewerWidget(QWidget):
         """Overlay localized electrode points (from a live localization run)."""
         self._live_electrode_ids = [str(electrode_id) for electrode_id in ids]
         self._live_electrode_points = self._to_scene_points(points, frame)
-        self._live_electrode_flags = (
-            np.asarray(flags, dtype=bool) if flags is not None else None
-        )
+        self._live_electrode_flags = np.asarray(flags, dtype=bool) if flags is not None else None
         self._rerender_overlay()
 
     def clear_live_points(self) -> None:
@@ -878,9 +942,11 @@ class ViewerWidget(QWidget):
         self._live_electrode_flags = None
         self._rerender_overlay()
 
-    def set_extra_mesh(self, poly: pv.PolyData | None) -> None:
-        """Overlay an extra mesh (e.g. the generated ESE surface)."""
+    def set_extra_mesh(self, poly: pv.PolyData | None, mesh_kind: MeshKind = "scalp") -> None:
+        """Overlay an extra mesh and make it the active export source."""
         self._extra_mesh = poly
+        self._extra_mesh_kind = mesh_kind
+        self._update_mesh_export_controls()
         self._rerender_overlay()
 
     def _rerender_overlay(self) -> None:
