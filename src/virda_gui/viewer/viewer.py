@@ -21,6 +21,7 @@ All frame math lives in the Qt-free helper module
 """
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, Literal
 
 import numpy as np
@@ -158,6 +159,7 @@ class ViewerWidget(QWidget):
         self._extra_mesh: pv.PolyData | None = None
         self._extra_mesh_kind: MeshKind = "scalp"
         self._extra_mesh_actor: Any = None
+        self._project_dir: Path | None = None
         self._active_mesh_label: QLabel | None = None
         self._vertices_export_button: QPushButton | None = None
         self._faces_export_button: QPushButton | None = None
@@ -682,6 +684,17 @@ class ViewerWidget(QWidget):
     def _on_export_faces(self) -> None:
         self._export_active_mesh_array("faces")
 
+    def set_project_dir(self, path: Path | None) -> None:
+        """Remember the project folder used as the NPY export default."""
+        self._project_dir = Path(path) if path is not None else None
+
+    def _export_start_path(self, mesh_kind: MeshKind, array_kind: MeshArray) -> str:
+        """Default location for the NPY export dialog (project folder when known)."""
+        filename = f"{mesh_kind}_{array_kind}.npy"
+        if self._project_dir is not None:
+            return str(self._project_dir / filename)
+        return filename
+
     def _export_active_mesh_array(self, array_kind: MeshArray) -> None:
         active = self._active_mesh()
         if active is None:
@@ -690,7 +703,7 @@ class ViewerWidget(QWidget):
         path, _selected_filter = QFileDialog.getSaveFileName(
             self,
             f"Export {mesh_kind} {array_kind}",
-            f"{mesh_kind}_{array_kind}.npy",
+            self._export_start_path(mesh_kind, array_kind),
             "NumPy array (*.npy);;All files (*)",
         )
         if not path:

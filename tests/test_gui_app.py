@@ -637,3 +637,53 @@ def test_advanced_dialog_updates_state_offscreen(tmp_path: Path) -> None:
     finally:
         vars(main_window_module)["AdvancedSettingsDialog"] = original
         app.quit()
+
+
+def test_npy_export_dialogs_default_to_project_dir_offscreen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """NPY save dialogs open in the current project folder by default."""
+    app = _offscreen_app()
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
+    try:
+        project = tmp_path / "sample-project"
+        (project / "mesh").mkdir(parents=True)
+        _write_triangle_ply(project / "mesh" / "final_mesh.ply")
+        window.open_project(project)
+
+        captured: list[str] = []
+
+        def _cancelled(*args: object, **_kwargs: object) -> tuple[str, str]:
+            assert len(args) >= 3
+            assert isinstance(args[2], str)
+            captured.append(args[2])
+            return "", ""
+
+        monkeypatch.setattr("PySide6.QtWidgets.QFileDialog.getSaveFileName", _cancelled)
+
+        mesh_tab = window._mesh_processing_tab
+        assert mesh_tab._active_mesh() is not None
+        mesh_tab._on_export_vertices()
+        mesh_tab._on_export_faces()
+        assert captured == [
+            str(project / "scalp_vertices.npy"),
+            str(project / "scalp_faces.npy"),
+        ]
+
+        import pyvista as pv
+
+        from virda_gui.viewer.viewer import ViewerWidget
+
+        viewer = ViewerWidget()
+        try:
+            viewer.set_project_dir(project)
+            viewer.set_extra_mesh(pv.PolyData(np.array([[0.0, 0.0, 0.0]])), "scalp")
+            viewer._on_export_vertices()
+        finally:
+            viewer.shutdown()
+            viewer.close()
+        assert captured[-1] == str(project / "scalp_vertices.npy")
+    finally:
+        window.close()
+        app.quit()
