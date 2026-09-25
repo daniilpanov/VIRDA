@@ -946,6 +946,10 @@ class MeshProcessingTab(QWidget):
         """The in-memory mesh the user is working on (preview, else the base)."""
         return self._preview_mesh if self._preview_mesh is not None else self._base_mesh
 
+    def current_ese_mesh(self) -> ESEMesh | None:
+        """The in-memory ESE mesh, if one was generated for the current preview."""
+        return self._ese_mesh
+
     def clear(self) -> None:
         """Forget the in-memory mesh state without touching the project."""
         self._cancel_running_generation()

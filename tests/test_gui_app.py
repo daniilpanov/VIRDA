@@ -738,3 +738,46 @@ def test_npy_export_dialogs_default_to_project_dir_offscreen(
     finally:
         window.close()
         app.quit()
+
+
+def test_localization_blocked_until_ese_mesh_offscreen(tmp_path: Path) -> None:
+    """Localization stays blocked with an explanation until the ESE mesh exists."""
+    from virda_gui.tabs.editors_tab import FiducialRow, MeasurementRow
+
+    app = _offscreen_app()
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
+    try:
+        project = tmp_path / "sample-project"
+        (project / "mesh").mkdir(parents=True)
+        _write_triangle_ply(project / "mesh" / "final_mesh.ply")
+        window.open_project(project)
+
+        window._editors_tab.fiducials.set_rows(
+            [
+                FiducialRow(
+                    fiducial_id=fiducial_id,
+                    name=fiducial_id,
+                    coordinates=(0.0, 0.0, 0.0),
+                    coordinate_system="world",
+                    definition_method="manual",
+                    weight=1.0,
+                )
+                for fiducial_id in ("NAS", "LPA", "RPA")
+            ]
+        )
+        window._editors_tab.measurements.set_measurement_rows(
+            [
+                MeasurementRow(
+                    electrode_id="E1",
+                    measured_distances={"NAS": 1.0, "LPA": 2.0, "RPA": 3.0},
+                )
+            ]
+        )
+        window._run_localize(interactive=False)
+        assert window._localized_electrodes is None
+        assert window._localize_thread is None
+        assert "ESE mesh" in window._editors_tab.localization._hint.text()
+    finally:
+        window.close()
+        app.quit()
