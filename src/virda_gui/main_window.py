@@ -80,6 +80,7 @@ _ESE_BLOCKED_REASON = (
 )
 _FIDUCIALS_BLOCKED_REASON = "Add at least three fiducial rows before localizing."
 _MEASUREMENTS_BLOCKED_REASON = "Add at least one measurement row before localizing."
+_FILL_COORDS_BLOCKED_REASON = "Fill in NAS/LPA/RPA coordinates before localizing."
 
 
 class IdeWindow(QMainWindow):
@@ -527,6 +528,8 @@ class IdeWindow(QMainWindow):
             enough_fiducials = len(self._editors_tab.fiducials.fiducial_rows()) >= 3
             has_measurements = bool(self._editors_tab.measurements.measurement_rows())
         except ValueError:
+            if self._localized_electrodes is None:
+                self._editors_tab.localization.set_blocked(_FILL_COORDS_BLOCKED_REASON)
             return
         if not enough_fiducials or not has_measurements:
             if self._localized_electrodes is None:
@@ -773,7 +776,7 @@ class IdeWindow(QMainWindow):
             return
         try:
             matrix = frame_to_frame_matrix(old_frame, new_frame, affine, cras_offset)
-            rows = editor.fiducial_rows()
+            rows = editor.filled_rows()
         except (ValueError, np.linalg.LinAlgError) as exc:
             QMessageBox.warning(self, "Coordinate system", f"Cannot convert coordinates:\n{exc}")
             editor.set_input_frame(old_frame)
@@ -1112,7 +1115,7 @@ class IdeWindow(QMainWindow):
         if viewer is None:
             return
         try:
-            rows = self._editors_tab.fiducials.fiducial_rows()
+            rows = self._editors_tab.fiducials.filled_rows()
             ids = [row.fiducial_id for row in rows]
             points = (
                 np.asarray([row.coordinates for row in rows], dtype=np.float64)

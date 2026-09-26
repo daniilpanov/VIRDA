@@ -373,6 +373,22 @@ def test_editors_clear_resets_rows_and_path_offscreen(tmp_path: Path) -> None:
         app.quit()
 
 
+def test_editors_tab_seeds_blank_canonical_rows_offscreen() -> None:
+    app = _qt_app()
+    from virda_gui.state import AppState
+    from virda_gui.tabs.editors_tab import EditorsTab
+
+    tab = EditorsTab(AppState())
+    try:
+        assert tab.fiducials.fiducial_ids() == ["NAS", "LPA", "RPA"]
+        assert tab.fiducials.filled_rows() == []
+        assert tab.measurements.fiducial_ready is True
+        assert tab.fiducials.is_dirty() is False
+    finally:
+        tab.close()
+        app.quit()
+
+
 def test_ide_window_opens_live_editing_tab_offscreen(tmp_path: Path) -> None:
     app = _qt_app()
     prefs = Preferences(QSettings(str(tmp_path / "prefs.ini"), QSettings.Format.IniFormat))
