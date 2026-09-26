@@ -108,6 +108,7 @@ class ViewerWidget(QWidget):
 
     sceneLoaded = Signal(object)  # noqa: N815
     sceneFailed = Signal(str)  # noqa: N815
+    surfacePicked = Signal(object)  # noqa: N815 - picked scene-frame point
 
     def __init__(self, parent: QWidget | None = None, log: Callable[[str], None] = print) -> None:
         super().__init__(parent)
@@ -1006,6 +1007,29 @@ class ViewerWidget(QWidget):
         camera.position = tuple((target + direction * distance).tolist())
         if self._scene is not None:
             self._plotter.render()
+
+    def set_surface_picking(self, enabled: bool) -> bool:
+        """Toggle left-click surface picking; picked points emit :attr:`surfacePicked`.
+
+        Returns False when enabling is impossible (no scene loaded yet).
+        The picked marker is not drawn by the picker itself: the host adds
+        the point to the fiducials table, whose live overlay shows it.
+        """
+        if enabled and self._scene is None:
+            return False
+        self._plotter.disable_picking()
+        if enabled:
+            self._plotter.enable_surface_point_picking(
+                callback=self._on_surface_picked,
+                show_message=False,
+                show_point=False,
+                left_clicking=True,
+            )
+        return True
+
+    def _on_surface_picked(self, picked_point: np.ndarray) -> None:
+        """Forward a picked surface point (scene frame) to the host."""
+        self.surfacePicked.emit(np.asarray(picked_point, dtype=np.float64).ravel())
 
     def closeEvent(self, event: Any) -> None:  # noqa: N802 - Qt naming
         self.shutdown()
