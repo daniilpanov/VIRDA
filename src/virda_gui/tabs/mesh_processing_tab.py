@@ -46,6 +46,7 @@ from PySide6.QtWidgets import (
     QSlider,
     QSpinBox,
     QSplitter,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -297,51 +298,71 @@ class MeshProcessingTab(QWidget):
         grid.addLayout(display_row)
 
         ese_row = QHBoxLayout()
-        ese_row.addWidget(QLabel("ESE offset (mm):", box))
+        ese_row.addWidget(QLabel("Offset (mm):", box))
         self._ese_offset_spin = QDoubleSpinBox(box)
         self._ese_offset_spin.setRange(0.1, 50.0)
         self._ese_offset_spin.setSingleStep(0.5)
         self._ese_offset_spin.setValue(2.0)
+        self._ese_offset_spin.setToolTip(
+            "Outward offset; generation uses the current preview mesh."
+        )
         ese_row.addWidget(self._ese_offset_spin)
-        ese_row.addWidget(QLabel("ESE generation uses the current preview mesh.", box))
         ese_row.addStretch(1)
         grid.addLayout(ese_row)
 
-        ese_adv_row = QHBoxLayout()
-        ese_adv_row.addWidget(QLabel("Radius (mm):", box))
-        self._ese_radius_spin = QDoubleSpinBox(box)
+        ese_toggle = QToolButton(box)
+        ese_toggle.setText("ESE advanced")
+        ese_toggle.setCheckable(True)
+        ese_toggle.setChecked(False)
+        ese_toggle.setToolTip("Normal-estimation options for ESE generation.")
+        grid.addWidget(ese_toggle)
+
+        ese_adv_box = QWidget(box)
+        ese_adv_row = QHBoxLayout(ese_adv_box)
+        ese_adv_row.setContentsMargins(0, 0, 0, 0)
+        ese_adv_row.addWidget(QLabel("Radius:", ese_adv_box))
+        self._ese_radius_spin = QDoubleSpinBox(ese_adv_box)
         self._ese_radius_spin.setRange(1.0, 30.0)
         self._ese_radius_spin.setSingleStep(0.5)
         self._ese_radius_spin.setValue(10.0)
+        self._ese_radius_spin.setToolTip("Neighborhood radius in mm.")
         ese_adv_row.addWidget(self._ese_radius_spin)
-        ese_adv_row.addWidget(QLabel("k-NN (0=auto):", box))
-        self._ese_k_spin = QSpinBox(box)
+        ese_adv_row.addWidget(QLabel("k-NN:", ese_adv_box))
+        self._ese_k_spin = QSpinBox(ese_adv_box)
         self._ese_k_spin.setRange(0, 500)
         self._ese_k_spin.setValue(0)
+        self._ese_k_spin.setToolTip("Neighbors per vertex; 0 picks from the radius.")
         ese_adv_row.addWidget(self._ese_k_spin)
-        self._ese_weighted_chk = QCheckBox("Weighted PCA", box)
+        self._ese_weighted_chk = QCheckBox("Weighted PCA", ese_adv_box)
         self._ese_weighted_chk.setChecked(False)
         ese_adv_row.addWidget(self._ese_weighted_chk)
-        ese_adv_row.addWidget(QLabel("Sigma (mm):", box))
-        self._ese_sigma_spin = QDoubleSpinBox(box)
+        ese_adv_row.addWidget(QLabel("Sigma:", ese_adv_box))
+        self._ese_sigma_spin = QDoubleSpinBox(ese_adv_box)
         self._ese_sigma_spin.setRange(1.0, 15.0)
         self._ese_sigma_spin.setSingleStep(0.5)
         self._ese_sigma_spin.setValue(5.0)
+        self._ese_sigma_spin.setToolTip("Falloff in mm for weighted PCA.")
         ese_adv_row.addWidget(self._ese_sigma_spin)
-        ese_adv_row.addWidget(QLabel("Min nbrs:", box))
-        self._ese_min_nbrs_spin = QSpinBox(box)
+        ese_adv_row.addWidget(QLabel("Min nbrs:", ese_adv_box))
+        self._ese_min_nbrs_spin = QSpinBox(ese_adv_box)
         self._ese_min_nbrs_spin.setRange(1, 50)
         self._ese_min_nbrs_spin.setValue(5)
         ese_adv_row.addWidget(self._ese_min_nbrs_spin)
         ese_adv_row.addStretch(1)
-        grid.addLayout(ese_adv_row)
+        ese_adv_box.setVisible(False)
+        ese_toggle.toggled.connect(ese_adv_box.setVisible)
+        grid.addWidget(ese_adv_box)
 
         return box
 
     def _build_actions_box(self) -> QGroupBox:
         box = QGroupBox("Actions", self)
-        row = QHBoxLayout(box)
-        row.setContentsMargins(4, 4, 4, 4)
+        outer = QVBoxLayout(box)
+        outer.setContentsMargins(4, 4, 4, 4)
+        outer.setSpacing(6)
+
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(6)
 
         self._mesh_generation_btn = QPushButton("Generate scalp mesh from NIfTI...", box)
@@ -355,20 +376,26 @@ class MeshProcessingTab(QWidget):
         self._cancel_generation_btn = QPushButton("Cancel", box)
         self._cancel_generation_btn.clicked.connect(self._on_cancel_generation)
         row.addWidget(self._cancel_generation_btn)
+        outer.addLayout(row)
+
+        save_row = QHBoxLayout()
+        save_row.setContentsMargins(0, 0, 0, 0)
+        save_row.setSpacing(6)
 
         save_btn = QPushButton("Save to project", box)
         save_btn.clicked.connect(self._on_save)
         save_btn.setToolTip("Save the working scalp mesh to mesh/final_mesh.ply.")
-        row.addWidget(save_btn)
+        save_row.addWidget(save_btn)
 
         self._save_ese_btn = QPushButton("Save ESE to project", box)
         self._save_ese_btn.clicked.connect(self._on_save_ese)
         self._save_ese_btn.setToolTip("Save the ESE mesh to ese/mesh.ply with companions.")
-        row.addWidget(self._save_ese_btn)
+        save_row.addWidget(self._save_ese_btn)
 
         reset_btn = QPushButton("Reset parameters", box)
         reset_btn.clicked.connect(self._on_reset)
-        row.addWidget(reset_btn)
+        save_row.addWidget(reset_btn)
+        outer.addLayout(save_row)
         return box
 
     def _build_export_box(self) -> QGroupBox:
