@@ -52,6 +52,7 @@ IMPORT_FALLBACK_ROLES: tuple[ImportRole, ...] = (
     ROLE_REGISTRY[2],  # normals
     ROLE_REGISTRY[3],  # electrodes
     ROLE_REGISTRY[5],  # measurements
+    ROLE_REGISTRY[6],  # fiducials
 )
 
 
@@ -136,9 +137,9 @@ def validate_import_source(role: ImportRole, path: str | Path) -> None:
 
 
 def _validate_mesh(source: Path, role: ImportRole) -> None:
-    if source.suffix.lower() != ".ply":
+    if source.suffix.lower() not in {".ply", ".obj"}:
         raise ValueError(
-            f"{role.label}: only triangular PLY meshes can be imported, "
+            f"{role.label}: only triangular PLY or OBJ meshes can be imported, "
             f"got {source.name}. A single NPY array cannot be rebuilt into a mesh."
         )
     from virda.io.importers.scalp_mesh import import_scalp_mesh

@@ -431,30 +431,33 @@ class IdeWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _on_import_files(self) -> None:
-        """Pick a file, detect its role and import it into the project."""
+        """Pick files, detect each role and import them into the project."""
         if self._project is None:
             QMessageBox.warning(self, "No project", "Open a project first to import artifacts.")
             return
-        source, _selected_filter = QFileDialog.getOpenFileName(self, "Import file...")
-        if not source:
-            return
-        role = detect_role(source)
-        if role is None:
-            labels = [candidate.label for candidate in IMPORT_FALLBACK_ROLES]
-            label, ok = QInputDialog.getItem(
-                self, "Import file...", "What does this file contain?", labels, editable=False
-            )
-            if not ok:
-                return
-            role = next(
-                candidate for candidate in IMPORT_FALLBACK_ROLES if candidate.label == label
-            )
-        try:
-            validate_import_source(role, source)
-        except ValueError as exc:
-            QMessageBox.critical(self, "Import error", str(exc))
-            return
-        self._perform_import(role, Path(source))
+        sources, _selected_filter = QFileDialog.getOpenFileNames(self, "Import files...")
+        for source in sources:
+            role = detect_role(source)
+            if role is None:
+                labels = [candidate.label for candidate in IMPORT_FALLBACK_ROLES]
+                label, ok = QInputDialog.getItem(
+                    self,
+                    "Import file...",
+                    f"What does this file contain?\n{source}",
+                    labels,
+                    editable=False,
+                )
+                if not ok:
+                    continue
+                role = next(
+                    candidate for candidate in IMPORT_FALLBACK_ROLES if candidate.label == label
+                )
+            try:
+                validate_import_source(role, source)
+            except ValueError as exc:
+                QMessageBox.critical(self, "Import error", str(exc))
+                continue
+            self._perform_import(role, Path(source))
 
     def _perform_import(self, role: ImportRole, source: Path) -> Path | None:
         """Copy *source* into the project as *role*; return the target or None."""
