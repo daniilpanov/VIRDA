@@ -836,6 +836,10 @@ class ViewerWidget(QWidget):
         self._log(f"Exported fiducials to {path} in {frame_label(self._current_frame)}")
 
     def _build_layers(self, scene: SceneData) -> None:
+        reset_btn = QPushButton("Reset view", self._layers_panel)
+        reset_btn.setToolTip("Reframe the camera on the loaded scene.")
+        reset_btn.clicked.connect(self.reset_view)
+        self._layers_layout.addWidget(reset_btn)
         if self._mesh_actor is not None:
             self._add_layer_check("Show mesh", self._mesh_visible, self._set_mesh_visibility)
         if self._mri_actor is not None:
@@ -868,6 +872,13 @@ class ViewerWidget(QWidget):
         self._add_frame_controls()
         self._add_export_controls(scene)
         self._layers_layout.addStretch(1)
+
+    def reset_view(self) -> None:
+        """Reframe the camera on the loaded scene."""
+        if self._scene is None:
+            return
+        self._plotter.reset_camera()
+        self._plotter.render()
 
     def _add_layer_check(self, text: str, checked: bool, slot: Callable[[bool], None]) -> None:
         check = QCheckBox(text, self._layers_panel)
