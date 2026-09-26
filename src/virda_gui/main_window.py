@@ -291,7 +291,12 @@ class IdeWindow(QMainWindow):
             widget.shutdown()
 
     def _show_editors_tab(self) -> None:
-        """Bring the live-editing HUD over the 3D viewer to the foreground."""
+        """Bring live editing to the foreground.
+
+        Opens the 3D viewer with the live-editing HUD when the project holds
+        renderable data; otherwise falls back to the standalone editors tab so
+        fiducials and measurements stay editable without a mesh or NIfTI.
+        """
         if self._viewer_widget is not None and self._viewer_tab_widget is not None:
             self._tabs.setCurrentWidget(self._viewer_tab_widget)
             return
@@ -300,6 +305,8 @@ class IdeWindow(QMainWindow):
             project = Path(self._state.last_project_dir)
         if project is not None and self._has_renderable_viewer_data(project):
             self._open_viewer(project)
+            return
+        self._add_tab(self._editors_tab, "Live Editing")
 
     def _has_renderable_viewer_data(self, project: Path) -> bool:
         """Return whether *project* holds something the 3D viewer can render."""

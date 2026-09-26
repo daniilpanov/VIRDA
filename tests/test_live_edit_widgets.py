@@ -390,9 +390,8 @@ def test_ide_window_opens_live_editing_tab_offscreen(tmp_path: Path) -> None:
 
         window.open_project(project)
         window._show_editors_tab()
-        assert (
-            window._tabs.count() == 0
-        )  # no renderable mesh/brain -> no viewer (nor its HUD) is built
+        assert window._tabs.count() == 1  # no mesh/nifti -> standalone tab, no viewer HUD
+        assert window._tabs.widget(0) is window._editors_tab
         assert window._editors_tab._fiducials.fiducial_ids() == ["NAS", "LPA", "RPA"]
         assert window._editors_tab._measurements._table.rowCount() == 2
         assert window._editors_tab._localization._table.rowCount() == 0
