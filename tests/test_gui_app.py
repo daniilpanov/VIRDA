@@ -589,7 +589,8 @@ def test_ask_create_project_folder_warns_if_non_empty(tmp_path: Path, monkeypatc
     (target / "existing.txt").parent.mkdir(parents=True)
     (target / "existing.txt").write_text("y", encoding="utf-8")
 
-    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a, **k: str(target))
+    monkeypatch.setattr(QFileDialog, "exec", lambda self: True)
+    monkeypatch.setattr(QFileDialog, "selectedFiles", lambda self: [str(target)])
 
     monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
     assert ask_create_project_folder(parent=None) == target

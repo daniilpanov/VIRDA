@@ -37,19 +37,28 @@ def ask_open_project_folder(parent: QWidget | None) -> Path | None:
 
 
 def ask_create_project_folder(parent: QWidget | None) -> Path | None:
-    """Ask the user to pick the folder of a *new* project.
+    """Ask for the folder of a *new* project, typing a new path is allowed.
 
     Creates the folder when it does not exist yet.  When the folder already
     holds files the user is warned that a project already exists there and is
     asked whether to open it instead; ``None`` means the user cancelled or
     declined.
     """
-    directory = QFileDialog.getExistingDirectory(parent, "Create new project")
-    if not directory:
+    dialog = QFileDialog(parent, "Create new project")
+    dialog.setFileMode(QFileDialog.FileMode.Directory)
+    dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptSave)
+    if not dialog.exec():
         return None
-    project = Path(directory)
+    selected = dialog.selectedFiles()
+    if not selected:
+        return None
+    project = Path(selected[0])
     if not project.exists():
-        project.mkdir(parents=True)
+        try:
+            project.mkdir(parents=True)
+        except OSError as exc:
+            QMessageBox.warning(parent, "Project error", f"Could not create folder:\n{exc}")
+            return None
         return project
     if any(project.iterdir()):
         answer = QMessageBox.question(
@@ -98,6 +107,11 @@ class ProjectStartDialog(QDialog):
         if recent:
             self._recent_list.setCurrentRow(0)
 
+        open_recent_btn = QPushButton("Open selected")
+        open_recent_btn.setToolTip("Open the highlighted recent project.")
+        open_recent_btn.clicked.connect(self._on_open_selected)
+        layout.addWidget(open_recent_btn)
+
         cancel_btn = QPushButton("Cancel")
         cancel_btn.clicked.connect(self.reject)
         layout.addWidget(cancel_btn)
@@ -116,6 +130,18 @@ class ProjectStartDialog(QDialog):
 
     def _on_recent_activated(self, item: QListWidgetItem) -> None:
         self._accept(Path(item.text()))
+
+    def _on_open_selected(self) -> None:
+        """Open the highlighted recent project, warning when it is gone."""
+        item = self._recent_list.currentItem()
+        if item is None:
+            return
+        project = Path(item.text())
+        if not project.is_dir():
+            QMessageBox.warning(self, "Project missing", f"Folder no longer exists:\n{project}")
+            self._recent_list.takeItem(self._recent_list.row(item))
+            return
+        self._accept(project)
 
     def _accept(self, project: Path | None) -> None:
         if project is None:
