@@ -563,6 +563,10 @@ class MeshProcessingTab(QWidget):
 
     # ---- preview / actions ----
 
+    def _describe_mesh(self, mesh: ScalpMesh | ESEMesh) -> str:
+        """Short vertex/face summary used by the status labels."""
+        return f"{len(mesh.vertices)}v/{len(mesh.faces)}f"
+
     def _recompute_preview(self) -> None:
         """Recompute the parameter-adjusted preview mesh whenever a base is set."""
         base = self._base_mesh
@@ -583,7 +587,7 @@ class MeshProcessingTab(QWidget):
         self._ese_mesh = None
         self._result_hidden = False
         self._preview_label.setText(
-            f"Preview: {len(preview.vertices)} vertices (base {len(base.vertices)})"
+            f"Preview: {self._describe_mesh(preview)} (base {self._describe_mesh(base)})"
         )
         self._render_scene()
         self._update_generation_buttons()
@@ -623,7 +627,7 @@ class MeshProcessingTab(QWidget):
         self._ese_mesh = None
         self._result_hidden = False
         self._base_label.setText(str(path))
-        self._preview_label.setText(f"Base mesh: {len(mesh.vertices)} vertices")
+        self._preview_label.setText(f"Base mesh: {self._describe_mesh(mesh)}")
         self._render_scene()
         self._update_generation_buttons()
         self._update_export_controls()
@@ -794,9 +798,9 @@ class MeshProcessingTab(QWidget):
         self._preview_mesh = None
         self._ese_mesh = None
         self._base_label.setText(
-            f"Generated from {source_path.name}: {len(mesh.vertices)} vertices (unsaved)"
+            f"Generated from {source_path.name}: {self._describe_mesh(mesh)} (unsaved)"
         )
-        self._preview_label.setText(f"Base mesh: {len(mesh.vertices)} vertices")
+        self._preview_label.setText(f"Base mesh: {self._describe_mesh(mesh)}")
         self._result_hidden = False
         self._render_scene()
         self._update_generation_buttons()
