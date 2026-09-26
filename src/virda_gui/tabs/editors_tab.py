@@ -18,6 +18,7 @@ import numpy as np
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QStandardItemModel
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QHBoxLayout,
@@ -818,8 +819,11 @@ class LocalizationPreview(QWidget):
 
     Shows each electrode's localized coordinates in the selected frame side by
     side with the measured fiducial distances, plus the residual error and
-    flag.  The backing CSV export is Qt-free.
+    flag.  The backing CSV export is Qt-free.  Double-clicking a row emits
+    :attr:`electrodeActivated` so the host can focus the 3D view on it.
     """
+
+    electrodeActivated = Signal(str)  # noqa: N815 - electrode_id
 
     def __init__(
         self,
@@ -837,6 +841,7 @@ class LocalizationPreview(QWidget):
         self._table.setHorizontalHeaderLabels(LOCALIZATION_HEADERS)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._table.cellDoubleClicked.connect(self._on_row_activated)
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
@@ -851,6 +856,10 @@ class LocalizationPreview(QWidget):
             self._frame_combo.addItem(frame_label(frame_id), frame_id)
         self._frame_combo.currentIndexChanged.connect(self._on_frame_selected)
         self._frame_layout.addWidget(self._frame_combo)
+        self._flagged_only_chk = QCheckBox("Flagged only", self._frame_row)
+        self._flagged_only_chk.setToolTip("Show only electrodes over the residual threshold.")
+        self._flagged_only_chk.toggled.connect(self._render)
+        self._frame_layout.addWidget(self._flagged_only_chk)
         self._frame_layout.addStretch(1)
 
         self._hint = QLabel(
@@ -947,10 +956,17 @@ class LocalizationPreview(QWidget):
             self._hint.setVisible(True)
             self._export_btn.setEnabled(False)
             return
+        flagged_only = self._flagged_only_chk.isChecked()
+        items = [e for e in electrodes.items if not flagged_only or e.flagged]
+        if not items:
+            self._hint.setText("No flagged electrodes.")
+            self._hint.setVisible(True)
+            self._export_btn.setEnabled(False)
+            return
         self._hint.setVisible(False)
         self._export_btn.setEnabled(True)
-        self._table.setRowCount(len(electrodes.items))
-        for index, electrode in enumerate(electrodes.items):
+        self._table.setRowCount(len(items))
+        for index, electrode in enumerate(items):
             self._set_item(index, LOC_COL_NAME, electrode.electrode_id or "")
             self._set_coordinate_row(
                 index, LOC_COL_COORDS, self._frame_coords(electrode.ese_coords)
@@ -968,6 +984,12 @@ class LocalizationPreview(QWidget):
                 ),
             )
             self._set_item(index, LOC_COL_FLAGGED, "yes" if electrode.flagged else "no")
+
+    def _on_row_activated(self, row: int, _col: int) -> None:
+        """Emit the double-clicked row's electrode id for camera focus."""
+        item = self._table.item(row, LOC_COL_NAME)
+        if item is not None and item.text():
+            self.electrodeActivated.emit(item.text())
 
     def set_blocked(self, reason: str) -> None:
         """Show *reason* instead of the table until the blocker is resolved."""
