@@ -460,6 +460,8 @@ class FiducialsEditor(QWidget):
         except ValueError as exc:
             QMessageBox.critical(self, "Save fiducials", f"Invalid table:\n{exc}")
             return False
+        if not _confirm_outside_project(self, path, "Save fiducials"):
+            return False
         try:
             export_fiducials(path, fiducials)
         except OSError as exc:
@@ -557,6 +559,34 @@ def measurements_rows_to_schema(rows: list[MeasurementRow]) -> dict[str, Any]:
             for row in rows
         ]
     }
+
+
+def _is_outside_project(path: Path, default_dir: Callable[[], str | None] | None) -> bool:
+    """Whether *path* lies outside the project folder behind *default_dir*."""
+    if default_dir is None:
+        return False
+    root = default_dir()
+    if not root:
+        return False
+    try:
+        path.resolve().relative_to(Path(root).resolve())
+    except ValueError:
+        return True
+    return False
+
+
+def _confirm_outside_project(parent: QWidget, path: Path, title: str) -> bool:
+    """Confirm saving to *path* outside the project; False aborts the save."""
+    if not _is_outside_project(path, getattr(parent, "_default_dir", None)):
+        return True
+    answer = QMessageBox.question(
+        parent,
+        title,
+        f"{path}\nis outside the project folder. Save there anyway?",
+        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+        QMessageBox.StandardButton.Cancel,
+    )
+    return answer == QMessageBox.StandardButton.Yes
 
 
 class MeasurementsEditor(QWidget):
@@ -804,6 +834,8 @@ class MeasurementsEditor(QWidget):
             schema = self.collected_schema()
         except ValueError as exc:
             QMessageBox.critical(self, "Save measurements", f"Invalid table:\n{exc}")
+            return False
+        if not _confirm_outside_project(self, path, "Save measurements"):
             return False
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
