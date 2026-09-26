@@ -239,6 +239,12 @@ class IdeWindow(QMainWindow):
         """Close the project and reset the window to the empty state."""
         if not self._confirm_discard():
             return
+        if self._viewer_tab_widget is not None:
+            index = self._tabs.indexOf(self._viewer_tab_widget)
+            if index >= 0:
+                self._close_tab(index)
+        for key in list(self._file_tabs):
+            self._close_file_tab(key)
         self._project = None
         self._sidebar.set_project(None)
         self._close_action.setEnabled(False)
