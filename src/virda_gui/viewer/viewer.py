@@ -989,6 +989,24 @@ class ViewerWidget(QWidget):
         self._rebuild_live_overlay(self.current_display_matrix())
         self._plotter.render()
 
+    def focus_scene_point(self, point: np.ndarray) -> None:
+        """Point the camera at a scene-frame *point*, keeping the distance."""
+        target = np.asarray(point, dtype=np.float64).ravel()
+        camera = self._plotter.camera
+        focal = np.asarray(camera.focal_point, dtype=np.float64)
+        position = np.asarray(camera.position, dtype=np.float64)
+        direction = position - focal
+        distance = float(np.linalg.norm(direction))
+        if not distance:
+            direction = np.asarray([0.0, 0.0, 1.0])
+            distance = 200.0
+        else:
+            direction = direction / distance
+        camera.focal_point = tuple(target.tolist())
+        camera.position = tuple((target + direction * distance).tolist())
+        if self._scene is not None:
+            self._plotter.render()
+
     def closeEvent(self, event: Any) -> None:  # noqa: N802 - Qt naming
         self.shutdown()
         super().closeEvent(event)

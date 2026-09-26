@@ -103,6 +103,7 @@ class IdeWindow(QMainWindow):
         self._editors_tab = EditorsTab(self._state)
         self._editors_tab.advancedRequested.connect(self._on_show_advanced_settings)
         self._editors_tab.localizeRequested.connect(self._on_localize_manual)
+        self._editors_tab.localization.electrodeActivated.connect(self._on_electrode_activated)
         self._editors_tab.measurements.rowsChanged.connect(self._schedule_localization)
         self._editors_tab.fiducials.inputFrameChanged.connect(self._on_fiducial_frame_changed)
 
@@ -447,6 +448,22 @@ class IdeWindow(QMainWindow):
     def _on_localize_manual(self) -> None:
         """Run localization once from the explicit button with dialogs."""
         self._run_localize(interactive=True)
+
+    def _on_electrode_activated(self, electrode_id: str) -> None:
+        """Focus the 3D camera on the double-clicked localized electrode."""
+        viewer = self._viewer_widget
+        electrodes = self._localized_electrodes
+        if viewer is None or electrodes is None:
+            return
+        match = next((e for e in electrodes.items if (e.electrode_id or "") == electrode_id), None)
+        if match is None or match.ese_coords is None:
+            return
+        affine, cras_offset, mm_scene = viewer.scene_frame_params
+        scene_points = transform_points(
+            np.asarray([match.ese_coords], dtype=np.float64),
+            frame_to_scene_matrix(FRAME_SCANNER, affine, cras_offset, mm_scene),
+        )
+        viewer.focus_scene_point(np.asarray(scene_points[0], dtype=np.float64))
 
     def _localize_warning(self, message: str, interactive: bool) -> None:
         if not interactive:
