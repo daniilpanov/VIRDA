@@ -793,11 +793,16 @@ def test_npy_export_dialogs_default_to_project_dir_offscreen(
         app.quit()
 
 
-def test_localization_blocked_until_ese_mesh_offscreen(tmp_path: Path) -> None:
+def test_localization_blocked_until_ese_mesh_offscreen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Localization stays blocked with an explanation until the ESE mesh exists."""
+    from PySide6.QtWidgets import QMessageBox
+
     from virda_gui.tabs.editors_tab import FiducialRow, MeasurementRow
 
     app = _offscreen_app()
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
     prefs = _make_prefs(tmp_path)
     window = IdeWindow(prefs=prefs)
     try:
@@ -1000,12 +1005,17 @@ def test_ese_signal_schedules_localization_without_viewer_offscreen(tmp_path: Pa
         app.quit()
 
 
-def test_blocked_localization_drops_cached_result_offscreen(tmp_path: Path) -> None:
+def test_blocked_localization_drops_cached_result_offscreen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Losing the ESE mesh clears the cached result so stale rows cannot resurface."""
+    from PySide6.QtWidgets import QMessageBox
+
     from virda.models.electrode import Electrode, Electrodes
     from virda_gui.tabs.editors_tab import FiducialRow, MeasurementRow
 
     app = _offscreen_app()
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
     prefs = _make_prefs(tmp_path)
     window = IdeWindow(prefs=prefs)
     try:

@@ -165,6 +165,7 @@ class FiducialsEditor(QWidget):
         self._coord_systems: list[str] = []
         self._row_meta: list[tuple[str, str, str, float]] = []
         self._loading = False
+        self._dirty = False
         self._input_frame: str = EDITOR_FRAME_IDS[0]
 
         self._table = QTableWidget(0, len(FIDUCIAL_HEADERS), self)
@@ -233,6 +234,7 @@ class FiducialsEditor(QWidget):
 
     def _on_cell_changed(self, _row: int, _col: int) -> None:
         if not self._loading:
+            self._dirty = True
             self._highlight_duplicates()
             self.rowsChanged.emit()
 
@@ -276,8 +278,13 @@ class FiducialsEditor(QWidget):
                 self._set_item(index, COL_W, f"{row.weight}")
         finally:
             self._loading = False
+        self._dirty = True
         self._highlight_duplicates()
         self.rowsChanged.emit()
+
+    def is_dirty(self) -> bool:
+        """Whether the table holds edits not yet written to disk."""
+        return self._dirty
 
     def fiducial_ids(self) -> list[str]:
         """Current non-empty canonical ids, read directly from the table."""
@@ -371,6 +378,7 @@ class FiducialsEditor(QWidget):
             self._set_item(index, COL_W, "1.0")
         finally:
             self._loading = False
+        self._dirty = True
         self._highlight_duplicates()
         self.rowsChanged.emit()
         self._table.setCurrentCell(index, COL_ID)
@@ -385,6 +393,7 @@ class FiducialsEditor(QWidget):
             self._coord_systems.pop(row)
         if row < len(self._row_meta):
             self._row_meta.pop(row)
+        self._dirty = True
         self._highlight_duplicates()
         self.rowsChanged.emit()
 
@@ -426,6 +435,7 @@ class FiducialsEditor(QWidget):
         """Reset the table and forget the current file path."""
         self._path = None
         self.set_rows([])
+        self._dirty = False
 
     # ---- load / save ----
 
@@ -440,6 +450,7 @@ class FiducialsEditor(QWidget):
             return False
         self.set_rows(rows)
         self._path = path
+        self._dirty = False
         return True
 
     def save_to(self, path: Path) -> bool:
@@ -455,6 +466,7 @@ class FiducialsEditor(QWidget):
             QMessageBox.critical(self, "Save fiducials", f"Could not write file:\n{exc}")
             return False
         self._path = path
+        self._dirty = False
         return True
 
     def _on_load(self) -> None:
@@ -567,6 +579,7 @@ class MeasurementsEditor(QWidget):
         self._path: Path | None = None
         self._loading = False
         self._ready = False
+        self._dirty = False
 
         self._table = QTableWidget(0, len(MEASUREMENT_HEADERS), self)
         self._table.setHorizontalHeaderLabels(MEASUREMENT_HEADERS)
@@ -624,6 +637,7 @@ class MeasurementsEditor(QWidget):
 
     def _on_cell_changed(self, _row: int, _col: int) -> None:
         if not self._loading:
+            self._dirty = True
             self._highlight_duplicates()
             self.rowsChanged.emit()
 
@@ -667,8 +681,13 @@ class MeasurementsEditor(QWidget):
                     )
         finally:
             self._loading = False
+        self._dirty = True
         self._highlight_duplicates()
         self.rowsChanged.emit()
+
+    def is_dirty(self) -> bool:
+        """Whether the table holds edits not yet written to disk."""
+        return self._dirty
 
     def measurement_rows(self) -> list[MeasurementRow]:
         """Parse the table into rows, raising :class:`ValueError` on bad input."""
@@ -701,6 +720,7 @@ class MeasurementsEditor(QWidget):
         self._table.scrollToBottom()
         self._table.setCurrentCell(index, COL_ELECTRODE)
         if not self._loading:
+            self._dirty = True
             self.rowsChanged.emit()
 
     def remove_selected(self) -> None:
@@ -708,6 +728,7 @@ class MeasurementsEditor(QWidget):
         if row >= 0:
             self._table.removeRow(row)
             if not self._loading:
+                self._dirty = True
                 self._highlight_duplicates()
                 self.rowsChanged.emit()
 
@@ -755,6 +776,7 @@ class MeasurementsEditor(QWidget):
             self._table.setRowCount(0)
         finally:
             self._loading = False
+        self._dirty = False
 
     # ---- load / save ----
 
@@ -773,6 +795,7 @@ class MeasurementsEditor(QWidget):
             return False
         self._path = path
         self.set_measurement_rows(rows)
+        self._dirty = False
         return True
 
     def save_to(self, path: Path) -> bool:
@@ -791,6 +814,7 @@ class MeasurementsEditor(QWidget):
             QMessageBox.critical(self, "Save measurements", f"Could not write file:\n{exc}")
             return False
         self._path = path
+        self._dirty = False
         return True
 
     def collected_schema(self) -> dict[str, Any]:
@@ -1150,3 +1174,7 @@ class EditorsTab(QWidget):
         self._measurements.clear()
         self._fiducials.clear()
         self._localization.set_result(None, None)
+
+    def is_dirty(self) -> bool:
+        """Whether either table holds edits not yet written to disk."""
+        return self._fiducials.is_dirty() or self._measurements.is_dirty()
