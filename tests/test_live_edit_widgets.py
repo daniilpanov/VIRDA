@@ -22,6 +22,7 @@ from virda.models.fiducial import Fiducial, Fiducials
 from virda_gui.main_window import IdeWindow
 from virda_gui.preferences import Preferences
 from virda_gui.tabs.editors_tab import (
+    COL_W,
     COL_X,
     FIDUCIAL_HEADERS,
     FiducialRow,
@@ -201,11 +202,11 @@ def test_fiducials_editor_saves_loaded_rows_offscreen(tmp_path: Path) -> None:
         app.quit()
 
 
-def test_fiducials_editor_has_no_name_method_weight_columns_offscreen() -> None:
+def test_fiducials_editor_weight_column_round_trip_offscreen() -> None:
     app = _qt_app()
     editor = FiducialsEditor()
     try:
-        assert FIDUCIAL_HEADERS == ["ID", "X", "Y", "Z"]
+        assert FIDUCIAL_HEADERS == ["ID", "X", "Y", "Z", "Weight"]
         assert editor._table.columnCount() == len(FIDUCIAL_HEADERS)
 
         editor.set_rows(
@@ -225,6 +226,17 @@ def test_fiducials_editor_has_no_name_method_weight_columns_offscreen() -> None:
         assert row.coordinate_system == "world"
         assert row.definition_method == "auto"
         assert row.weight == 2.5
+
+        weight_item = editor._table.item(0, COL_W)
+        assert weight_item is not None
+        weight_item.setText("3.0")
+        assert editor.fiducial_rows()[0].weight == 3.0
+        weight_item.setText("0")
+        with pytest.raises(ValueError, match="Weight must be positive"):
+            editor.fiducial_rows()
+        weight_item.setText("abc")
+        with pytest.raises(ValueError, match="Weight must be a number"):
+            editor.fiducial_rows()
     finally:
         editor.close()
         app.quit()
