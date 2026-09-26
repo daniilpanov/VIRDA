@@ -222,6 +222,8 @@ class IdeWindow(QMainWindow):
 
     def open_project(self, project: Path) -> None:
         """Open *project*: populate the sidebar and prefill the editors."""
+        if not self._confirm_discard():
+            return
         self._project = project
         self._sidebar.set_project(project)
         self._close_action.setEnabled(True)
@@ -235,6 +237,8 @@ class IdeWindow(QMainWindow):
 
     def close_project(self) -> None:
         """Close the project and reset the window to the empty state."""
+        if not self._confirm_discard():
+            return
         self._project = None
         self._sidebar.set_project(None)
         self._close_action.setEnabled(False)
@@ -247,6 +251,20 @@ class IdeWindow(QMainWindow):
         self._mesh_processing_tab.clear()
         self._localized_electrodes = None
         self.setWindowTitle("VIRDA — Electrode Localization System")
+
+    def _confirm_discard(self) -> bool:
+        """Ask before dropping unsaved table edits or mesh work; False aborts."""
+        dirty = self._editors_tab.is_dirty() or self._mesh_processing_tab.has_unsaved_work()
+        if not dirty:
+            return True
+        answer = QMessageBox.question(
+            self,
+            "Unsaved changes",
+            "Unsaved table edits or mesh work will be lost. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        return answer == QMessageBox.StandardButton.Yes
 
     def _create_project(self) -> None:
         project = ask_create_project_folder(self)
@@ -1012,6 +1030,9 @@ class IdeWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def closeEvent(self, event: Any) -> None:  # noqa: N802 - Qt naming
+        if not self._confirm_discard():
+            event.ignore()
+            return
         try:
             self._on_close()
         finally:

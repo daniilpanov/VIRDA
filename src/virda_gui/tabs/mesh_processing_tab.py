@@ -144,6 +144,8 @@ class MeshProcessingTab(QWidget):
         self._base_path: Path | None = None
         self._preview_mesh: ScalpMesh | None = None
         self._ese_mesh: ESEMesh | None = None
+        self._mesh_dirty = False
+        self._ese_dirty = False
         self._active_mesh_label: QLabel | None = None
         self._vertices_export_button: QPushButton | None = None
         self._faces_export_button: QPushButton | None = None
@@ -641,6 +643,8 @@ class MeshProcessingTab(QWidget):
             return
         self._preview_mesh = preview
         self._ese_mesh = None
+        self._ese_dirty = False
+        self._mesh_dirty = True
         self._result_hidden = False
         self._preview_label.setText(
             f"Preview: {self._describe_mesh(preview)} (base {self._describe_mesh(base)})"
@@ -681,6 +685,8 @@ class MeshProcessingTab(QWidget):
         self._set_base_path(path)
         self._preview_mesh = None
         self._ese_mesh = None
+        self._mesh_dirty = False
+        self._ese_dirty = False
         self._result_hidden = False
         self._base_label.setText(str(path))
         self._preview_label.setText(f"Base mesh: {self._describe_mesh(mesh)}")
@@ -843,6 +849,7 @@ class MeshProcessingTab(QWidget):
         if kind == "ese":
             ese: ESEMesh = result  # type: ignore[assignment]
             self._ese_mesh = ese
+            self._ese_dirty = True
             self.status.emit(f"ESE mesh generated: {len(ese.vertices)} vertices.")
             self._update_export_controls()
             self.eseMesh.emit(ese)
@@ -853,6 +860,8 @@ class MeshProcessingTab(QWidget):
         self._set_base_path(None)  # generated in memory; gains a path only on Save
         self._preview_mesh = None
         self._ese_mesh = None
+        self._mesh_dirty = True
+        self._ese_dirty = False
         self._base_label.setText(
             f"Generated from {source_path.name}: {self._describe_mesh(mesh)} (unsaved)"
         )
@@ -1011,6 +1020,7 @@ class MeshProcessingTab(QWidget):
         self.status.emit(f"Saved working mesh ({len(target.vertices)} vertices) to {mesh_path}.")
         self._set_base_path(mesh_path)
         self._base_label.setText(str(mesh_path))
+        self._mesh_dirty = False
         self._result_hidden = False
         self._render_scene()
         self._update_generation_buttons()
@@ -1074,6 +1084,7 @@ class MeshProcessingTab(QWidget):
                 self.status.emit(f"ESE mesh not loaded: {exc}")
             else:
                 self._ese_mesh = ese
+                self._ese_dirty = False
                 self._update_export_controls()
                 self.eseMesh.emit(ese)
                 self.status.emit(f"ESE mesh loaded: {len(ese.vertices)} vertices.")
@@ -1115,6 +1126,10 @@ class MeshProcessingTab(QWidget):
         """The in-memory ESE mesh, if one was generated for the current preview."""
         return self._ese_mesh
 
+    def has_unsaved_work(self) -> bool:
+        """Whether preview params, a generated mesh or an ESE mesh are unsaved."""
+        return self._mesh_dirty or self._ese_dirty
+
     def clear(self) -> None:
         """Forget the in-memory mesh state without touching the project."""
         self._cancel_running_generation()
@@ -1122,6 +1137,8 @@ class MeshProcessingTab(QWidget):
         self._set_base_path(None)
         self._preview_mesh = None
         self._ese_mesh = None
+        self._mesh_dirty = False
+        self._ese_dirty = False
         self._nifti_volume = None
         self._nifti_transform = np.eye(4)
         self._nifti_mm_scene = True
