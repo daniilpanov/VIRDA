@@ -150,6 +150,7 @@ class MeshProcessingTab(QWidget):
         self._mesh_file_export_button: QPushButton | None = None
         self._mesh_generation_btn: QPushButton | None = None
         self._generate_ese_btn: QPushButton | None = None
+        self._cancel_generation_btn: QPushButton | None = None
         self._generation_thread: QThread | None = None
         self._generation_worker: _BackgroundWorker | None = None
         self._generation_seq = 0
@@ -341,6 +342,10 @@ class MeshProcessingTab(QWidget):
         self._generate_ese_btn = QPushButton("Generate ESE mesh", box)
         self._generate_ese_btn.clicked.connect(self._on_generate_ese)
         row.addWidget(self._generate_ese_btn)
+
+        self._cancel_generation_btn = QPushButton("Cancel", box)
+        self._cancel_generation_btn.clicked.connect(self._on_cancel_generation)
+        row.addWidget(self._cancel_generation_btn)
 
         save_btn = QPushButton("Save to project", box)
         save_btn.clicked.connect(self._on_save)
@@ -931,6 +936,13 @@ class MeshProcessingTab(QWidget):
         self._generation_busy = False
         self._update_generation_buttons()
 
+    def _on_cancel_generation(self) -> None:
+        """Retire the in-flight generation so the UI becomes idle again."""
+        if not self._generation_busy:
+            return
+        self._cancel_running_generation()
+        self.status.emit("Generation cancelled.")
+
     def _update_generation_buttons(self) -> None:
         """Reflect the busy flag and ESE's need for a working mesh.
 
@@ -946,6 +958,8 @@ class MeshProcessingTab(QWidget):
         if self._generate_ese_btn is not None:
             base_ready = self.current_scalp_mesh() is not None
             self._generate_ese_btn.setEnabled(ready and base_ready)
+        if self._cancel_generation_btn is not None:
+            self._cancel_generation_btn.setEnabled(not ready)
 
     def shutdown(self) -> None:
         """Stop the generation thread, if any.
