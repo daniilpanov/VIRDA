@@ -356,6 +356,26 @@ class FiducialsEditor(QWidget):
         self._row_meta.append(("", COORDINATE_SYSTEMS[0], "manual", 1.0))
         self._table.scrollToBottom()
 
+    def append_point(self, fiducial_id: str, coordinates: tuple[float, float, float]) -> None:
+        """Append a row with the given id and coordinates (e.g. surface-picked)."""
+        index = self._table.rowCount()
+        self._table.insertRow(index)
+        self._coord_systems.append(COORDINATE_SYSTEMS[0])
+        self._row_meta.append((fiducial_id, COORDINATE_SYSTEMS[0], "manual", 1.0))
+        self._loading = True
+        try:
+            self._set_item(index, COL_ID, fiducial_id)
+            self._set_item(index, COL_X, f"{coordinates[0]}")
+            self._set_item(index, COL_Y, f"{coordinates[1]}")
+            self._set_item(index, COL_Z, f"{coordinates[2]}")
+            self._set_item(index, COL_W, "1.0")
+        finally:
+            self._loading = False
+        self._highlight_duplicates()
+        self.rowsChanged.emit()
+        self._table.setCurrentCell(index, COL_ID)
+        self._table.scrollToBottom()
+
     def remove_selected(self) -> None:
         row = self._table.currentRow()
         if row < 0:

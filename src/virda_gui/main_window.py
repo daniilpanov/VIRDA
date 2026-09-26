@@ -54,7 +54,7 @@ from .preferences import Preferences
 from .project import classify_artifact
 from .sidebar import ProjectSidebar
 from .state import AppState
-from .tabs.editors_tab import EditorsTab, FiducialRow
+from .tabs.editors_tab import EditorsTab, FiducialRow, canonical_fiducial_id
 from .tabs.mesh_processing_tab import MeshProcessingTab
 from .tabs.preview_tab import PreviewTab
 from .viewer.frames import (
@@ -63,6 +63,7 @@ from .viewer.frames import (
     frame_label,
     frame_to_frame_matrix,
     frame_to_scene_matrix,
+    scene_to_frame_matrix,
     scene_to_world_matrix,
 )
 from .viewer.hud import HUDContainer, HudPanel
@@ -91,6 +92,7 @@ class IdeWindow(QMainWindow):
         self._viewer_widget: ViewerWidget | None = None
         self._viewer_tab_widget: QWidget | None = None
         self._viewer_hud_panel: QWidget | None = None
+        self._pick_btn: QPushButton | None = None
         self._electrode_group_widgets: list[ElectrodeGroupRow] = []
         self._file_tabs: dict[str, QWidget] = {}
         self._prefs = prefs or Preferences()
@@ -741,6 +743,7 @@ class IdeWindow(QMainWindow):
 
         viewer.sceneLoaded.connect(self._on_viewer_scene_loaded)
         viewer.sceneFailed.connect(self._on_viewer_scene_failed)
+        viewer.surfacePicked.connect(self._on_surface_picked)
         self._viewer_tab_widget = hud
 
     def _build_electrode_overlay_panel(self) -> QWidget:
@@ -756,6 +759,11 @@ class IdeWindow(QMainWindow):
         add_group_btn = QPushButton("Add group")
         add_group_btn.clicked.connect(self._on_add_electrode_group)
         header.addWidget(add_group_btn)
+        self._pick_btn = QPushButton("Pick point")
+        self._pick_btn.setCheckable(True)
+        self._pick_btn.setToolTip("Click a mesh surface to append a fiducial row.")
+        self._pick_btn.toggled.connect(self._on_pick_toggled)
+        header.addWidget(self._pick_btn)
         self._electrodes_cras_check = QCheckBox("Force cRAS conversion")
         self._electrodes_cras_check.setChecked(self._state.electrodes_cras)
         self._electrodes_cras_check.toggled.connect(self._on_electrodes_cras_toggled)
@@ -772,6 +780,62 @@ class IdeWindow(QMainWindow):
         for path, color in self._state.electrode_rows:
             self._add_electrode_group_row(path=path, color=color)
         return outer
+
+    def _on_pick_toggled(self, checked: bool) -> None:
+        """Toggle surface picking; untoggles when no scene is ready."""
+        viewer = self._viewer_widget
+        if viewer is None:
+            if self._pick_btn is not None:
+                self._pick_btn.setChecked(False)
+            return
+        if checked and not viewer.set_surface_picking(True):
+            if self._pick_btn is not None:
+                self._pick_btn.setChecked(False)
+            self.statusBar().showMessage("Wait for the scene to load before picking.", 5000)
+            return
+        if not checked:
+            viewer.set_surface_picking(False)
+        self.statusBar().showMessage(
+            "Click a mesh surface to add a fiducial." if checked else "Picking off.", 4000
+        )
+
+    def _on_surface_picked(self, scene_point: object) -> None:
+        """Append a picked scene point to the fiducials table in its input frame."""
+        viewer = self._viewer_widget
+        if viewer is None:
+            return
+        editor = self._editors_tab.fiducials
+        frame = editor.input_frame()
+        affine, cras_offset, mm_scene = viewer.scene_frame_params
+        try:
+            converted = transform_points(
+                np.asarray([np.asarray(scene_point, dtype=np.float64).ravel()]),
+                scene_to_frame_matrix(frame, affine, cras_offset, mm_scene),
+            )
+        except (ValueError, np.linalg.LinAlgError) as exc:
+            self.statusBar().showMessage(f"Picked point skipped: {exc}", 5000)
+            return
+        fiducial_id = self._next_fiducial_id()
+        editor.append_point(
+            fiducial_id,
+            (
+                float(converted[0][0]),
+                float(converted[0][1]),
+                float(converted[0][2]),
+            ),
+        )
+        self.statusBar().showMessage(f"Picked {fiducial_id} from the surface.", 4000)
+
+    def _next_fiducial_id(self) -> str:
+        """First missing canonical id, else an unused F<n> label."""
+        existing = {fid.lower() for fid in self._editors_tab.fiducials.fiducial_ids()}
+        for canonical in ("NAS", "LPA", "RPA"):
+            if canonical.lower() not in existing:
+                return canonical_fiducial_id(canonical)
+        index = 1
+        while f"f{index}" in existing:
+            index += 1
+        return f"F{index}"
 
     def _on_add_electrode_group(self) -> None:
         self._add_electrode_group_row()
