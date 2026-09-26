@@ -162,6 +162,7 @@ class MeshProcessingTab(QWidget):
         self._interactor: QtInteractor | None = None
         self._result_actor: Any | None = None
         self._base_actor: Any | None = None
+        self._ese_actor: Any | None = None
         self._nifti_actor: Any | None = None
         self._nifti_volume: pv.ImageData | None = None
         self._nifti_transform: np.ndarray = np.eye(4)
@@ -273,18 +274,22 @@ class MeshProcessingTab(QWidget):
         self._show_nifti_chk = QCheckBox("Show NIfTI", box)
         self._show_base_chk = QCheckBox("Show base mesh", box)
         self._show_result_chk = QCheckBox("Show result mesh", box)
+        self._show_ese_chk = QCheckBox("Show ESE mesh", box)
         self._show_edges_chk = QCheckBox("Show mesh edges", box)
         self._show_nifti_chk.setChecked(True)
         self._show_base_chk.setChecked(False)
         self._show_result_chk.setChecked(True)
+        self._show_ese_chk.setChecked(True)
         self._show_edges_chk.setChecked(False)
         self._show_nifti_chk.toggled.connect(self._on_display_toggled)
         self._show_base_chk.toggled.connect(self._on_display_toggled)
         self._show_result_chk.toggled.connect(self._on_display_toggled)
+        self._show_ese_chk.toggled.connect(self._on_display_toggled)
         self._show_edges_chk.toggled.connect(self._on_display_toggled)
         display_row.addWidget(self._show_nifti_chk)
         display_row.addWidget(self._show_base_chk)
         display_row.addWidget(self._show_result_chk)
+        display_row.addWidget(self._show_ese_chk)
         display_row.addWidget(self._show_edges_chk)
         display_row.addStretch(1)
         grid.addLayout(display_row)
@@ -585,11 +590,15 @@ class MeshProcessingTab(QWidget):
         interactor = self._ensure_preview_pane()
         result = self.current_scalp_mesh()
         was_empty = (
-            self._result_actor is None and self._base_actor is None and self._nifti_actor is None
+            self._result_actor is None
+            and self._base_actor is None
+            and self._ese_actor is None
+            and self._nifti_actor is None
         )
         interactor.clear()
         self._nifti_actor = None
         self._base_actor = None
+        self._ese_actor = None
         self._result_actor = None
         if self._show_nifti_chk.isChecked() and self._nifti_volume is not None:
             self._nifti_actor = interactor.add_volume(
@@ -613,6 +622,16 @@ class MeshProcessingTab(QWidget):
                 poly.transform(self._nifti_transform, inplace=True)
             self._result_actor = interactor.add_mesh(
                 poly, color="salmon", opacity=0.9, show_edges=self._show_edges_chk.isChecked()
+            )
+        if self._show_ese_chk.isChecked() and self._ese_mesh is not None:
+            ese_poly = self._mesh_to_polydata(self._ese_mesh)
+            if not self._nifti_mm_scene:
+                ese_poly.transform(self._nifti_transform, inplace=True)
+            self._ese_actor = interactor.add_mesh(
+                ese_poly,
+                color="royalblue",
+                opacity=0.7,
+                show_edges=self._show_edges_chk.isChecked(),
             )
         interactor.add_axes(interactive=False)  # type: ignore[call-arg]
         if was_empty:
@@ -850,6 +869,14 @@ class MeshProcessingTab(QWidget):
             ese: ESEMesh = result  # type: ignore[assignment]
             self._ese_mesh = ese
             self._ese_dirty = True
+            current = self.current_scalp_mesh()
+            detail = (
+                f"Preview: {self._describe_mesh(current)} + ESE: {self._describe_mesh(ese)}"
+                if current is not None
+                else f"ESE mesh: {self._describe_mesh(ese)}"
+            )
+            self._preview_label.setText(detail)
+            self._render_scene()
             self.status.emit(f"ESE mesh generated: {len(ese.vertices)} vertices.")
             self._update_export_controls()
             self.eseMesh.emit(ese)
@@ -1042,6 +1069,7 @@ class MeshProcessingTab(QWidget):
             self._show_nifti_chk,
             self._show_base_chk,
             self._show_result_chk,
+            self._show_ese_chk,
             self._show_edges_chk,
         )
         for widget in widgets:
@@ -1060,6 +1088,7 @@ class MeshProcessingTab(QWidget):
         self._show_nifti_chk.setChecked(True)
         self._show_base_chk.setChecked(False)
         self._show_result_chk.setChecked(True)
+        self._show_ese_chk.setChecked(True)
         self._show_edges_chk.setChecked(False)
         for widget in widgets:
             widget.blockSignals(False)
@@ -1086,6 +1115,7 @@ class MeshProcessingTab(QWidget):
                 self._ese_mesh = ese
                 self._ese_dirty = False
                 self._update_export_controls()
+                self._render_scene()
                 self.eseMesh.emit(ese)
                 self.status.emit(f"ESE mesh loaded: {len(ese.vertices)} vertices.")
         nifti = self._find_project_nifti(root)
