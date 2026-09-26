@@ -845,10 +845,21 @@ class IdeWindow(QMainWindow):
         header.addWidget(clear_points_btn)
         self._electrodes_cras_check = QCheckBox("Force cRAS conversion")
         self._electrodes_cras_check.setChecked(self._state.electrodes_cras)
+        self._electrodes_cras_check.setToolTip(
+            "Applies only to tabular electrode files, not JSON or live results. "
+            "Toggling reloads the viewer."
+        )
         self._electrodes_cras_check.toggled.connect(self._on_electrodes_cras_toggled)
         header.addWidget(self._electrodes_cras_check)
         header.addStretch(1)
         layout.addLayout(header)
+
+        legend = QLabel(
+            "File groups use their swatch colors; live results are lime (ok) / red (flagged).",
+            outer,
+        )
+        legend.setWordWrap(True)
+        layout.addWidget(legend)
 
         self._electrode_groups_layout = QVBoxLayout()
         self._electrode_groups_layout.setContentsMargins(0, 0, 0, 0)
@@ -944,6 +955,13 @@ class IdeWindow(QMainWindow):
 
     def _on_electrodes_cras_toggled(self, checked: bool) -> None:
         self._state.electrodes_cras = checked
+        if self._viewer_widget is None:
+            return
+        project = self._project
+        if project is None and self._state.last_project_dir:
+            project = Path(self._state.last_project_dir)
+        if project is not None:
+            self._open_viewer(project)
 
     def _on_open_viewer(self) -> None:
         resolved = self._state.last_project_dir or self._project
