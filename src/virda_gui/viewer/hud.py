@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QSizeGrip,
     QSizePolicy,
     QToolButton,
     QVBoxLayout,
@@ -118,18 +119,25 @@ class HudPanel(QFrame):
         self._body_layout.setSpacing(6)
         self._body_layout.addLayout(header)
 
+        grip_row = QHBoxLayout()
+        grip_row.addStretch(1)
+        self._grip = QSizeGrip(self)
+        grip_row.addWidget(self._grip)
+        self._body_layout.addLayout(grip_row)
+
         self._body: QWidget | None = None
         self._drag_press: QPoint | None = None
         self._dragging = False
 
     def set_body(self, body: QWidget) -> None:
-        """Attach the panel's content; it expands to fill the panel."""
+        """Attach the panel's content; it expands above the resize grip."""
         self._body = body
-        self._body_layout.addWidget(body, 1)
+        self._body_layout.insertWidget(1, body, 1)
 
     def _on_collapse_toggled(self, collapsed: bool) -> None:
         if self._body is not None:
             self._body.setVisible(not collapsed)
+        self._grip.setVisible(not collapsed)
         if collapsed:
             self._set_header_only()
         else:
