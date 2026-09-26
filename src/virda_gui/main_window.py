@@ -1013,7 +1013,8 @@ class IdeWindow(QMainWindow):
         assert self._viewer_tab_widget is not None
         assert self._viewer_widget is not None
         self._viewer_widget.set_project_dir(project)
-        self._add_tab(self._viewer_tab_widget, "3D Viewer")
+        self._add_tab(self._viewer_tab_widget, f"3D Viewer - {project.name}")
+        self._tabs.setTabToolTip(self._tabs.indexOf(self._viewer_tab_widget), str(project))
         self._tabs.setCurrentWidget(self._viewer_tab_widget)
         self._viewer_widget.load(**kwargs)
 
