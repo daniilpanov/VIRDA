@@ -128,6 +128,7 @@ class IdeWindow(QMainWindow):
         self._localize_timer.setInterval(200)
         self._localize_timer.timeout.connect(self._run_localize_auto)
         self._localized_electrodes: Electrodes | None = None
+        self._last_preview_mesh: ScalpMesh | None = None
         self._localize_queue = queue.Queue()
         self._localize_thread: threading.Thread | None = None
         self._localize_generation = 0
@@ -256,6 +257,7 @@ class IdeWindow(QMainWindow):
         self._editors_tab.clear()
         self._mesh_processing_tab.clear()
         self._localized_electrodes = None
+        self._last_preview_mesh = None
         self.setWindowTitle("VIRDA — Electrode Localization System")
 
     def _confirm_discard(self) -> bool:
@@ -798,6 +800,10 @@ class IdeWindow(QMainWindow):
         self._pick_btn.setToolTip("Click a mesh surface to append a fiducial row.")
         self._pick_btn.toggled.connect(self._on_pick_toggled)
         header.addWidget(self._pick_btn)
+        clear_points_btn = QPushButton("Clear points")
+        clear_points_btn.setToolTip("Remove live fiducial and electrode overlays.")
+        clear_points_btn.clicked.connect(self._on_clear_live_points)
+        header.addWidget(clear_points_btn)
         self._electrodes_cras_check = QCheckBox("Force cRAS conversion")
         self._electrodes_cras_check.setChecked(self._state.electrodes_cras)
         self._electrodes_cras_check.toggled.connect(self._on_electrodes_cras_toggled)
@@ -814,6 +820,11 @@ class IdeWindow(QMainWindow):
         for path, color in self._state.electrode_rows:
             self._add_electrode_group_row(path=path, color=color)
         return outer
+
+    def _on_clear_live_points(self) -> None:
+        """Remove live fiducial and electrode overlays from the viewer."""
+        if self._viewer_widget is not None:
+            self._viewer_widget.clear_live_points()
 
     def _on_pick_toggled(self, checked: bool) -> None:
         """Toggle surface picking; untoggles when no scene is ready."""
@@ -961,18 +972,22 @@ class IdeWindow(QMainWindow):
         self._state.viewer_loading = False
         self.statusBar().showMessage("3D viewer scene loaded.", 4000)
         self._refresh_live_fiducials()
-        self._restore_ese_overlay()
+        self._restore_mesh_overlays()
         if self._localized_electrodes is not None:
             self._show_localized_electrodes(self._localized_electrodes)
         self._refresh_localization_preview()
 
-    def _restore_ese_overlay(self) -> None:
-        """Re-apply the tab's ESE mesh over a freshly loaded viewer scene."""
+    def _restore_mesh_overlays(self) -> None:
+        """Re-apply the tab meshes over a freshly loaded viewer scene."""
         viewer = self._viewer_widget
-        ese = self._mesh_processing_tab.current_ese_mesh()
-        if viewer is None or ese is None:
+        if viewer is None:
             return
-        viewer.set_extra_mesh(self._mesh_to_scene_poly(ese.vertices, ese.faces), "ese")
+        if self._last_preview_mesh is not None:
+            mesh = self._last_preview_mesh
+            viewer.set_extra_mesh(self._mesh_to_scene_poly(mesh.vertices, mesh.faces), "scalp")
+        ese = self._mesh_processing_tab.current_ese_mesh()
+        if ese is not None:
+            viewer.set_extra_mesh(self._mesh_to_scene_poly(ese.vertices, ese.faces), "ese")
 
     def _on_viewer_scene_failed(self, message: str) -> None:
         self._state.viewer_loading = False
@@ -1021,6 +1036,7 @@ class IdeWindow(QMainWindow):
         return poly
 
     def _on_mesh_preview(self, mesh: ScalpMesh) -> None:
+        self._last_preview_mesh = mesh
         self._schedule_localization()
         if self._viewer_widget is None:
             return

@@ -886,7 +886,7 @@ def test_open_project_autoloads_ese_mesh_offscreen(tmp_path: Path) -> None:
 def test_viewer_open_restores_ese_overlay_offscreen(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A freshly loaded viewer scene re-applies the tab's ESE mesh overlay."""
+    """A freshly loaded viewer scene re-applies the scalp and ESE mesh overlays."""
     import json
 
     app = _offscreen_app()
@@ -928,7 +928,7 @@ def test_viewer_open_restores_ese_overlay_offscreen(
         viewer = _Viewer()
         monkeypatch.setattr(window, "_viewer_widget", viewer)
         window._on_viewer_scene_loaded(object())
-        assert viewer.extra_meshes == ["ese"]
+        assert viewer.extra_meshes == ["scalp", "ese"]
     finally:
         window.close()
         app.quit()
