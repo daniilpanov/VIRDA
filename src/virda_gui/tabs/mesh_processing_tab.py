@@ -524,6 +524,7 @@ class MeshProcessingTab(QWidget):
             self._ese_mesh = None
             self._result_hidden = False
             self._render_scene()
+            self._update_generation_buttons()
             self._update_export_controls()
             return
         try:
@@ -538,6 +539,7 @@ class MeshProcessingTab(QWidget):
             f"Preview: {len(preview.vertices)} vertices (base {len(base.vertices)})"
         )
         self._render_scene()
+        self._update_generation_buttons()
         self._update_export_controls()
         self.previewMesh.emit(preview)
 
@@ -819,18 +821,19 @@ class MeshProcessingTab(QWidget):
         self._update_generation_buttons()
 
     def _update_generation_buttons(self) -> None:
-        """Reflect the busy flag and ESE's need for a base mesh PLY.
+        """Reflect the busy flag and ESE's need for a working mesh.
 
-        Nothing can start while a generation runs; the ESE button additionally
-        stays disabled until the base mesh has a ``*.ply`` path (set by
-        ``Load...`` or by "Save to project").  Any change to the base path re-
-        runs this via :attr:`baseMeshChanged`.
+        Nothing can start while a generation runs; the ESE button is enabled
+        whenever an in-memory scalp mesh exists (loaded or freshly generated),
+        so no prior "Save to project" is required. Any change to the base
+        path re-runs this via :attr:`baseMeshChanged`; preview recomputes and
+        generation completions refresh it explicitly.
         """
         ready = not self._generation_busy
         if self._mesh_generation_btn is not None:
             self._mesh_generation_btn.setEnabled(ready)
         if self._generate_ese_btn is not None:
-            base_ready = self._base_path is not None and self._base_path.suffix.lower() == ".ply"
+            base_ready = self.current_scalp_mesh() is not None
             self._generate_ese_btn.setEnabled(ready and base_ready)
 
     def shutdown(self) -> None:
@@ -846,14 +849,11 @@ class MeshProcessingTab(QWidget):
         self._cancel_running_generation()
 
     def _on_generate_ese(self) -> None:
-        if self._base_path is None:
-            QMessageBox.warning(
-                self, "Generate ESE", "Generate and save a scalp mesh to the project first."
-            )
-            return
         base = self.current_scalp_mesh()
         if base is None:
-            QMessageBox.warning(self, "Generate ESE", "Load a base mesh first.")
+            QMessageBox.warning(
+                self, "Generate ESE", "Load a base mesh or generate one from NIfTI first."
+            )
             return
         self.generate_ese(base, self._ese_offset_spin.value())
 
@@ -982,4 +982,5 @@ class MeshProcessingTab(QWidget):
         self._base_label.setText("No base mesh loaded")
         self._preview_label.setText("No base mesh loaded. Load a mesh or generate from NIfTI.")
         self._render_scene()
+        self._update_generation_buttons()
         self._update_export_controls()
