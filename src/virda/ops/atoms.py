@@ -33,7 +33,12 @@ def generate_scalp_surface(
     mri: MRIVolume,
     sealing: SealingOptions | None = None,
 ) -> ScalpSurface:
-    """Segment the head, optionally seal the mask, and extract the scalp mesh."""
+    """Segment the head, optionally seal the mask, and extract the scalp mesh.
+
+    The marching-cubes step follows the NIfTI voxel size (at least 1 mm
+    effective) so high-resolution scans do not produce needlessly dense
+    meshes; the native resolution is kept for 1 mm and coarser voxels.
+    """
     segmenter = OtsuHeadSegmenter()
     mask = segmenter.process(mri)
 
@@ -41,7 +46,8 @@ def generate_scalp_surface(
         sealer = MaskSealer(radius=sealing.seal_radius)
         mask = sealer.process(mask)
 
-    extractor = MarchingCubesExtractor()
+    mean_spacing = sum(mri.spacing) / 3.0
+    extractor = MarchingCubesExtractor(voxel_size_mm=max(1.0, mean_spacing))
     mesh = extractor.process(mask=mask, mri_volume=mri)
 
     return ScalpSurface(mask=mask, mesh=mesh)
