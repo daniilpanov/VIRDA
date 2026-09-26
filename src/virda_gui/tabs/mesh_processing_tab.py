@@ -138,6 +138,7 @@ class MeshProcessingTab(QWidget):
     saved = Signal()  # noqa: N815 - fired after Save wrote the mesh to disk
     status = Signal(str)  # noqa: N815 - non-blocking log lines
     baseMeshChanged = Signal(object)  # noqa: N815 - the new base mesh path (Path | None)
+    continueRequested = Signal()  # noqa: N815 - jump to live editing
 
     def __init__(self, state: AppState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -178,6 +179,17 @@ class MeshProcessingTab(QWidget):
         panel_layout = QVBoxLayout(panel)
         panel_layout.setContentsMargins(8, 8, 8, 8)
         panel_layout.setSpacing(8)
+
+        pipeline_row = QHBoxLayout()
+        pipeline_row.setContentsMargins(0, 0, 0, 0)
+        self._pipeline_label = QLabel(panel)
+        self._pipeline_label.setWordWrap(True)
+        pipeline_row.addWidget(self._pipeline_label, 1)
+        continue_btn = QPushButton("Continue in Live Editing", panel)
+        continue_btn.setToolTip("Open live editing with the current meshes.")
+        continue_btn.clicked.connect(self.continueRequested.emit)
+        pipeline_row.addWidget(continue_btn)
+        panel_layout.addLayout(pipeline_row)
 
         panel_layout.addWidget(self._build_source_box())
         panel_layout.addWidget(self._build_parameters_box())
@@ -679,8 +691,21 @@ class MeshProcessingTab(QWidget):
         if was_empty:
             interactor.reset_camera()  # type: ignore[call-arg]
         interactor.render()
+        self._refresh_pipeline_badge()
 
     # ---- preview / actions ----
+
+    def _refresh_pipeline_badge(self) -> None:
+        """Show the NIfTI -> mesh -> ESE pipeline state as short badges."""
+
+        def _mark(ready: bool) -> str:
+            return "[ok]" if ready else "[missing]"
+
+        self._pipeline_label.setText(
+            f"NIfTI {_mark(self._nifti_volume is not None)}  "
+            f"Mesh {_mark(self.current_scalp_mesh() is not None)}  "
+            f"ESE {_mark(self._ese_mesh is not None)}"
+        )
 
     def _describe_mesh(self, mesh: ScalpMesh | ESEMesh) -> str:
         """Short vertex/face summary used by the status labels."""
