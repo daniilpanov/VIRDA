@@ -689,24 +689,24 @@ class ViewerWidget(QWidget):
                 combo.model().item(index).setEnabled(False)
         combo.currentIndexChanged.connect(lambda _index: self._on_frame_selected())
         frame_layout.addWidget(combo)
-        frame_layout.addWidget(
-            QLabel(
-                "The MRI volume is shown only in the scene's native frame; "
-                "the overlay survives all frames.",
-                box,
-            )
+        frame_note = QLabel(
+            "The MRI volume is shown only in the scene's native frame; "
+            "the overlay survives all frames.",
+            box,
         )
+        frame_note.setWordWrap(True)
+        frame_layout.addWidget(frame_note)
         self._frame_combo = combo
         self._layers_layout.addWidget(box)
 
     def _add_export_controls(self, scene: SceneData) -> None:
-        box = QGroupBox("Export to coordinate system", self._layers_panel)
+        box = QGroupBox("Export (display frame)", self._layers_panel)
         export_layout = QVBoxLayout(box)
         export_layout.setContentsMargins(4, 4, 4, 4)
         export_layout.setSpacing(4)
-        export_layout.addWidget(
-            QLabel("Writes active mesh arrays; vertices use the selected frame.", box)
-        )
+        export_note = QLabel("Active mesh arrays; vertices use the frame.", box)
+        export_note.setWordWrap(True)
+        export_layout.addWidget(export_note)
         self._active_mesh_label = QLabel(box)
         export_layout.addWidget(self._active_mesh_label)
 
@@ -717,13 +717,13 @@ class ViewerWidget(QWidget):
         self._faces_export_button.clicked.connect(self._on_export_faces)
         export_layout.addWidget(self._faces_export_button)
 
-        self._electrodes_export_button = QPushButton("Export electrodes (TSV)...", box)
+        self._electrodes_export_button = QPushButton("Electrodes (TSV)...", box)
         self._electrodes_export_button.setToolTip(
             "Scene groups plus live localized electrodes, in the selected frame."
         )
         self._electrodes_export_button.clicked.connect(self._on_export_electrodes)
         export_layout.addWidget(self._electrodes_export_button)
-        self._fiducials_export_button = QPushButton("Export fiducials (TSV)...", box)
+        self._fiducials_export_button = QPushButton("Fiducials (TSV)...", box)
         self._fiducials_export_button.setToolTip(
             "Scene fiducials plus live-edited fiducials, in the selected frame."
         )
@@ -748,21 +748,13 @@ class ViewerWidget(QWidget):
             )
         if self._vertices_export_button is not None:
             self._vertices_export_button.setEnabled(active is not None)
-            self._vertices_export_button.setText(
-                "Export mesh vertices (NPY, display frame)..."
-                if active is None
-                else f"Export {active[1]} vertices (NPY, display frame)..."
-            )
+            self._vertices_export_button.setText("Mesh vertices (NPY)...")
             self._vertices_export_button.setToolTip(
-                "Vertices are transformed into the selected coordinate frame."
+                "Active mesh vertices transformed into the selected frame."
             )
         if self._faces_export_button is not None:
             self._faces_export_button.setEnabled(active is not None)
-            self._faces_export_button.setText(
-                "Export mesh faces (NPY)..."
-                if active is None
-                else f"Export {active[1]} faces (NPY, frame-independent)..."
-            )
+            self._faces_export_button.setText("Mesh faces (NPY)...")
             self._faces_export_button.setToolTip("Faces are connectivity, no frame applied.")
 
     def _update_point_export_controls(self) -> None:
