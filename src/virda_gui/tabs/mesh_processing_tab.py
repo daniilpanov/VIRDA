@@ -296,6 +296,35 @@ class MeshProcessingTab(QWidget):
         ese_row.addStretch(1)
         grid.addLayout(ese_row)
 
+        ese_adv_row = QHBoxLayout()
+        ese_adv_row.addWidget(QLabel("Radius (mm):", box))
+        self._ese_radius_spin = QDoubleSpinBox(box)
+        self._ese_radius_spin.setRange(1.0, 30.0)
+        self._ese_radius_spin.setSingleStep(0.5)
+        self._ese_radius_spin.setValue(10.0)
+        ese_adv_row.addWidget(self._ese_radius_spin)
+        ese_adv_row.addWidget(QLabel("k-NN (0=auto):", box))
+        self._ese_k_spin = QSpinBox(box)
+        self._ese_k_spin.setRange(0, 500)
+        self._ese_k_spin.setValue(0)
+        ese_adv_row.addWidget(self._ese_k_spin)
+        self._ese_weighted_chk = QCheckBox("Weighted PCA", box)
+        self._ese_weighted_chk.setChecked(False)
+        ese_adv_row.addWidget(self._ese_weighted_chk)
+        ese_adv_row.addWidget(QLabel("Sigma (mm):", box))
+        self._ese_sigma_spin = QDoubleSpinBox(box)
+        self._ese_sigma_spin.setRange(1.0, 15.0)
+        self._ese_sigma_spin.setSingleStep(0.5)
+        self._ese_sigma_spin.setValue(5.0)
+        ese_adv_row.addWidget(self._ese_sigma_spin)
+        ese_adv_row.addWidget(QLabel("Min nbrs:", box))
+        self._ese_min_nbrs_spin = QSpinBox(box)
+        self._ese_min_nbrs_spin.setRange(1, 50)
+        self._ese_min_nbrs_spin.setValue(5)
+        ese_adv_row.addWidget(self._ese_min_nbrs_spin)
+        ese_adv_row.addStretch(1)
+        grid.addLayout(ese_adv_row)
+
         return box
 
     def _build_actions_box(self) -> QGroupBox:
@@ -689,9 +718,18 @@ class MeshProcessingTab(QWidget):
         if self._generation_busy:
             return
         offset_mm = round(offset_mm, 6)
+        k_value = self._ese_k_spin.value()
+        options = EseOptions(
+            ese_offset_mm=offset_mm,
+            neighborhood_radius_mm=round(self._ese_radius_spin.value(), 6),
+            k_neighbors=k_value if k_value > 0 else None,
+            use_weighted_pca=self._ese_weighted_chk.isChecked(),
+            pca_sigma_mm=round(self._ese_sigma_spin.value(), 6),
+            min_neighbors=self._ese_min_nbrs_spin.value(),
+        )
 
         def _run() -> ESEMesh:
-            return generate_ese(base, EseOptions(ese_offset_mm=offset_mm))
+            return generate_ese(base, options)
 
         self._start_generation(
             _run,
@@ -907,6 +945,11 @@ class MeshProcessingTab(QWidget):
             self._nu_spin,
             self._density_slider,
             self._ese_offset_spin,
+            self._ese_radius_spin,
+            self._ese_k_spin,
+            self._ese_weighted_chk,
+            self._ese_sigma_spin,
+            self._ese_min_nbrs_spin,
             self._show_nifti_chk,
             self._show_base_chk,
             self._show_result_chk,
@@ -920,6 +963,11 @@ class MeshProcessingTab(QWidget):
         self._nu_spin.setValue(-0.53)
         self._density_slider.setValue(100)
         self._ese_offset_spin.setValue(2.0)
+        self._ese_radius_spin.setValue(10.0)
+        self._ese_k_spin.setValue(0)
+        self._ese_weighted_chk.setChecked(False)
+        self._ese_sigma_spin.setValue(5.0)
+        self._ese_min_nbrs_spin.setValue(5)
         self._show_nifti_chk.setChecked(True)
         self._show_base_chk.setChecked(False)
         self._show_result_chk.setChecked(True)
