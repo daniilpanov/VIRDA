@@ -163,6 +163,8 @@ class ViewerWidget(QWidget):
         self._active_mesh_label: QLabel | None = None
         self._vertices_export_button: QPushButton | None = None
         self._faces_export_button: QPushButton | None = None
+        self._electrodes_export_button: QPushButton | None = None
+        self._fiducials_export_button: QPushButton | None = None
 
         self._build_ui()
 
@@ -702,20 +704,20 @@ class ViewerWidget(QWidget):
         self._faces_export_button.clicked.connect(self._on_export_faces)
         export_layout.addWidget(self._faces_export_button)
 
-        has_electrodes = any(
-            group["points"] is not None and len(group["points"]) > 0
-            for group in scene.electrode_groups
+        self._electrodes_export_button = QPushButton("Export electrodes (TSV)...", box)
+        self._electrodes_export_button.setToolTip(
+            "Scene groups plus live localized electrodes, in the selected frame."
         )
-        has_fiducials = scene.fiducial_points is not None and len(scene.fiducial_points) > 0
-        for text, slot, available in (
-            ("Export electrodes (TSV)...", self._on_export_electrodes, has_electrodes),
-            ("Export fiducials (TSV)...", self._on_export_fiducials, has_fiducials),
-        ):
-            button = QPushButton(text, box)
-            button.clicked.connect(slot)
-            button.setEnabled(available)
-            export_layout.addWidget(button)
+        self._electrodes_export_button.clicked.connect(self._on_export_electrodes)
+        export_layout.addWidget(self._electrodes_export_button)
+        self._fiducials_export_button = QPushButton("Export fiducials (TSV)...", box)
+        self._fiducials_export_button.setToolTip(
+            "Scene fiducials plus live-edited fiducials, in the selected frame."
+        )
+        self._fiducials_export_button.clicked.connect(self._on_export_fiducials)
+        export_layout.addWidget(self._fiducials_export_button)
         self._update_mesh_export_controls()
+        self._update_point_export_controls()
         self._layers_layout.addWidget(box)
 
     def _active_mesh(self) -> tuple[pv.PolyData, MeshKind] | None:
@@ -734,15 +736,47 @@ class ViewerWidget(QWidget):
         if self._vertices_export_button is not None:
             self._vertices_export_button.setEnabled(active is not None)
             self._vertices_export_button.setText(
-                "Export vertices (NPY)..."
+                "Export mesh vertices (NPY, display frame)..."
                 if active is None
-                else f"Export {active[1]} vertices (NPY)..."
+                else f"Export {active[1]} vertices (NPY, display frame)..."
+            )
+            self._vertices_export_button.setToolTip(
+                "Vertices are transformed into the selected coordinate frame."
             )
         if self._faces_export_button is not None:
             self._faces_export_button.setEnabled(active is not None)
             self._faces_export_button.setText(
-                "Export faces (NPY)..." if active is None else f"Export {active[1]} faces (NPY)..."
+                "Export mesh faces (NPY)..."
+                if active is None
+                else f"Export {active[1]} faces (NPY, frame-independent)..."
             )
+            self._faces_export_button.setToolTip("Faces are connectivity, no frame applied.")
+
+    def _update_point_export_controls(self) -> None:
+        """Enable TSV exports when scene or live points exist."""
+        if self._electrodes_export_button is not None:
+            self._electrodes_export_button.setEnabled(self._has_exportable_electrodes())
+        if self._fiducials_export_button is not None:
+            self._fiducials_export_button.setEnabled(self._has_exportable_fiducials())
+
+    def _has_exportable_electrodes(self) -> bool:
+        if self._live_electrode_points is not None and len(self._live_electrode_points) > 0:
+            return True
+        scene = self._scene
+        if scene is None:
+            return False
+        return any(
+            group["points"] is not None and len(group["points"]) > 0
+            for group in scene.electrode_groups
+        )
+
+    def _has_exportable_fiducials(self) -> bool:
+        if self._live_fiducial_points is not None and len(self._live_fiducial_points) > 0:
+            return True
+        scene = self._scene
+        if scene is None:
+            return False
+        return scene.fiducial_points is not None and len(scene.fiducial_points) > 0
 
     def _current_export_matrix(self) -> np.ndarray:
         return scene_to_frame_matrix(
@@ -797,19 +831,33 @@ class ViewerWidget(QWidget):
         frame_suffix = f" in {frame_label(self._current_frame)}" if array_kind == "vertices" else ""
         self._log(f"Exported {mesh_kind} {array_kind} to {target}{frame_suffix}")
 
+    def _points_start_path(self, stem: str) -> str:
+        """Default TSV location (project folder when known)."""
+        filename = f"{stem}_{self._current_frame}.tsv"
+        if self._project_dir is not None:
+            return str(self._project_dir / filename)
+        return filename
+
     def _on_export_electrodes(self) -> None:
         if self._scene is None:
             return
         path, _selected_filter = QFileDialog.getSaveFileName(
             self,
-            "Export electrodes",
-            f"electrodes_{self._current_frame}.tsv",
+            "Export electrodes (scene groups + live)",
+            self._points_start_path("electrodes"),
             "TSV/CSV (*.tsv *.csv);;All files (*)",
         )
         if not path:
             return
         try:
             names, points = collect_electrodes_export(self._scene, self._current_export_matrix())
+            if self._live_electrode_points is not None and len(self._live_electrode_points) > 0:
+                live = transform_points(
+                    np.asarray(self._live_electrode_points, dtype=np.float64),
+                    self._current_export_matrix(),
+                )
+                names = [*names, *self._live_electrode_ids]
+                points = live if len(points) == 0 else np.vstack([points, live])
             write_points_tsv(path, names, points)
         except (OSError, ValueError) as exc:
             QMessageBox.critical(self, "Export electrodes", f"Could not export electrodes:\n{exc}")
@@ -821,14 +869,21 @@ class ViewerWidget(QWidget):
             return
         path, _selected_filter = QFileDialog.getSaveFileName(
             self,
-            "Export fiducials",
-            f"fiducials_{self._current_frame}.tsv",
+            "Export fiducials (scene + live)",
+            self._points_start_path("fiducials"),
             "TSV/CSV (*.tsv *.csv);;All files (*)",
         )
         if not path:
             return
         try:
             names, points = collect_fiducials_export(self._scene, self._current_export_matrix())
+            if self._live_fiducial_points is not None and len(self._live_fiducial_points) > 0:
+                live = transform_points(
+                    np.asarray(self._live_fiducial_points, dtype=np.float64),
+                    self._current_export_matrix(),
+                )
+                names = [*names, *self._live_fiducial_ids]
+                points = live if len(points) == 0 else np.vstack([points, live])
             write_points_tsv(path, names, points)
         except (OSError, ValueError) as exc:
             QMessageBox.critical(self, "Export fiducials", f"Could not export fiducials:\n{exc}")
@@ -1017,6 +1072,7 @@ class ViewerWidget(QWidget):
         """
         self._live_fiducial_ids = [str(fiducial_id) for fiducial_id in ids]
         self._live_fiducial_points = self._to_scene_points(points, frame)
+        self._update_point_export_controls()
         self._rerender_overlay()
 
     def set_live_electrodes(
@@ -1030,6 +1086,7 @@ class ViewerWidget(QWidget):
         self._live_electrode_ids = [str(electrode_id) for electrode_id in ids]
         self._live_electrode_points = self._to_scene_points(points, frame)
         self._live_electrode_flags = np.asarray(flags, dtype=bool) if flags is not None else None
+        self._update_point_export_controls()
         self._rerender_overlay()
 
     def clear_live_points(self) -> None:
@@ -1039,6 +1096,7 @@ class ViewerWidget(QWidget):
         self._live_electrode_ids = []
         self._live_electrode_points = None
         self._live_electrode_flags = None
+        self._update_point_export_controls()
         self._rerender_overlay()
 
     def set_extra_mesh(self, poly: pv.PolyData | None, mesh_kind: MeshKind = "scalp") -> None:
