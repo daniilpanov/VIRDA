@@ -268,15 +268,19 @@ class MeshProcessingTab(QWidget):
         self._show_nifti_chk = QCheckBox("Show NIfTI", box)
         self._show_base_chk = QCheckBox("Show base mesh", box)
         self._show_result_chk = QCheckBox("Show result mesh", box)
+        self._show_edges_chk = QCheckBox("Show mesh edges", box)
         self._show_nifti_chk.setChecked(True)
         self._show_base_chk.setChecked(False)
         self._show_result_chk.setChecked(True)
+        self._show_edges_chk.setChecked(False)
         self._show_nifti_chk.toggled.connect(self._on_display_toggled)
         self._show_base_chk.toggled.connect(self._on_display_toggled)
         self._show_result_chk.toggled.connect(self._on_display_toggled)
+        self._show_edges_chk.toggled.connect(self._on_display_toggled)
         display_row.addWidget(self._show_nifti_chk)
         display_row.addWidget(self._show_base_chk)
         display_row.addWidget(self._show_result_chk)
+        display_row.addWidget(self._show_edges_chk)
         display_row.addStretch(1)
         grid.addLayout(display_row)
 
@@ -502,13 +506,18 @@ class MeshProcessingTab(QWidget):
             and result is not self._base_mesh
         ):
             self._base_actor = interactor.add_mesh(
-                self._mesh_to_polydata(self._base_mesh), color="lightgray", opacity=0.6
+                self._mesh_to_polydata(self._base_mesh),
+                color="lightgray",
+                opacity=0.6,
+                show_edges=self._show_edges_chk.isChecked(),
             )
         if self._show_result_chk.isChecked() and not self._result_hidden and result is not None:
             poly = self._mesh_to_polydata(result)
             if not self._nifti_mm_scene:
                 poly.transform(self._nifti_transform, inplace=True)
-            self._result_actor = interactor.add_mesh(poly, color="salmon", opacity=0.9)
+            self._result_actor = interactor.add_mesh(
+                poly, color="salmon", opacity=0.9, show_edges=self._show_edges_chk.isChecked()
+            )
         interactor.add_axes(interactive=False)  # type: ignore[call-arg]
         if was_empty:
             interactor.reset_camera()  # type: ignore[call-arg]
@@ -892,6 +901,7 @@ class MeshProcessingTab(QWidget):
             self._show_nifti_chk,
             self._show_base_chk,
             self._show_result_chk,
+            self._show_edges_chk,
         )
         for widget in widgets:
             widget.blockSignals(True)
@@ -904,6 +914,7 @@ class MeshProcessingTab(QWidget):
         self._show_nifti_chk.setChecked(True)
         self._show_base_chk.setChecked(False)
         self._show_result_chk.setChecked(True)
+        self._show_edges_chk.setChecked(False)
         for widget in widgets:
             widget.blockSignals(False)
         self._density_label.setText("100%")
