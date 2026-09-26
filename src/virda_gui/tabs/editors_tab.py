@@ -49,8 +49,8 @@ from virda_gui.viewer.frames import (
 )
 from virda_gui.viewer.scene import transform_points
 
-FIDUCIAL_HEADERS = ["ID", "X", "Y", "Z"]
-COL_ID, COL_X, COL_Y, COL_Z = range(4)
+FIDUCIAL_HEADERS = ["ID", "X", "Y", "Z", "Weight"]
+COL_ID, COL_X, COL_Y, COL_Z, COL_W = range(5)
 COL_ELECTRODE = 0
 COORDINATE_SYSTEMS = ["world", "voxel"]
 
@@ -272,6 +272,7 @@ class FiducialsEditor(QWidget):
                 self._set_item(index, COL_X, f"{row.coordinates[0]}")
                 self._set_item(index, COL_Y, f"{row.coordinates[1]}")
                 self._set_item(index, COL_Z, f"{row.coordinates[2]}")
+                self._set_item(index, COL_W, f"{row.weight}")
         finally:
             self._loading = False
         self._highlight_duplicates()
@@ -293,16 +294,16 @@ class FiducialsEditor(QWidget):
             if not fiducial_id:
                 continue
             if index < len(self._row_meta):
-                name, coordinate_system, definition_method, weight = self._row_meta[index]
+                name, coordinate_system, definition_method, meta_weight = self._row_meta[index]
             elif index < len(self._coord_systems):
-                name, coordinate_system, definition_method, weight = (
+                name, coordinate_system, definition_method, meta_weight = (
                     fiducial_id,
                     self._coord_systems[index],
                     "manual",
                     1.0,
                 )
             else:
-                name, coordinate_system, definition_method, weight = (
+                name, coordinate_system, definition_method, meta_weight = (
                     fiducial_id,
                     COORDINATE_SYSTEMS[0],
                     "manual",
@@ -319,10 +320,24 @@ class FiducialsEditor(QWidget):
                     ),
                     coordinate_system=coordinate_system,
                     definition_method=definition_method,
-                    weight=weight,
+                    weight=self._parse_weight(index, fiducial_id, meta_weight),
                 )
             )
         return rows
+
+    def _parse_weight(self, row: int, fiducial_id: str, fallback: float) -> float:
+        text = self._text(row, COL_W).strip()
+        if not text:
+            return fallback
+        try:
+            weight = float(text)
+        except ValueError:
+            raise ValueError(
+                f"Fiducial {fiducial_id!r} row {row + 1}: Weight must be a number"
+            ) from None
+        if weight <= 0:
+            raise ValueError(f"Fiducial {fiducial_id!r} row {row + 1}: Weight must be positive")
+        return weight
 
     def _parse_float(self, row: int, col: int, fiducial_id: str) -> float:
         text = self._text(row, col).strip()
