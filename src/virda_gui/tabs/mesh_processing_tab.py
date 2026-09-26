@@ -147,6 +147,7 @@ class MeshProcessingTab(QWidget):
         self._active_mesh_label: QLabel | None = None
         self._vertices_export_button: QPushButton | None = None
         self._faces_export_button: QPushButton | None = None
+        self._mesh_file_export_button: QPushButton | None = None
         self._mesh_generation_btn: QPushButton | None = None
         self._generate_ese_btn: QPushButton | None = None
         self._generation_thread: QThread | None = None
@@ -365,6 +366,9 @@ class MeshProcessingTab(QWidget):
         self._faces_export_button = QPushButton(box)
         self._faces_export_button.clicked.connect(self._on_export_faces)
         layout.addWidget(self._faces_export_button)
+        self._mesh_file_export_button = QPushButton(box)
+        self._mesh_file_export_button.clicked.connect(self._on_export_mesh_file)
+        layout.addWidget(self._mesh_file_export_button)
         return box
 
     def _active_mesh(self) -> tuple[ScalpMesh | ESEMesh, MeshKind] | None:
@@ -393,12 +397,59 @@ class MeshProcessingTab(QWidget):
             self._faces_export_button.setText(
                 "Export faces (NPY)..." if active is None else f"Export {active[1]} faces (NPY)..."
             )
+        if self._mesh_file_export_button is not None:
+            self._mesh_file_export_button.setEnabled(active is not None)
+            self._mesh_file_export_button.setText(
+                "Export mesh (PLY/OBJ)..."
+                if active is None
+                else f"Export {active[1]} mesh (PLY/OBJ)..."
+            )
 
     def _on_export_vertices(self) -> None:
         self._export_active_mesh_array("vertices")
 
     def _on_export_faces(self) -> None:
         self._export_active_mesh_array("faces")
+
+    def _on_export_mesh_file(self) -> None:
+        active = self._active_mesh()
+        if active is None:
+            return
+        mesh, mesh_kind = active
+        project = self._state.last_project_dir
+        start = str(Path(project) / f"{mesh_kind}_mesh.ply") if project else f"{mesh_kind}_mesh.ply"
+        path, _selected_filter = QFileDialog.getSaveFileName(
+            self,
+            f"Export {mesh_kind} mesh",
+            start,
+            "PLY (*.ply);;OBJ (*.obj);;All files (*)",
+        )
+        if not path:
+            return
+        try:
+            import trimesh
+
+            target = Path(path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            trimesh.Trimesh(
+                vertices=np.asarray(mesh.vertices, dtype=np.float64),
+                faces=np.asarray(mesh.faces, dtype=np.int64),
+            ).export(str(target))
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(
+                self,
+                f"Export {mesh_kind} mesh",
+                f"Could not export {mesh_kind} mesh:\n{exc}",
+            )
+            return
+        except Exception as exc:  # noqa: BLE001 - surfaced to the user
+            QMessageBox.critical(
+                self,
+                f"Export {mesh_kind} mesh",
+                f"Could not export {mesh_kind} mesh:\n{exc}",
+            )
+            return
+        self.status.emit(f"Exported {mesh_kind} mesh to {path}")
 
     def _export_start_path(self, mesh_kind: MeshKind, array_kind: MeshArray) -> str:
         """Default location for the NPY export dialog (project folder when known)."""
