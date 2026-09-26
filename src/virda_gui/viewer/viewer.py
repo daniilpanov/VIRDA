@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -140,7 +141,8 @@ class ViewerWidget(QWidget):
         self._mesh_visible = True
         self._fiducials_visible = True
         self._normals_visible = True
-        self._labels_visible = True
+        self._fiducial_labels_visible = True
+        self._electrode_labels_visible = True
         self._mesh_opacity = 0.6
         self._hi_clim: tuple[float, float] | None = None
         self._contrast_boost = False
@@ -175,9 +177,17 @@ class ViewerWidget(QWidget):
         layout.addWidget(self._plotter, 1)
 
         self._layers_panel = QGroupBox("Layers", self)
-        self._layers_layout = QVBoxLayout(self._layers_panel)
+        panel_layout = QVBoxLayout(self._layers_panel)
+        panel_layout.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea(self._layers_panel)
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        inner = QWidget(scroll)
+        self._layers_layout = QVBoxLayout(inner)
         self._layers_layout.setContentsMargins(4, 4, 4, 4)
         self._layers_layout.setSpacing(4)
+        scroll.setWidget(inner)
+        panel_layout.addWidget(scroll)
         layout.addWidget(self._layers_panel, 0)
 
     # ---- scene loading (background thread -> GUI thread) ----
@@ -221,7 +231,8 @@ class ViewerWidget(QWidget):
             "mesh": self._mesh_visible,
             "fiducials": self._fiducials_visible,
             "normals": self._normals_visible,
-            "labels": self._labels_visible,
+            "fiducial_labels": self._fiducial_labels_visible,
+            "electrode_labels": self._electrode_labels_visible,
             "groups": list(self._group_states),
             "frame": self._current_frame,
             "position": tuple(camera.position),
@@ -358,14 +369,16 @@ class ViewerWidget(QWidget):
         self._mesh_visible = True
         self._fiducials_visible = True
         self._normals_visible = True
-        self._labels_visible = True
+        self._fiducial_labels_visible = True
+        self._electrode_labels_visible = True
         snap = self._view_snapshot
         if snap is not None:
             self._mri_visible = snap["mri"]
             self._mesh_visible = snap["mesh"]
             self._fiducials_visible = snap["fiducials"]
             self._normals_visible = snap["normals"]
-            self._labels_visible = snap["labels"]
+            self._fiducial_labels_visible = snap.get("fiducial_labels", snap.get("labels", True))
+            self._electrode_labels_visible = snap.get("electrode_labels", snap.get("labels", True))
             if len(snap["groups"]) == len(scene.electrode_groups):
                 self._group_states = list(snap["groups"])
         self._current_frame = natural_frame(scene.mm_scene)
@@ -898,7 +911,12 @@ class ViewerWidget(QWidget):
         if self._mesh_actor is not None:
             self._add_layer_check("Show mesh", self._mesh_visible, self._set_mesh_visibility)
         if self._mri_actor is not None:
-            self._add_layer_check("Show MRI", self._mri_visible, self._set_mri_visibility)
+            self._add_layer_check(
+                "Show MRI",
+                self._mri_visible,
+                self._set_mri_visibility,
+                "Hidden automatically outside the scene's native frame.",
+            )
         if self._fiducial_actor is not None:
             self._add_layer_check(
                 "Show fiducials", self._fiducials_visible, self._set_fiducials_visibility
@@ -910,7 +928,16 @@ class ViewerWidget(QWidget):
         if self._fiducial_label_actor is not None or any(
             group_actors for group_actors in self._label_actors_per_group
         ):
-            self._add_layer_check("Show labels", self._labels_visible, self._set_labels_visibility)
+            self._add_layer_check(
+                "Show fiducial labels",
+                self._fiducial_labels_visible,
+                self._set_fiducial_labels_visibility,
+            )
+            self._add_layer_check(
+                "Show electrode labels",
+                self._electrode_labels_visible,
+                self._set_electrode_labels_visibility,
+            )
         for gi, group in enumerate(scene.electrode_groups):
             all_actors = (
                 self._electrode_actors_per_group[gi]
@@ -935,9 +962,13 @@ class ViewerWidget(QWidget):
         self._plotter.reset_camera()
         self._plotter.render()
 
-    def _add_layer_check(self, text: str, checked: bool, slot: Callable[[bool], None]) -> None:
+    def _add_layer_check(
+        self, text: str, checked: bool, slot: Callable[[bool], None], tooltip: str = ""
+    ) -> None:
         check = QCheckBox(text, self._layers_panel)
         check.setChecked(checked)
+        if tooltip:
+            check.setToolTip(tooltip)
         check.toggled.connect(slot)
         self._layers_layout.addWidget(check)
 
@@ -946,10 +977,10 @@ class ViewerWidget(QWidget):
     def _apply_labels_visibility(self) -> None:
         for gi in range(len(self._group_states)):
             for actor in self._label_actors_per_group[gi]:
-                actor.SetVisibility(self._group_states[gi] and self._labels_visible)
+                actor.SetVisibility(self._group_states[gi] and self._electrode_labels_visible)
         if self._fiducial_label_actor is not None:
             self._fiducial_label_actor.SetVisibility(
-                self._fiducials_visible and self._labels_visible
+                self._fiducials_visible and self._fiducial_labels_visible
             )
 
     def _apply_group_visibility(self, gi: int) -> None:
@@ -961,7 +992,7 @@ class ViewerWidget(QWidget):
         ):
             actor.SetVisibility(visible)
         for actor in self._label_actors_per_group[gi]:
-            actor.SetVisibility(visible and self._labels_visible)
+            actor.SetVisibility(visible and self._electrode_labels_visible)
 
     def _set_mesh_visibility(self, flag: bool) -> None:
         self._mesh_visible = bool(flag)
@@ -984,8 +1015,12 @@ class ViewerWidget(QWidget):
         if self._normals_actor is not None:
             self._normals_actor.SetVisibility(flag)
 
-    def _set_labels_visibility(self, flag: bool) -> None:
-        self._labels_visible = bool(flag)
+    def _set_fiducial_labels_visibility(self, flag: bool) -> None:
+        self._fiducial_labels_visible = bool(flag)
+        self._apply_labels_visibility()
+
+    def _set_electrode_labels_visibility(self, flag: bool) -> None:
+        self._electrode_labels_visible = bool(flag)
         self._apply_labels_visibility()
 
     def _set_group_visibility(self, gi: int, flag: bool) -> None:
