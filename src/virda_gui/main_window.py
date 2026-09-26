@@ -144,6 +144,7 @@ class IdeWindow(QMainWindow):
         self._localize_poll.start()
 
         self._sidebar = ProjectSidebar(self)
+        self._editors_tab.filesSaved.connect(self._sidebar.refresh)
         self._sidebar.openViewerRequested.connect(self._on_open_viewer)
         self._sidebar.importFilesRequested.connect(self._on_import_files)
         self._sidebar.fileActivated.connect(self._open_file_tab)
