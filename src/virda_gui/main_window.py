@@ -973,6 +973,12 @@ class IdeWindow(QMainWindow):
         self.statusBar().showMessage("3D viewer scene loaded.", 4000)
         self._refresh_live_fiducials()
         self._restore_mesh_overlays()
+        if self._viewer_widget is not None:
+            self._viewer_widget.set_surface_picking(False)
+        if self._pick_btn is not None:
+            self._pick_btn.blockSignals(True)
+            self._pick_btn.setChecked(False)
+            self._pick_btn.blockSignals(False)
         if self._localized_electrodes is not None:
             self._show_localized_electrodes(self._localized_electrodes)
         self._refresh_localization_preview()

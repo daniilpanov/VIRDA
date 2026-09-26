@@ -26,7 +26,7 @@ from typing import Any, Literal
 
 import numpy as np
 import pyvista as pv
-from PySide6.QtCore import QObject, QThread, Signal
+from PySide6.QtCore import QObject, Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -1089,6 +1089,9 @@ class ViewerWidget(QWidget):
                 show_point=False,
                 left_clicking=True,
             )
+            self._plotter.setCursor(Qt.CursorShape.CrossCursor)
+        else:
+            self._plotter.unsetCursor()
         return True
 
     def _on_surface_picked(self, picked_point: np.ndarray) -> None:
