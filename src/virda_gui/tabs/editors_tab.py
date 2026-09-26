@@ -16,7 +16,7 @@ from typing import Any
 
 import numpy as np
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QStandardItemModel
+from PySide6.QtGui import QBrush, QColor, QStandardItemModel
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -196,6 +196,8 @@ class FiducialsEditor(QWidget):
         add_btn.clicked.connect(self.add_row)
         remove_btn = QPushButton("Remove row")
         remove_btn.clicked.connect(self.remove_selected)
+        clear_btn = QPushButton("Clear all")
+        clear_btn.clicked.connect(self.clear_all)
         load_btn = QPushButton("Load...")
         load_btn.clicked.connect(self._on_load)
         save_btn = QPushButton("Save")
@@ -206,6 +208,7 @@ class FiducialsEditor(QWidget):
         buttons = QHBoxLayout()
         buttons.addWidget(add_btn)
         buttons.addWidget(remove_btn)
+        buttons.addWidget(clear_btn)
         buttons.addStretch(1)
         buttons.addWidget(load_btn)
         buttons.addWidget(save_btn)
@@ -229,6 +232,7 @@ class FiducialsEditor(QWidget):
 
     def _on_cell_changed(self, _row: int, _col: int) -> None:
         if not self._loading:
+            self._highlight_duplicates()
             self.rowsChanged.emit()
 
     def _on_frame_selected(self) -> None:
@@ -270,6 +274,7 @@ class FiducialsEditor(QWidget):
                 self._set_item(index, COL_Z, f"{row.coordinates[2]}")
         finally:
             self._loading = False
+        self._highlight_duplicates()
         self.rowsChanged.emit()
 
     def fiducial_ids(self) -> list[str]:
@@ -344,7 +349,42 @@ class FiducialsEditor(QWidget):
             self._coord_systems.pop(row)
         if row < len(self._row_meta):
             self._row_meta.pop(row)
+        self._highlight_duplicates()
         self.rowsChanged.emit()
+
+    def clear_all(self) -> None:
+        """Remove all rows after an explicit confirmation."""
+        if self._table.rowCount() == 0:
+            return
+        answer = QMessageBox.question(
+            self,
+            "Clear fiducials",
+            "Remove all fiducial rows?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.set_rows([])
+
+    def _highlight_duplicates(self) -> None:
+        """Mark ID cells sharing a canonical id with a red background."""
+        counts: dict[str, int] = {}
+        for row in range(self._table.rowCount()):
+            fiducial_id = canonical_fiducial_id(self._text(row, COL_ID).strip())
+            if fiducial_id:
+                counts[fiducial_id] = counts.get(fiducial_id, 0) + 1
+        for row in range(self._table.rowCount()):
+            item = self._table.item(row, COL_ID)
+            if item is None:
+                continue
+            fiducial_id = canonical_fiducial_id(self._text(row, COL_ID).strip())
+            if fiducial_id and counts.get(fiducial_id, 0) > 1:
+                item.setBackground(QBrush(QColor(150, 40, 40)))
+                item.setToolTip("Duplicate fiducial id")
+            else:
+                item.setBackground(QBrush())
+                item.setToolTip("")
 
     def clear(self) -> None:
         """Reset the table and forget the current file path."""
@@ -509,17 +549,20 @@ class MeasurementsEditor(QWidget):
         add_btn.clicked.connect(self.add_row)
         remove_btn = QPushButton("Remove electrode")
         remove_btn.clicked.connect(self.remove_selected)
+        clear_btn = QPushButton("Clear all")
+        clear_btn.clicked.connect(self.clear_all)
         load_btn = QPushButton("Load...")
         load_btn.clicked.connect(self._on_load)
         save_btn = QPushButton("Save")
         save_btn.clicked.connect(self._on_save)
         save_as_btn = QPushButton("Save As...")
         save_as_btn.clicked.connect(self._on_save_as)
-        self._controls = [add_btn, remove_btn, load_btn, save_btn, save_as_btn]
+        self._controls = [add_btn, remove_btn, clear_btn, load_btn, save_btn, save_as_btn]
 
         buttons = QHBoxLayout()
         buttons.addWidget(add_btn)
         buttons.addWidget(remove_btn)
+        buttons.addWidget(clear_btn)
         buttons.addStretch(1)
         buttons.addWidget(load_btn)
         buttons.addWidget(save_btn)
@@ -545,6 +588,7 @@ class MeasurementsEditor(QWidget):
 
     def _on_cell_changed(self, _row: int, _col: int) -> None:
         if not self._loading:
+            self._highlight_duplicates()
             self.rowsChanged.emit()
 
     # ---- readiness ----
@@ -587,6 +631,7 @@ class MeasurementsEditor(QWidget):
                     )
         finally:
             self._loading = False
+        self._highlight_duplicates()
         self.rowsChanged.emit()
 
     def measurement_rows(self) -> list[MeasurementRow]:
@@ -627,7 +672,42 @@ class MeasurementsEditor(QWidget):
         if row >= 0:
             self._table.removeRow(row)
             if not self._loading:
+                self._highlight_duplicates()
                 self.rowsChanged.emit()
+
+    def clear_all(self) -> None:
+        """Remove all electrode rows after an explicit confirmation."""
+        if self._table.rowCount() == 0:
+            return
+        answer = QMessageBox.question(
+            self,
+            "Clear measurements",
+            "Remove all measurement rows?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.set_measurement_rows([])
+
+    def _highlight_duplicates(self) -> None:
+        """Mark electrode cells sharing a non-empty id with a red background."""
+        counts: dict[str, int] = {}
+        for row in range(self._table.rowCount()):
+            electrode_id = self._text(row, COL_ELECTRODE).strip()
+            if electrode_id:
+                counts[electrode_id] = counts.get(electrode_id, 0) + 1
+        for row in range(self._table.rowCount()):
+            item = self._table.item(row, COL_ELECTRODE)
+            if item is None:
+                continue
+            electrode_id = self._text(row, COL_ELECTRODE).strip()
+            if electrode_id and counts.get(electrode_id, 0) > 1:
+                item.setBackground(QBrush(QColor(150, 40, 40)))
+                item.setToolTip("Duplicate electrode id")
+            else:
+                item.setBackground(QBrush())
+                item.setToolTip("")
 
     def clear(self) -> None:
         """Reset the table and forget the current file path."""
