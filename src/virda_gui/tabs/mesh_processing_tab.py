@@ -1126,6 +1126,14 @@ class MeshProcessingTab(QWidget):
         """The in-memory ESE mesh, if one was generated for the current preview."""
         return self._ese_mesh
 
+    def splitter_state(self) -> Any:
+        """Opaque splitter layout for session restore."""
+        return self._splitter.saveState()
+
+    def restore_splitter_state(self, state: Any) -> None:
+        """Restore a splitter layout saved by :meth:`splitter_state`."""
+        self._splitter.restoreState(state)
+
     def has_unsaved_work(self) -> bool:
         """Whether preview params, a generated mesh or an ESE mesh are unsaved."""
         return self._mesh_dirty or self._ese_dirty
