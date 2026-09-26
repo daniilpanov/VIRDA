@@ -159,7 +159,9 @@ class IdeWindow(QMainWindow):
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([300, 800])
+        self._splitter = splitter
         self.setCentralWidget(splitter)
+        self._restore_layout()
 
         self._build_menu()
         self._status("")
@@ -186,6 +188,18 @@ class IdeWindow(QMainWindow):
         layout.addWidget(view)
         layout.addWidget(close_btn)
         dialog.exec()
+
+    def _restore_layout(self) -> None:
+        """Restore window geometry and splitter layout from the last session."""
+        geometry = self._prefs.window_geometry()
+        if geometry is not None:
+            self.restoreGeometry(geometry)
+        splitter = self._prefs.main_splitter()
+        if splitter is not None:
+            self._splitter.restoreState(splitter)
+        mesh_splitter = self._prefs.mesh_splitter()
+        if mesh_splitter is not None:
+            self._mesh_processing_tab.restore_splitter_state(mesh_splitter)
 
     def _build_menu(self) -> None:
         file_menu = self.menuBar().addMenu("&File")
@@ -1134,6 +1148,9 @@ class IdeWindow(QMainWindow):
 
     def _on_close(self) -> None:
         self._state.closed = True
+        self._prefs.save_window_geometry(self.saveGeometry())
+        self._prefs.save_main_splitter(self._splitter.saveState())
+        self._prefs.save_mesh_splitter(self._mesh_processing_tab.splitter_state())
         self._localize_poll.stop()
         for widget in self._file_tabs.values():
             if isinstance(widget, (PreviewTab, ViewerWidget)):

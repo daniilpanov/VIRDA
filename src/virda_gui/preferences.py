@@ -2,12 +2,15 @@
 
 from pathlib import Path
 
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QByteArray, QSettings
 
 _ORG = "VIRDA"
 _APP = "virda-gui"
 _KEY_LAST_PROJECT = "projects/last_project"
 _KEY_RECENT_PROJECTS = "projects/recent_projects"
+_KEY_GEOMETRY = "ui/main_geometry"
+_KEY_MAIN_SPLITTER = "ui/main_splitter"
+_KEY_MESH_SPLITTER = "ui/mesh_splitter"
 MAX_RECENT = 8
 
 
@@ -38,3 +41,33 @@ class Preferences:
         recent.insert(0, project)
         self._settings.setValue(_KEY_RECENT_PROJECTS, [str(entry) for entry in recent[:MAX_RECENT]])
         self._settings.sync()
+
+    def save_blob(self, key: str, data: QByteArray) -> None:
+        """Persist a Qt geometry/splitter blob under *key*."""
+        self._settings.setValue(key, data)
+        self._settings.sync()
+
+    def load_blob(self, key: str) -> QByteArray | None:
+        """Return the blob stored under *key*, or None when missing."""
+        value = self._settings.value(key)
+        if isinstance(value, QByteArray) and not value.isEmpty():
+            return value
+        return None
+
+    def save_window_geometry(self, data: QByteArray) -> None:
+        self.save_blob(_KEY_GEOMETRY, data)
+
+    def window_geometry(self) -> QByteArray | None:
+        return self.load_blob(_KEY_GEOMETRY)
+
+    def save_main_splitter(self, data: QByteArray) -> None:
+        self.save_blob(_KEY_MAIN_SPLITTER, data)
+
+    def main_splitter(self) -> QByteArray | None:
+        return self.load_blob(_KEY_MAIN_SPLITTER)
+
+    def save_mesh_splitter(self, data: QByteArray) -> None:
+        self.save_blob(_KEY_MESH_SPLITTER, data)
+
+    def mesh_splitter(self) -> QByteArray | None:
+        return self.load_blob(_KEY_MESH_SPLITTER)
