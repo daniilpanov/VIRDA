@@ -203,6 +203,7 @@ class MeshProcessingTab(QWidget):
 
         self.baseMeshChanged.connect(self._update_generation_buttons)
         self._connect_parameter_edits()
+        self._update_smoother_controls()
         self._update_generation_buttons()
         self._update_export_controls()
 
@@ -412,12 +413,20 @@ class MeshProcessingTab(QWidget):
 
     def _connect_parameter_edits(self) -> None:
         self._smoother_combo.currentIndexChanged.connect(self._on_parameter_edited)
+        self._smoother_combo.currentIndexChanged.connect(self._update_smoother_controls)
         self._iterations_spin.valueChanged.connect(self._on_parameter_edited)
         self._lamb_spin.valueChanged.connect(self._on_parameter_edited)
         self._nu_spin.valueChanged.connect(self._on_parameter_edited)
         self._density_slider.valueChanged.connect(self._on_density_edited)
         self._density_slider.sliderMoved.connect(self._on_density_dragged)
         self._density_slider.sliderReleased.connect(self._on_density_released)
+
+    def _update_smoother_controls(self, *_args: Any) -> None:
+        """Enable smoother params only when a real smoother is selected."""
+        enabled = self._smoother_combo.currentData() != "none"
+        self._iterations_spin.setEnabled(enabled)
+        self._lamb_spin.setEnabled(enabled)
+        self._nu_spin.setEnabled(enabled)
 
     def _on_parameter_edited(self, *_args: Any) -> None:
         self._preview_timer.start()
@@ -918,6 +927,7 @@ class MeshProcessingTab(QWidget):
         for widget in widgets:
             widget.blockSignals(False)
         self._density_label.setText("100%")
+        self._update_smoother_controls()
         self._recompute_preview()
 
     # ---- project lifecycle ----
