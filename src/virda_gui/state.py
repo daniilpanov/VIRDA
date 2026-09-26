@@ -22,4 +22,5 @@ class AppState:
     electrode_rows: list[tuple[str, str]] = field(default_factory=list)
     palette_index: int = 0
     electrodes_cras: bool = False
+    fiducial_frame: str = "scanner_ras"
     closed: bool = False

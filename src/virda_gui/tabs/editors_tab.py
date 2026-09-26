@@ -1011,6 +1011,8 @@ class EditorsTab(QWidget):
         self._measurements = MeasurementsEditor(self, default_dir=lambda: self._default_dir())
         self._localization = LocalizationPreview(self, default_dir=lambda: self._default_dir())
         self._fiducials.rowsChanged.connect(self._on_fiducials_changed)
+        self._fiducials.set_input_frame(self._state.fiducial_frame)
+        self._fiducials.inputFrameChanged.connect(self._on_input_frame_changed)
 
         splitter = QSplitter(Qt.Orientation.Vertical, self)
         splitter.addWidget(self._fiducials)
@@ -1063,6 +1065,11 @@ class EditorsTab(QWidget):
         self._measurements.set_fiducial_ready(ready)
         if not ready:
             self._localization.set_result(None, None)
+
+    def _on_input_frame_changed(self, _old_frame: object, new_frame: object) -> None:
+        """Persist the chosen fiducials input frame in the shared state."""
+        if isinstance(new_frame, str):
+            self._state.fiducial_frame = new_frame
 
     def _on_advanced_clicked(self) -> None:
         self.advancedRequested.emit()
