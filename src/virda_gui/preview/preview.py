@@ -254,7 +254,14 @@ def preview_artifact_text(path: Path, array: np.ndarray | None = None) -> str:
         nii_header: Any = img.header
         shape = tuple(int(v) for v in nii_header.get_data_shape())
         zooms = tuple(round(float(z), 3) for z in nii_header.get_zooms()[:3])
-        return header + f"NIfTI volume\n  shape         : {shape}\n  spacing (mm)  : {zooms}"
+        dtype = nii_header.get_data_dtype()
+        affine = np.asarray(img.affine, dtype=np.float64)
+        origin = tuple(round(float(v), 2) for v in affine[:3, 3])
+        return (
+            header + "NIfTI volume\n  shape         : "
+            f"{shape}\n  dtype         : {dtype}\n  spacing (mm)  : "
+            f"{zooms}\n  origin (mm)   : {origin}"
+        )
 
     if suffix == ".npy":
         loaded = array if array is not None else np.load(path, allow_pickle=False)
@@ -262,15 +269,28 @@ def preview_artifact_text(path: Path, array: np.ndarray | None = None) -> str:
         return _truncate_text(header, body)
 
     if suffix == ".ply":
-        lines: list[str] = []
-        with open(path, "rb") as fh:
-            for line in fh:
-                decoded = line.decode("ascii", errors="replace").rstrip("\r\n")
-                lines.append(decoded)
-                if len(lines) >= 100 or decoded.strip() == "end_header":
-                    break
+        try:
+            import trimesh
 
-        return _truncate_text(header, "PLY header:\n" + "\n".join(lines))
+            cloud = trimesh.load(str(path), force="mesh")
+            vertices = np.asarray(cloud.vertices, dtype=np.float64)
+            faces = np.asarray(cloud.faces, dtype=np.int64)
+            lo = tuple(round(float(v), 2) for v in vertices.min(axis=0))
+            hi = tuple(round(float(v), 2) for v in vertices.max(axis=0))
+            body = (
+                "Triangle mesh\n  vertices : "
+                f"{len(vertices)}\n  faces    : {len(faces)}\n  bounds   : {lo} .. {hi}"
+            )
+        except Exception:  # noqa: BLE001 - fall back to the raw header
+            lines: list[str] = []
+            with open(path, "rb") as fh:
+                for line in fh:
+                    decoded = line.decode("ascii", errors="replace").rstrip("\r\n")
+                    lines.append(decoded)
+                    if len(lines) >= 100 or decoded.strip() == "end_header":
+                        break
+            body = "PLY header:\n" + "\n".join(lines)
+        return _truncate_text(header, body)
 
     if suffix in _TEXT_PREVIEW_SUFFIXES:
         return _truncate_text(header, path.read_text(encoding="utf-8", errors="replace"))
