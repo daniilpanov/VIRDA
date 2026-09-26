@@ -102,6 +102,7 @@ class IdeWindow(QMainWindow):
 
         self._editors_tab = EditorsTab(self._state)
         self._editors_tab.advancedRequested.connect(self._on_show_advanced_settings)
+        self._editors_tab.localizeRequested.connect(self._on_localize_manual)
         self._editors_tab.measurements.rowsChanged.connect(self._schedule_localization)
         self._editors_tab.fiducials.inputFrameChanged.connect(self._on_fiducial_frame_changed)
 
@@ -435,6 +436,10 @@ class IdeWindow(QMainWindow):
 
     def _run_localize_auto(self) -> None:
         self._run_localize(interactive=False)
+
+    def _on_localize_manual(self) -> None:
+        """Run localization once from the explicit button with dialogs."""
+        self._run_localize(interactive=True)
 
     def _localize_warning(self, message: str, interactive: bool) -> None:
         if not interactive:

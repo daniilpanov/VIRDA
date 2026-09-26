@@ -902,6 +902,7 @@ class EditorsTab(QWidget):
     """
 
     advancedRequested = Signal()  # noqa: N815
+    localizeRequested = Signal()  # noqa: N815
 
     def __init__(self, state: AppState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -920,8 +921,13 @@ class EditorsTab(QWidget):
         advanced_btn.setToolTip("Open the advanced mesh-generation and localization settings.")
         advanced_btn.clicked.connect(self._on_advanced_clicked)
 
+        localize_btn = QPushButton("Localize now", self)
+        localize_btn.setToolTip("Run localization once with the current tables.")
+        localize_btn.clicked.connect(self._on_localize_clicked)
+
         buttons = QHBoxLayout()
         buttons.addWidget(advanced_btn)
+        buttons.addWidget(localize_btn)
         buttons.addStretch(1)
 
         layout = QVBoxLayout(self)
@@ -960,6 +966,9 @@ class EditorsTab(QWidget):
 
     def _on_advanced_clicked(self) -> None:
         self.advancedRequested.emit()
+
+    def _on_localize_clicked(self) -> None:
+        self.localizeRequested.emit()
 
     def prefill_from_project(self, project: str | Path) -> None:
         """Load the project's canonical fiducials and measurements, if any."""
