@@ -9,6 +9,7 @@ driven from the interface and reported through the status bar or dialogs.
 
 import queue
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QCheckBox,
+    QDialog,
     QFileDialog,
     QHBoxLayout,
     QInputDialog,
@@ -25,6 +27,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QSplitter,
     QTabWidget,
@@ -97,6 +100,7 @@ class IdeWindow(QMainWindow):
         self._pick_btn: QPushButton | None = None
         self._electrode_group_widgets: list[ElectrodeGroupRow] = []
         self._file_tabs: dict[str, QWidget] = {}
+        self._status_history: list[str] = []
         self._prefs = prefs or Preferences()
 
         self.setWindowTitle("VIRDA — Electrode Localization System")
@@ -115,9 +119,7 @@ class IdeWindow(QMainWindow):
         self._mesh_processing_tab.previewMesh.connect(self._on_mesh_preview)
         self._mesh_processing_tab.eseMesh.connect(self._on_ese_mesh)
         self._mesh_processing_tab.saved.connect(self._on_mesh_saved)
-        self._mesh_processing_tab.status.connect(
-            lambda message: self.statusBar().showMessage(message, 5000)
-        )
+        self._mesh_processing_tab.status.connect(self._status)
 
         self._fiducial_overlay_timer = QTimer(self)
         self._fiducial_overlay_timer.setSingleShot(True)
@@ -160,7 +162,30 @@ class IdeWindow(QMainWindow):
         self.setCentralWidget(splitter)
 
         self._build_menu()
-        self.statusBar().showMessage("")
+        self._status("")
+
+    def _status(self, message: str, timeout: int = 5000) -> None:
+        """Show *message* in the status bar and remember it for the history."""
+        if message:
+            stamp = time.strftime("%H:%M:%S", time.localtime())
+            self._status_history.append(f"[{stamp}] {message}")
+            del self._status_history[:-100]
+        self.statusBar().showMessage(message, timeout)
+
+    def _show_status_history(self) -> None:
+        """Show the remembered status-bar messages."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Recent messages")
+        dialog.resize(560, 320)
+        view = QPlainTextEdit(dialog)
+        view.setReadOnly(True)
+        view.setPlainText("\n".join(self._status_history) or "No messages yet.")
+        close_btn = QPushButton("Close", dialog)
+        close_btn.clicked.connect(dialog.accept)
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(view)
+        layout.addWidget(close_btn)
+        dialog.exec()
 
     def _build_menu(self) -> None:
         file_menu = self.menuBar().addMenu("&File")
@@ -204,6 +229,11 @@ class IdeWindow(QMainWindow):
 
         self._refresh_recent_menu()
 
+        view_menu = self.menuBar().addMenu("&View")
+        history_action = QAction("&Recent messages...", self)
+        history_action.triggered.connect(self._show_status_history)
+        view_menu.addAction(history_action)
+
     def _refresh_recent_menu(self) -> None:
         self._recent_menu.clear()
         recent = [p for p in self._prefs.recent_projects() if p.is_dir()]
@@ -236,7 +266,7 @@ class IdeWindow(QMainWindow):
         self._prefs.note_project_opened(project)
         self._refresh_recent_menu()
         self.setWindowTitle(f"VIRDA — {project.name}")
-        self.statusBar().showMessage(f"Project opened: {project}", 5000)
+        self._status(f"Project opened: {project}", 5000)
 
     def close_project(self) -> None:
         """Close the project and reset the window to the empty state."""
@@ -365,7 +395,7 @@ class IdeWindow(QMainWindow):
         key = str(path)
         widget = self._file_tabs.get(key)
         if widget is None:
-            widget = ViewerWidget(log=lambda message: self.statusBar().showMessage(message, 4000))
+            widget = ViewerWidget(log=lambda message: self._status(message, 4000))
             widget.sceneLoaded.connect(lambda _scene, tab=widget: self._on_scene_tab_loaded(tab))
             widget.sceneFailed.connect(
                 lambda message, tab=widget: self._on_scene_tab_failed(tab, message)
@@ -391,10 +421,10 @@ class IdeWindow(QMainWindow):
         widget.open(path)
 
     def _on_scene_tab_loaded(self, _tab: ViewerWidget) -> None:
-        self.statusBar().showMessage("3D viewer scene loaded.", 4000)
+        self._status("3D viewer scene loaded.", 4000)
 
     def _on_scene_tab_failed(self, _tab: ViewerWidget, message: str) -> None:
-        self.statusBar().showMessage(f"3D viewer failed: {message}", 6000)
+        self._status(f"3D viewer failed: {message}", 6000)
 
     # ------------------------------------------------------------------
     # Import
@@ -442,11 +472,11 @@ class IdeWindow(QMainWindow):
             )
             if answer != QMessageBox.StandardButton.Yes:
                 return None
-        self.statusBar().showMessage(f"Importing {role.label}...", 2000)
+        self._status(f"Importing {role.label}...", 2000)
         import_file(self._project, source, role, overwrite=exists)
         self._close_file_tab(str(target))
         self._sidebar.set_project(self._project)
-        self.statusBar().showMessage(f"Imported {role.label} -> {target}", 5000)
+        self._status(f"Imported {role.label} -> {target}", 5000)
         return target
 
     def _close_file_tab(self, key: str) -> None:
@@ -517,10 +547,10 @@ class IdeWindow(QMainWindow):
             if message == self._localize_last_auto_skip:
                 return
             self._localize_last_auto_skip = message
-            self.statusBar().showMessage(f"Localization skipped: {message}", 5000)
+            self._status(f"Localization skipped: {message}", 5000)
             return
         self._localize_last_auto_skip = ""
-        self.statusBar().showMessage(f"Localization skipped: {message}", 5000)
+        self._status(f"Localization skipped: {message}", 5000)
         QMessageBox.warning(self, "Localize", message)
 
     def _localize_options(self) -> LocalizeOptions:
@@ -662,7 +692,7 @@ class IdeWindow(QMainWindow):
             self._show_localized_electrodes(payload)
             self._refresh_localization_preview()
             localized_count = sum(1 for electrode in payload.items if electrode.is_localized)
-            self.statusBar().showMessage(
+            self._status(
                 f"Localized {localized_count}/{len(payload.items)} electrodes "
                 f"(offset shift {payload.calibrated_offset_shift_mm or 0.0:g} mm).",
                 5000,
@@ -762,12 +792,12 @@ class IdeWindow(QMainWindow):
         dialog = AdvancedSettingsDialog(self, self._state.advanced)
         if dialog.exec():
             self._state.advanced = dict(dialog.result_values)
-            self.statusBar().showMessage("Advanced settings applied.", 5000)
+            self._status("Advanced settings applied.", 5000)
 
     def _build_viewer_widget(self) -> None:
         if self._viewer_widget is not None:
             return
-        viewer = ViewerWidget(log=lambda message: self.statusBar().showMessage(message, 4000))
+        viewer = ViewerWidget(log=lambda message: self._status(message, 4000))
         self._viewer_widget = viewer
         overlay_bar = self._build_electrode_overlay_panel()
 
@@ -845,13 +875,11 @@ class IdeWindow(QMainWindow):
         if checked and not viewer.set_surface_picking(True):
             if self._pick_btn is not None:
                 self._pick_btn.setChecked(False)
-            self.statusBar().showMessage("Wait for the scene to load before picking.", 5000)
+            self._status("Wait for the scene to load before picking.", 5000)
             return
         if not checked:
             viewer.set_surface_picking(False)
-        self.statusBar().showMessage(
-            "Click a mesh surface to add a fiducial." if checked else "Picking off.", 4000
-        )
+        self._status("Click a mesh surface to add a fiducial." if checked else "Picking off.", 4000)
 
     def _on_surface_picked(self, scene_point: object) -> None:
         """Append a picked scene point to the fiducials table in its input frame."""
@@ -867,7 +895,7 @@ class IdeWindow(QMainWindow):
                 scene_to_frame_matrix(frame, affine, cras_offset, mm_scene),
             )
         except (ValueError, np.linalg.LinAlgError) as exc:
-            self.statusBar().showMessage(f"Picked point skipped: {exc}", 5000)
+            self._status(f"Picked point skipped: {exc}", 5000)
             return
         fiducial_id = self._next_fiducial_id()
         editor.append_point(
@@ -878,7 +906,7 @@ class IdeWindow(QMainWindow):
                 float(converted[0][2]),
             ),
         )
-        self.statusBar().showMessage(f"Picked {fiducial_id} from the surface.", 4000)
+        self._status(f"Picked {fiducial_id} from the surface.", 4000)
 
     def _next_fiducial_id(self) -> str:
         """First missing canonical id, else an unused F<n> label."""
@@ -943,7 +971,7 @@ class IdeWindow(QMainWindow):
             )
             return
 
-        self.statusBar().showMessage("Opening 3D viewer...", 2000)
+        self._status("Opening 3D viewer...", 2000)
         self._state.viewer_loading = True
         self._build_viewer_widget()
         assert self._viewer_tab_widget is not None
@@ -979,7 +1007,7 @@ class IdeWindow(QMainWindow):
 
     def _on_viewer_scene_loaded(self, _scene: Any) -> None:
         self._state.viewer_loading = False
-        self.statusBar().showMessage("3D viewer scene loaded.", 4000)
+        self._status("3D viewer scene loaded.", 4000)
         self._refresh_live_fiducials()
         self._restore_mesh_overlays()
         if self._viewer_widget is not None:
@@ -1006,7 +1034,7 @@ class IdeWindow(QMainWindow):
 
     def _on_viewer_scene_failed(self, message: str) -> None:
         self._state.viewer_loading = False
-        self.statusBar().showMessage(f"3D viewer failed: {message}", 6000)
+        self._status(f"3D viewer failed: {message}", 6000)
 
     def _on_fiducials_edited(self) -> None:
         """Debounce fast table edits before pushing rows to the viewer."""
@@ -1033,7 +1061,7 @@ class IdeWindow(QMainWindow):
             )
             viewer.set_live_fiducials(ids, points, frame=self._editors_tab.fiducials.input_frame())
         except (ValueError, np.linalg.LinAlgError) as exc:
-            self.statusBar().showMessage(f"Live fiducials skipped: {exc}", 5000)
+            self._status(f"Live fiducials skipped: {exc}", 5000)
 
     # ------------------------------------------------------------------
     # Mesh processing overlay + save
@@ -1068,9 +1096,7 @@ class IdeWindow(QMainWindow):
     def _on_mesh_saved(self) -> None:
         if self._state.last_project_dir:
             self._sidebar.set_project(Path(self._state.last_project_dir))
-        self.statusBar().showMessage(
-            "Mesh saved. Re-open the 3D viewer to inspect the persisted surface.", 5000
-        )
+        self._status("Mesh saved. Re-open the 3D viewer to inspect the persisted surface.", 5000)
 
     # ------------------------------------------------------------------
     # Lifecycle
