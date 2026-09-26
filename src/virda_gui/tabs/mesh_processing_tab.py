@@ -420,9 +420,7 @@ class MeshProcessingTab(QWidget):
         if self._mesh_file_export_button is not None:
             self._mesh_file_export_button.setEnabled(active is not None)
             self._mesh_file_export_button.setText(
-                "Export mesh (PLY/OBJ)..."
-                if active is None
-                else f"Export {active[1]} mesh (PLY/OBJ)..."
+                "Export mesh (PLY)..." if active is None else f"Export {active[1]} mesh (PLY)..."
             )
 
     def _on_export_vertices(self) -> None:
@@ -442,7 +440,7 @@ class MeshProcessingTab(QWidget):
             self,
             f"Export {mesh_kind} mesh",
             start,
-            "PLY (*.ply);;OBJ (*.obj);;All files (*)",
+            "PLY (*.ply);;All files (*)",
         )
         if not path:
             return
@@ -692,7 +690,7 @@ class MeshProcessingTab(QWidget):
 
     def _on_load_base(self) -> None:
         path, _selected_filter = QFileDialog.getOpenFileName(
-            self, "Load scalp mesh", self._start_dir(), "Meshes (*.ply *.obj);;All files (*)"
+            self, "Load scalp mesh", self._start_dir(), "Meshes (*.ply);;All files (*)"
         )
         if not path:
             return

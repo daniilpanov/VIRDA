@@ -1,7 +1,7 @@
 """Unit tests for the viewer's coordinate-frame math and frame exports.
 
 :mod:`virda_gui.viewer.frames` is Qt-free: the tests exercise the frame
-matrices, the scene -> frame composition and the OBJ/TSV serializers with
+matrices, the scene -> frame composition and the TSV serializers with
 plain NumPy data plus a lightweight PyVista scene, without any display.
 """
 
@@ -27,7 +27,6 @@ from virda_gui.viewer.frames import (
     triangle_faces,
     world_to_frame_matrix,
     world_to_frame_points,
-    write_mesh_obj,
     write_points_tsv,
 )
 from virda_gui.viewer.viewer_loaders import SceneData, _cras_to_scanner_ras_offset
@@ -45,21 +44,6 @@ def _non_degenerate_affine() -> np.ndarray:
     )
     affine[:3, 3] = [10.0, 20.0, 30.0]
     return affine
-
-
-def _read_obj(path: Path) -> tuple[np.ndarray, np.ndarray]:
-    vertices: list[list[float]] = []
-    faces: list[list[int]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        parts = line.split()
-        if parts[0] == "v":
-            vertices.append([float(value) for value in parts[1:4]])
-        elif parts[0] == "f":
-            faces.append([int(value) - 1 for value in parts[1:4]])
-    return np.asarray(vertices, dtype=np.float64), np.asarray(faces, dtype=np.int64)
 
 
 def _read_tsv(path: Path) -> list[dict[str, str]]:
@@ -200,15 +184,6 @@ class TestTriangleFaces:
 
 
 class TestExportSerialization:
-    def test_mesh_obj_round_trip(self, tmp_path: Path) -> None:
-        points = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
-        faces = np.array([[0, 1, 2]])
-        path = write_mesh_obj(tmp_path / "mesh.obj", points, faces, FRAME_SCANNER)
-        read_points, read_faces = _read_obj(path)
-        np.testing.assert_allclose(read_points, points, atol=1e-12)
-        np.testing.assert_array_equal(read_faces, faces)
-        assert "# coordinate frame: scanner_ras" in path.read_text(encoding="utf-8")
-
     def test_points_tsv_round_trip(self, tmp_path: Path) -> None:
         names = ["Fz", "Cz"]
         points = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
@@ -278,13 +253,6 @@ class TestCollectExports:
         affine, offset = self._cras_matrix()
         scene = _scene()
         matrix = scene_to_frame_matrix(FRAME_VOXEL, affine, offset, True)
-
-        mesh_path = write_mesh_obj(
-            tmp_path / "scalp_mesh_voxel.obj", *collect_mesh_export(scene, matrix), FRAME_VOXEL
-        )
-        read_points, read_faces = _read_obj(mesh_path)
-        assert len(read_points) == 4
-        assert read_faces.shape == (2, 3)
 
         names, points = collect_electrodes_export(scene, matrix)
         elec_path = write_points_tsv(tmp_path / "electrodes_voxel.tsv", names, points)

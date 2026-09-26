@@ -137,9 +137,9 @@ def validate_import_source(role: ImportRole, path: str | Path) -> None:
 
 
 def _validate_mesh(source: Path, role: ImportRole) -> None:
-    if source.suffix.lower() not in {".ply", ".obj"}:
+    if source.suffix.lower() != ".ply":
         raise ValueError(
-            f"{role.label}: only triangular PLY or OBJ meshes can be imported, "
+            f"{role.label}: only triangular PLY meshes can be imported, "
             f"got {source.name}. A single NPY array cannot be rebuilt into a mesh."
         )
     from virda.io.importers.scalp_mesh import import_scalp_mesh
