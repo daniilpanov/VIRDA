@@ -161,6 +161,7 @@ class FiducialsEditor(QWidget):
         self._default_dir = default_dir
         self._path: Path | None = None
         self._coord_systems: list[str] = []
+        self._row_meta: list[tuple[str, str, str, float]] = []
         self._loading = False
         self._input_frame: str = EDITOR_FRAME_IDS[0]
 
@@ -257,6 +258,9 @@ class FiducialsEditor(QWidget):
         self._loading = True
         try:
             self._coord_systems = [row.coordinate_system for row in rows]
+            self._row_meta = [
+                (row.name, row.coordinate_system, row.definition_method, row.weight) for row in rows
+            ]
             self._table.setRowCount(len(rows))
             for index, row in enumerate(rows):
                 self._set_item(index, COL_ID, row.fiducial_id)
@@ -282,22 +286,34 @@ class FiducialsEditor(QWidget):
             fiducial_id = canonical_fiducial_id(self._text(index, COL_ID).strip())
             if not fiducial_id:
                 continue
+            if index < len(self._row_meta):
+                name, coordinate_system, definition_method, weight = self._row_meta[index]
+            elif index < len(self._coord_systems):
+                name, coordinate_system, definition_method, weight = (
+                    fiducial_id,
+                    self._coord_systems[index],
+                    "manual",
+                    1.0,
+                )
+            else:
+                name, coordinate_system, definition_method, weight = (
+                    fiducial_id,
+                    COORDINATE_SYSTEMS[0],
+                    "manual",
+                    1.0,
+                )
             rows.append(
                 FiducialRow(
                     fiducial_id=fiducial_id,
-                    name=fiducial_id,
+                    name=name or fiducial_id,
                     coordinates=(
                         self._parse_float(index, COL_X, fiducial_id),
                         self._parse_float(index, COL_Y, fiducial_id),
                         self._parse_float(index, COL_Z, fiducial_id),
                     ),
-                    coordinate_system=(
-                        self._coord_systems[index]
-                        if index < len(self._coord_systems)
-                        else COORDINATE_SYSTEMS[0]
-                    ),
-                    definition_method="manual",
-                    weight=1.0,
+                    coordinate_system=coordinate_system,
+                    definition_method=definition_method,
+                    weight=weight,
                 )
             )
         return rows
@@ -315,6 +331,7 @@ class FiducialsEditor(QWidget):
         index = self._table.rowCount()
         self._table.insertRow(index)
         self._coord_systems.append(COORDINATE_SYSTEMS[0])
+        self._row_meta.append(("", COORDINATE_SYSTEMS[0], "manual", 1.0))
         self._table.scrollToBottom()
 
     def remove_selected(self) -> None:
@@ -324,6 +341,8 @@ class FiducialsEditor(QWidget):
         self._table.removeRow(row)
         if row < len(self._coord_systems):
             self._coord_systems.pop(row)
+        if row < len(self._row_meta):
+            self._row_meta.pop(row)
         self.rowsChanged.emit()
 
     def clear(self) -> None:
