@@ -980,6 +980,7 @@ class LocalizationPreview(QWidget):
 
     electrodeActivated = Signal(str)  # noqa: N815 - electrode_id
     exported = Signal()  # noqa: N815 - fired after a successful CSV export
+    resultChanged = Signal()  # noqa: N815 - the previewed result was replaced
 
     def __init__(
         self,
@@ -1070,6 +1071,15 @@ class LocalizationPreview(QWidget):
         self._affine = np.asarray(affine, dtype=np.float64) if affine is not None else None
         self._update_frame_availability()
         self._render()
+        self.resultChanged.emit()
+
+    def localized_summary(self) -> str:
+        """Short localized/total summary of the cached result."""
+        electrodes = self._electrodes
+        if electrodes is None or not electrodes.items:
+            return "none"
+        localized = sum(1 for electrode in electrodes.items if electrode.is_localized)
+        return f"{localized}/{len(electrodes.items)}"
 
     def _on_frame_selected(self) -> None:
         frame = self._frame_combo.currentData()
@@ -1154,6 +1164,7 @@ class LocalizationPreview(QWidget):
         self._hint.setText(reason)
         self._hint.setVisible(True)
         self._export_btn.setEnabled(False)
+        self.resultChanged.emit()
 
     def _distance(self, distances: dict[str, float], fiducial_id: str) -> float | None:
         fiducial_lower = fiducial_id.lower()
@@ -1206,13 +1217,18 @@ class EditorsTab(QWidget):
         self._fiducials = FiducialsEditor(self, default_dir=lambda: self._default_dir())
         self._measurements = MeasurementsEditor(self, default_dir=lambda: self._default_dir())
         self._localization = LocalizationPreview(self, default_dir=lambda: self._default_dir())
+        self._pipeline_label = QLabel(self)
+        self._pipeline_label.setWordWrap(True)
         self._fiducials.rowsChanged.connect(self._on_fiducials_changed)
         self._fiducials.set_input_frame(self._state.fiducial_frame)
         self._fiducials.inputFrameChanged.connect(self._on_input_frame_changed)
         self._fiducials.fileSaved.connect(self.filesSaved.emit)
         self._measurements.fileSaved.connect(self.filesSaved.emit)
         self._localization.exported.connect(self.filesSaved.emit)
+        self._measurements.rowsChanged.connect(self.refresh_pipeline_badge)
+        self._localization.resultChanged.connect(self.refresh_pipeline_badge)
         self._fiducials.seed_canonical_rows()
+        self.refresh_pipeline_badge()
 
         splitter = QSplitter(Qt.Orientation.Vertical, self)
         splitter.addWidget(self._fiducials)
@@ -1234,6 +1250,7 @@ class EditorsTab(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
+        layout.addWidget(self._pipeline_label)
         layout.addWidget(splitter)
         layout.addLayout(buttons)
 
@@ -1265,6 +1282,25 @@ class EditorsTab(QWidget):
         self._measurements.set_fiducial_ready(ready)
         if not ready:
             self._localization.set_result(None, None)
+        self.refresh_pipeline_badge()
+
+    def refresh_pipeline_badge(self) -> None:
+        """Show the fiducials -> measurements -> localized pipeline state."""
+        try:
+            filled = len(self._fiducials.filled_rows())
+            total = len([fid for fid in self._fiducials.fiducial_ids() if fid])
+            fiducials = f"{filled}/{total} filled" if total else "none"
+        except ValueError:
+            fiducials = "invalid"
+        try:
+            measurements = f"{len(self._measurements.measurement_rows())}"
+        except ValueError:
+            measurements = "invalid"
+        self._pipeline_label.setText(
+            f"Fiducials [{fiducials}]  "
+            f"Measurements [{measurements}]  "
+            f"Localized [{self._localization.localized_summary()}]"
+        )
 
     def _on_input_frame_changed(self, _old_frame: object, new_frame: object) -> None:
         """Persist the chosen fiducials input frame in the shared state."""
