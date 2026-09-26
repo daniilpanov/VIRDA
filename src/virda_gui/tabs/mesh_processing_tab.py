@@ -928,6 +928,16 @@ class MeshProcessingTab(QWidget):
             return
         root = Path(project)
         mesh_path = root / "mesh" / _FINAL_MESH_FILENAME
+        if mesh_path.exists():
+            answer = QMessageBox.question(
+                self,
+                "Save mesh",
+                f"File already exists:\n{mesh_path}\n\nOverwrite it?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
         try:
             export_scalp_mesh(mesh_path, target)
         except (OSError, ValueError) as exc:
@@ -936,7 +946,7 @@ class MeshProcessingTab(QWidget):
         self.status.emit(f"Saved working mesh ({len(target.vertices)} vertices) to {mesh_path}.")
         self._set_base_path(mesh_path)
         self._base_label.setText(str(mesh_path))
-        self._result_hidden = True
+        self._result_hidden = False
         self._render_scene()
         self._update_generation_buttons()
         self.saved.emit()
