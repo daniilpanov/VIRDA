@@ -221,9 +221,10 @@ def test_fiducials_editor_has_no_name_method_weight_columns_offscreen() -> None:
             ]
         )
         (row,) = editor.fiducial_rows()
-        assert row.name == "NAS"
-        assert row.definition_method == "manual"
-        assert row.weight == 1.0
+        assert row.name == "Nasion"
+        assert row.coordinate_system == "world"
+        assert row.definition_method == "auto"
+        assert row.weight == 2.5
     finally:
         editor.close()
         app.quit()
