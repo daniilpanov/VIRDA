@@ -47,6 +47,8 @@ class ProjectSidebar(QWidget):
         self._tree.setColumnCount(3)
         self._tree.setHeaderLabels(["Artifact", "Size", "Modified"])
         self._tree.setColumnWidth(0, 190)
+        self._tree.setSortingEnabled(True)
+        self._tree.sortByColumn(0, Qt.SortOrder.AscendingOrder)
         self._tree.itemDoubleClicked.connect(self._on_item_double_clicked)
         self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._tree.customContextMenuRequested.connect(self._show_context_menu)
@@ -80,6 +82,10 @@ class ProjectSidebar(QWidget):
     def project(self) -> Path | None:
         """The project currently shown in the sidebar, if any."""
         return self._project
+
+    def refresh(self) -> None:
+        """Re-scan the current project folder."""
+        self.set_project(self._project)
 
     def set_project(self, project: Path | None) -> None:
         """Populate the tree from *project* or clear it when None."""

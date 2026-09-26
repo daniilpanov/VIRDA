@@ -152,6 +152,7 @@ class FiducialsEditor(QWidget):
     """Editable table of fiducials stored in ``input/fiducials.json``."""
 
     rowsChanged = Signal()  # noqa: N815
+    fileSaved = Signal()  # noqa: N815
     inputFrameChanged = Signal(object, object)  # noqa: N815  # old_frame: str, new_frame: str
 
     def __init__(
@@ -469,6 +470,7 @@ class FiducialsEditor(QWidget):
             return False
         self._path = path
         self._dirty = False
+        self.fileSaved.emit()
         return True
 
     def _on_load(self) -> None:
@@ -598,6 +600,7 @@ class MeasurementsEditor(QWidget):
     """
 
     rowsChanged = Signal()  # noqa: N815
+    fileSaved = Signal()  # noqa: N815
 
     def __init__(
         self,
@@ -847,6 +850,7 @@ class MeasurementsEditor(QWidget):
             return False
         self._path = path
         self._dirty = False
+        self.fileSaved.emit()
         return True
 
     def collected_schema(self) -> dict[str, Any]:
@@ -900,6 +904,7 @@ class LocalizationPreview(QWidget):
     """
 
     electrodeActivated = Signal(str)  # noqa: N815 - electrode_id
+    exported = Signal()  # noqa: N815 - fired after a successful CSV export
 
     def __init__(
         self,
@@ -1096,6 +1101,8 @@ class LocalizationPreview(QWidget):
             export_localization_table(Path(path), self._electrodes, self._cras_offset)
         except OSError as exc:
             QMessageBox.critical(self, "Export localization", f"Could not write file:\n{exc}")
+            return
+        self.exported.emit()
 
     def _start_path(self) -> str:
         """Default location for the CSV export dialog."""
@@ -1116,6 +1123,7 @@ class EditorsTab(QWidget):
 
     advancedRequested = Signal()  # noqa: N815
     localizeRequested = Signal()  # noqa: N815
+    filesSaved = Signal()  # noqa: N815 - any editor wrote a file to disk
 
     def __init__(self, state: AppState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -1126,6 +1134,9 @@ class EditorsTab(QWidget):
         self._fiducials.rowsChanged.connect(self._on_fiducials_changed)
         self._fiducials.set_input_frame(self._state.fiducial_frame)
         self._fiducials.inputFrameChanged.connect(self._on_input_frame_changed)
+        self._fiducials.fileSaved.connect(self.filesSaved.emit)
+        self._measurements.fileSaved.connect(self.filesSaved.emit)
+        self._localization.exported.connect(self.filesSaved.emit)
 
         splitter = QSplitter(Qt.Orientation.Vertical, self)
         splitter.addWidget(self._fiducials)
