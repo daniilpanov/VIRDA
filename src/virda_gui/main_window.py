@@ -97,6 +97,7 @@ class IdeWindow(QMainWindow):
         self._viewer_widget: ViewerWidget | None = None
         self._viewer_tab_widget: QWidget | None = None
         self._viewer_hud_panel: QWidget | None = None
+        self._viewer_loading_label: QLabel | None = None
         self._pick_btn: QPushButton | None = None
         self._electrode_group_widgets: list[ElectrodeGroupRow] = []
         self._file_tabs: dict[str, QWidget] = {}
@@ -362,6 +363,7 @@ class IdeWindow(QMainWindow):
             self._viewer_widget = None
             self._viewer_tab_widget = None
             self._viewer_hud_panel = None
+            self._viewer_loading_label = None
             self._electrode_group_widgets = []
         elif isinstance(widget, (ViewerWidget, PreviewTab)):
             widget.shutdown()
@@ -1016,7 +1018,26 @@ class IdeWindow(QMainWindow):
         self._add_tab(self._viewer_tab_widget, f"3D Viewer - {project.name}")
         self._tabs.setTabToolTip(self._tabs.indexOf(self._viewer_tab_widget), str(project))
         self._tabs.setCurrentWidget(self._viewer_tab_widget)
+        self._show_viewer_loading(True)
         self._viewer_widget.load(**kwargs)
+
+    def _show_viewer_loading(self, loading: bool) -> None:
+        """Show or hide the loading overlay above the 3D viewer."""
+        container = self._viewer_tab_widget
+        if container is None or not isinstance(container, HUDContainer):
+            return
+        if self._viewer_loading_label is None:
+            label = QLabel("Loading 3D scene...", container)
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            label.setStyleSheet(
+                "QLabel { background-color: rgba(20, 26, 38, 235);"
+                " color: white; padding: 12px 24px; border-radius: 8px; }"
+            )
+            container.add_overlay(label, Qt.AlignmentFlag.AlignCenter)
+            self._viewer_loading_label = label
+        self._viewer_loading_label.setVisible(loading)
+        if loading:
+            self._viewer_loading_label.raise_()
 
     def _collect_viewer_kwargs(self, project: Path) -> dict[str, Any]:
         mesh_path = project / "mesh" / "final_mesh.ply"
@@ -1044,6 +1065,7 @@ class IdeWindow(QMainWindow):
 
     def _on_viewer_scene_loaded(self, _scene: Any) -> None:
         self._state.viewer_loading = False
+        self._show_viewer_loading(False)
         self._status("3D viewer scene loaded.", 4000)
         self._refresh_live_fiducials()
         self._restore_mesh_overlays()
@@ -1071,6 +1093,7 @@ class IdeWindow(QMainWindow):
 
     def _on_viewer_scene_failed(self, message: str) -> None:
         self._state.viewer_loading = False
+        self._show_viewer_loading(False)
         self._status(f"3D viewer failed: {message}", 6000)
 
     def _on_fiducials_edited(self) -> None:
