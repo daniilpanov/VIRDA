@@ -577,6 +577,18 @@ class MeshProcessingTab(QWidget):
         ).ravel()
         return pv.PolyData(np.asarray(mesh.vertices, dtype=np.float64), faces)
 
+    def _display_poly(self, mesh: ScalpMesh | ESEMesh) -> pv.PolyData:
+        """Build a preview-pane surface with the pane's display transform applied.
+
+        Every layer (base, result, ESE) goes through this helper so all of
+        them live in the same display frame even when the NIfTI scene is not
+        stored in millimetres.
+        """
+        poly = self._mesh_to_polydata(mesh)
+        if not self._nifti_mm_scene:
+            poly.transform(self._nifti_transform, inplace=True)
+        return poly
+
     def _render_scene(self) -> None:
         """Compose the preview pane from the visible layers and their flags.
 
@@ -611,24 +623,21 @@ class MeshProcessingTab(QWidget):
             and result is not self._base_mesh
         ):
             self._base_actor = interactor.add_mesh(
-                self._mesh_to_polydata(self._base_mesh),
+                self._display_poly(self._base_mesh),
                 color="lightgray",
                 opacity=0.6,
                 show_edges=self._show_edges_chk.isChecked(),
             )
         if self._show_result_chk.isChecked() and not self._result_hidden and result is not None:
-            poly = self._mesh_to_polydata(result)
-            if not self._nifti_mm_scene:
-                poly.transform(self._nifti_transform, inplace=True)
             self._result_actor = interactor.add_mesh(
-                poly, color="salmon", opacity=0.9, show_edges=self._show_edges_chk.isChecked()
+                self._display_poly(result),
+                color="salmon",
+                opacity=0.9,
+                show_edges=self._show_edges_chk.isChecked(),
             )
         if self._show_ese_chk.isChecked() and self._ese_mesh is not None:
-            ese_poly = self._mesh_to_polydata(self._ese_mesh)
-            if not self._nifti_mm_scene:
-                ese_poly.transform(self._nifti_transform, inplace=True)
             self._ese_actor = interactor.add_mesh(
-                ese_poly,
+                self._display_poly(self._ese_mesh),
                 color="royalblue",
                 opacity=0.7,
                 show_edges=self._show_edges_chk.isChecked(),
