@@ -121,6 +121,7 @@ class IdeWindow(QMainWindow):
         self._mesh_processing_tab.previewMesh.connect(self._on_mesh_preview)
         self._mesh_processing_tab.eseMesh.connect(self._on_ese_mesh)
         self._mesh_processing_tab.saved.connect(self._on_mesh_saved)
+        self._mesh_processing_tab.continueRequested.connect(self._show_editors_tab)
         self._mesh_processing_tab.status.connect(self._status)
 
         self._fiducial_overlay_timer = QTimer(self)
