@@ -296,28 +296,20 @@ class FiducialsEditor(QWidget):
         ]
 
     def fiducial_rows(self) -> list[FiducialRow]:
-        """Parse the table into rows, raising :class:`ValueError` on bad input."""
+        """Parse the table into rows, raising :class:`ValueError` on bad input.
+
+        Rows with an empty id are skipped; rows with an id but blank
+        coordinates raise, so half-filled tables fail loudly instead of
+        localizing with zeros.
+        """
         rows: list[FiducialRow] = []
         for index in range(self._table.rowCount()):
             fiducial_id = canonical_fiducial_id(self._text(index, COL_ID).strip())
             if not fiducial_id:
                 continue
-            if index < len(self._row_meta):
-                name, coordinate_system, definition_method, meta_weight = self._row_meta[index]
-            elif index < len(self._coord_systems):
-                name, coordinate_system, definition_method, meta_weight = (
-                    fiducial_id,
-                    self._coord_systems[index],
-                    "manual",
-                    1.0,
-                )
-            else:
-                name, coordinate_system, definition_method, meta_weight = (
-                    fiducial_id,
-                    COORDINATE_SYSTEMS[0],
-                    "manual",
-                    1.0,
-                )
+            name, coordinate_system, definition_method, meta_weight = self._meta_for(
+                index, fiducial_id
+            )
             rows.append(
                 FiducialRow(
                     fiducial_id=fiducial_id,
@@ -333,6 +325,44 @@ class FiducialsEditor(QWidget):
                 )
             )
         return rows
+
+    def filled_rows(self) -> list[FiducialRow]:
+        """Parse rows with complete coordinates, skipping blank seed rows.
+
+        Raises :class:`ValueError` only on partially filled or invalid cells.
+        """
+        rows: list[FiducialRow] = []
+        for index in range(self._table.rowCount()):
+            fiducial_id = canonical_fiducial_id(self._text(index, COL_ID).strip())
+            if not fiducial_id:
+                continue
+            texts = [self._text(index, col).strip() for col in (COL_X, COL_Y, COL_Z)]
+            if all(not text for text in texts):
+                continue
+            name, coordinate_system, definition_method, meta_weight = self._meta_for(
+                index, fiducial_id
+            )
+            rows.append(
+                FiducialRow(
+                    fiducial_id=fiducial_id,
+                    name=name or fiducial_id,
+                    coordinates=tuple(
+                        self._parse_float(index, col, fiducial_id) for col in (COL_X, COL_Y, COL_Z)
+                    ),
+                    coordinate_system=coordinate_system,
+                    definition_method=definition_method,
+                    weight=self._parse_weight(index, fiducial_id, meta_weight),
+                )
+            )
+        return rows
+
+    def _meta_for(self, index: int, fiducial_id: str) -> tuple[str, str, str, float]:
+        """Stored name/system/method/weight for row *index* (or fresh defaults)."""
+        if index < len(self._row_meta):
+            return self._row_meta[index]
+        if index < len(self._coord_systems):
+            return (fiducial_id, self._coord_systems[index], "manual", 1.0)
+        return (fiducial_id, COORDINATE_SYSTEMS[0], "manual", 1.0)
 
     def _parse_weight(self, row: int, fiducial_id: str, fallback: float) -> float:
         text = self._text(row, COL_W).strip()
@@ -414,23 +444,59 @@ class FiducialsEditor(QWidget):
         self.set_rows([])
 
     def _highlight_duplicates(self) -> None:
-        """Mark ID cells sharing a canonical id with a red background."""
+        """Mark ID cells sharing a canonical id with a red background.
+
+        Styling goes through ``setData`` under the hood, which would emit
+        ``cellChanged`` (and wrongly mark the table dirty), so table signals
+        stay blocked while the backgrounds are applied.
+        """
         counts: dict[str, int] = {}
         for row in range(self._table.rowCount()):
             fiducial_id = canonical_fiducial_id(self._text(row, COL_ID).strip())
             if fiducial_id:
                 counts[fiducial_id] = counts.get(fiducial_id, 0) + 1
-        for row in range(self._table.rowCount()):
-            item = self._table.item(row, COL_ID)
-            if item is None:
-                continue
-            fiducial_id = canonical_fiducial_id(self._text(row, COL_ID).strip())
-            if fiducial_id and counts.get(fiducial_id, 0) > 1:
-                item.setBackground(QBrush(QColor(150, 40, 40)))
-                item.setToolTip("Duplicate fiducial id")
-            else:
-                item.setBackground(QBrush())
-                item.setToolTip("")
+        blocked = self._table.blockSignals(True)
+        try:
+            for row in range(self._table.rowCount()):
+                item = self._table.item(row, COL_ID)
+                if item is None:
+                    continue
+                fiducial_id = canonical_fiducial_id(self._text(row, COL_ID).strip())
+                if fiducial_id and counts.get(fiducial_id, 0) > 1:
+                    item.setBackground(QBrush(QColor(150, 40, 40)))
+                    item.setToolTip("Duplicate fiducial id")
+                else:
+                    item.setBackground(QBrush())
+                    item.setToolTip("")
+        finally:
+            self._table.blockSignals(blocked)
+
+    def seed_canonical_rows(self) -> None:
+        """Ensure blank NAS/LPA/RPA rows exist so the user fills values in place.
+
+        Only missing ids are appended, with empty coordinate cells; existing
+        content is never touched and the dirty flag is left unchanged.
+        """
+        existing = {
+            canonical_fiducial_id(self._text(row, COL_ID).strip())
+            for row in range(self._table.rowCount())
+            if self._text(row, COL_ID).strip()
+        }
+        missing = [fid for fid in CANONICAL_FIDUCIALS if fid not in existing]
+        if not missing:
+            return
+        self._loading = True
+        try:
+            for fiducial_id in missing:
+                index = self._table.rowCount()
+                self._table.insertRow(index)
+                self._coord_systems.append(COORDINATE_SYSTEMS[0])
+                self._row_meta.append((fiducial_id, COORDINATE_SYSTEMS[0], "manual", 1.0))
+                self._set_item(index, COL_ID, fiducial_id)
+        finally:
+            self._loading = False
+        self._highlight_duplicates()
+        self.rowsChanged.emit()
 
     def clear(self) -> None:
         """Reset the table and forget the current file path."""
@@ -781,23 +847,32 @@ class MeasurementsEditor(QWidget):
         self.set_measurement_rows([])
 
     def _highlight_duplicates(self) -> None:
-        """Mark electrode cells sharing a non-empty id with a red background."""
+        """Mark electrode cells sharing a non-empty id with a red background.
+
+        Styling goes through ``setData`` under the hood, which would emit
+        ``cellChanged`` (and wrongly mark the table dirty), so table signals
+        stay blocked while the backgrounds are applied.
+        """
         counts: dict[str, int] = {}
         for row in range(self._table.rowCount()):
             electrode_id = self._text(row, COL_ELECTRODE).strip()
             if electrode_id:
                 counts[electrode_id] = counts.get(electrode_id, 0) + 1
-        for row in range(self._table.rowCount()):
-            item = self._table.item(row, COL_ELECTRODE)
-            if item is None:
-                continue
-            electrode_id = self._text(row, COL_ELECTRODE).strip()
-            if electrode_id and counts.get(electrode_id, 0) > 1:
-                item.setBackground(QBrush(QColor(150, 40, 40)))
-                item.setToolTip("Duplicate electrode id")
-            else:
-                item.setBackground(QBrush())
-                item.setToolTip("")
+        blocked = self._table.blockSignals(True)
+        try:
+            for row in range(self._table.rowCount()):
+                item = self._table.item(row, COL_ELECTRODE)
+                if item is None:
+                    continue
+                electrode_id = self._text(row, COL_ELECTRODE).strip()
+                if electrode_id and counts.get(electrode_id, 0) > 1:
+                    item.setBackground(QBrush(QColor(150, 40, 40)))
+                    item.setToolTip("Duplicate electrode id")
+                else:
+                    item.setBackground(QBrush())
+                    item.setToolTip("")
+        finally:
+            self._table.blockSignals(blocked)
 
     def clear(self) -> None:
         """Reset the table and forget the current file path."""
@@ -1137,6 +1212,7 @@ class EditorsTab(QWidget):
         self._fiducials.fileSaved.connect(self.filesSaved.emit)
         self._measurements.fileSaved.connect(self.filesSaved.emit)
         self._localization.exported.connect(self.filesSaved.emit)
+        self._fiducials.seed_canonical_rows()
 
         splitter = QSplitter(Qt.Orientation.Vertical, self)
         splitter.addWidget(self._fiducials)
@@ -1216,6 +1292,7 @@ class EditorsTab(QWidget):
         """Reset all three editors so no stale rows survive a project close."""
         self._measurements.clear()
         self._fiducials.clear()
+        self._fiducials.seed_canonical_rows()
         self._localization.set_result(None, None)
 
     def is_dirty(self) -> bool:
