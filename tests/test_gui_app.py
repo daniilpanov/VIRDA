@@ -133,7 +133,7 @@ def test_detect_role_json_by_structure(tmp_path: Path) -> None:
     assert detect_role(unknown) is None
 
 
-def test_import_fallback_roles_cover_six_artifact_kinds() -> None:
+def test_import_fallback_roles_cover_seven_artifact_kinds() -> None:
     assert [role.key for role in IMPORT_FALLBACK_ROLES] == [
         "nifti",
         "mesh",
@@ -141,6 +141,7 @@ def test_import_fallback_roles_cover_six_artifact_kinds() -> None:
         "normals",
         "electrodes",
         "measurements",
+        "fiducials",
     ]
 
 
