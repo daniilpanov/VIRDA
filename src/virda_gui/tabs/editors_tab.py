@@ -55,8 +55,9 @@ COL_ELECTRODE = 0
 COORDINATE_SYSTEMS = ["world", "voxel"]
 
 #: The coordinate systems the fiducial X/Y/Z columns are entered in.  ``head``
-#: is scanner RAS relative to the NIfTI volume centre (same maths as cRAS).
-EDITOR_FRAME_IDS: tuple[str, str] = (FRAME_SCANNER, FRAME_HEAD)
+#: is scanner RAS relative to the NIfTI volume centre (same maths as cRAS);
+#: ``voxel`` needs a loaded NIfTI scan and is rejected otherwise.
+EDITOR_FRAME_IDS: tuple[str, str, str] = (FRAME_SCANNER, FRAME_HEAD, FRAME_VOXEL)
 
 #: The three canonical fiducials the fixed measurements columns map onto.
 CANONICAL_FIDUCIALS: tuple[str, str, str] = ("LPA", "RPA", "NAS")
