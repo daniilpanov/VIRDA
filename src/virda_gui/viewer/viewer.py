@@ -147,6 +147,7 @@ class ViewerWidget(QWidget):
 
         self._live_fiducial_ids: list[str] = []
         self._live_fiducial_points: np.ndarray | None = None
+        self._view_snapshot: dict[str, Any] | None = None
         self._live_fiducial_actor: Any = None
         self._live_fiducial_label_actor: Any = None
         self._live_electrode_ids: list[str] = []
@@ -193,6 +194,7 @@ class ViewerWidget(QWidget):
 
         self._load_seq += 1
         seq = self._load_seq
+        self._snapshot_view_state()
         self.clear_scene()
         self._log("Loading 3D scene...")
         self._cancel_running_load()
@@ -205,6 +207,43 @@ class ViewerWidget(QWidget):
         self._worker.failed.connect(self._on_scene_failed)
         self._worker.progress.connect(self._on_scene_progress)
         self._thread.start()
+
+    def _snapshot_view_state(self) -> None:
+        """Remember layers, frame and camera so a reload can restore them."""
+        if self._scene is None:
+            self._view_snapshot = None
+            return
+        camera = self._plotter.camera
+        self._view_snapshot = {
+            "mri": self._mri_visible,
+            "mesh": self._mesh_visible,
+            "fiducials": self._fiducials_visible,
+            "normals": self._normals_visible,
+            "labels": self._labels_visible,
+            "groups": list(self._group_states),
+            "frame": self._current_frame,
+            "position": tuple(camera.position),
+            "focal": tuple(camera.focal_point),
+        }
+
+    def _restore_view_snapshot(self) -> None:
+        """Re-apply the snapshot taken by :meth:`_snapshot_view_state`."""
+        snap = self._view_snapshot
+        if snap is None:
+            return
+        if self._contrast_boost:
+            self._set_contrast(True)
+        frame = snap["frame"]
+        if frame != self._current_frame and self._frame_combo is not None:
+            try:
+                index = FRAME_IDS.index(frame)
+            except ValueError:
+                index = -1
+            if index >= 0 and self._frame_combo.model().item(index).isEnabled():
+                self._frame_combo.setCurrentIndex(index)
+        camera = self._plotter.camera
+        camera.focal_point = tuple(snap["focal"])
+        camera.position = tuple(snap["position"])
 
     def _on_scene_progress(self, message: str) -> None:
         """Forward worker-thread progress to the widget log in the GUI thread."""
@@ -318,6 +357,15 @@ class ViewerWidget(QWidget):
         self._fiducials_visible = True
         self._normals_visible = True
         self._labels_visible = True
+        snap = self._view_snapshot
+        if snap is not None:
+            self._mri_visible = snap["mri"]
+            self._mesh_visible = snap["mesh"]
+            self._fiducials_visible = snap["fiducials"]
+            self._normals_visible = snap["normals"]
+            self._labels_visible = snap["labels"]
+            if len(snap["groups"]) == len(scene.electrode_groups):
+                self._group_states = list(snap["groups"])
         self._current_frame = natural_frame(scene.mm_scene)
 
         self._mri_actor = None
@@ -331,6 +379,7 @@ class ViewerWidget(QWidget):
         self._rebuild_point_actors(np.eye(4))
         self._build_layers(scene)
         self._plotter.add_axes(interactive=False)
+        self._restore_view_snapshot()
         self._plotter.render()
 
     def _remove_point_actors(self) -> None:
@@ -788,17 +837,21 @@ class ViewerWidget(QWidget):
 
     def _build_layers(self, scene: SceneData) -> None:
         if self._mesh_actor is not None:
-            self._add_layer_check("Show mesh", True, self._set_mesh_visibility)
+            self._add_layer_check("Show mesh", self._mesh_visible, self._set_mesh_visibility)
         if self._mri_actor is not None:
-            self._add_layer_check("Show MRI", True, self._set_mri_visibility)
+            self._add_layer_check("Show MRI", self._mri_visible, self._set_mri_visibility)
         if self._fiducial_actor is not None:
-            self._add_layer_check("Show fiducials", True, self._set_fiducials_visibility)
+            self._add_layer_check(
+                "Show fiducials", self._fiducials_visible, self._set_fiducials_visibility
+            )
         if self._normals_actor is not None:
-            self._add_layer_check("Show normals", True, self._set_normals_visibility)
+            self._add_layer_check(
+                "Show normals", self._normals_visible, self._set_normals_visibility
+            )
         if self._fiducial_label_actor is not None or any(
             group_actors for group_actors in self._label_actors_per_group
         ):
-            self._add_layer_check("Show labels", True, self._set_labels_visibility)
+            self._add_layer_check("Show labels", self._labels_visible, self._set_labels_visibility)
         for gi, group in enumerate(scene.electrode_groups):
             all_actors = (
                 self._electrode_actors_per_group[gi]
@@ -808,10 +861,10 @@ class ViewerWidget(QWidget):
             if all_actors or self._label_actors_per_group[gi]:
                 self._add_layer_check(
                     f"Show {group['label']}",
-                    True,
+                    self._group_states[gi],
                     lambda flag, gi=gi: self._set_group_visibility(gi, flag),
                 )
-        self._add_layer_check("Boost contrast", False, self._set_contrast)
+        self._add_layer_check("Boost contrast", self._contrast_boost, self._set_contrast)
         self._add_frame_controls()
         self._add_export_controls(scene)
         self._layers_layout.addStretch(1)
