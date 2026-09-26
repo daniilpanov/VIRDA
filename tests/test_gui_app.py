@@ -919,6 +919,9 @@ def test_viewer_open_restores_ese_overlay_offscreen(
             def set_live_fiducials(self, *args: object, **kwargs: object) -> None:
                 return None
 
+            def set_surface_picking(self, *args: object, **kwargs: object) -> None:
+                return None
+
             def shutdown(self) -> None:
                 return None
 
