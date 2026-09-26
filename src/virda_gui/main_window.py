@@ -434,9 +434,19 @@ class IdeWindow(QMainWindow):
                 return None
         self.statusBar().showMessage(f"Importing {role.label}...", 2000)
         import_file(self._project, source, role, overwrite=exists)
+        self._close_file_tab(str(target))
         self._sidebar.set_project(self._project)
         self.statusBar().showMessage(f"Imported {role.label} -> {target}", 5000)
         return target
+
+    def _close_file_tab(self, key: str) -> None:
+        """Close the open file tab for *key* so it cannot show stale bytes."""
+        widget = self._file_tabs.get(key)
+        if widget is None:
+            return
+        index = self._tabs.indexOf(widget)
+        if index >= 0:
+            self._close_tab(index)
 
     # ------------------------------------------------------------------
     # Live localization overlay
