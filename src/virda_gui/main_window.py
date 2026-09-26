@@ -75,6 +75,8 @@ _ESE_BLOCKED_REASON = (
     "Generate the ESE mesh first (Mesh Processing tab -> Generate ESE mesh): "
     "localization runs on the ESE surface."
 )
+_FIDUCIALS_BLOCKED_REASON = "Add at least three fiducial rows before localizing."
+_MEASUREMENTS_BLOCKED_REASON = "Add at least one measurement row before localizing."
 
 
 class IdeWindow(QMainWindow):
@@ -472,11 +474,18 @@ class IdeWindow(QMainWindow):
             self._editors_tab.localization.set_blocked(_ESE_BLOCKED_REASON)
             return
         try:
-            if len(self._editors_tab.fiducials.fiducial_rows()) < 3:
-                return
-            if not self._editors_tab.measurements.measurement_rows():
-                return
+            enough_fiducials = len(self._editors_tab.fiducials.fiducial_rows()) >= 3
+            has_measurements = bool(self._editors_tab.measurements.measurement_rows())
         except ValueError:
+            return
+        if not enough_fiducials or not has_measurements:
+            if self._localized_electrodes is None:
+                reason = (
+                    _FIDUCIALS_BLOCKED_REASON
+                    if not enough_fiducials
+                    else _MEASUREMENTS_BLOCKED_REASON
+                )
+                self._editors_tab.localization.set_blocked(reason)
             return
         self._localize_timer.start()
 
