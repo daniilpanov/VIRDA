@@ -379,14 +379,13 @@ class IdeWindow(QMainWindow):
         self._refresh_pipeline()
 
     def _confirm_discard(self) -> bool:
-        """Ask before dropping unsaved table edits or mesh work; False aborts."""
-        dirty = self._editors_tab.is_dirty() or self._mesh_processing_tab.has_unsaved_work()
-        if not dirty:
+        """Ask before dropping unsaved table edits; False aborts."""
+        if not self._editors_tab.is_dirty():
             return True
         answer = QMessageBox.question(
             self,
             "Unsaved changes",
-            "Unsaved table edits or mesh work will be lost. Continue?",
+            "Unsaved table edits will be lost. Continue?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Cancel,
         )
