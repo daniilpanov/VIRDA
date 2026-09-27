@@ -877,7 +877,7 @@ def test_open_project_autoloads_ese_mesh_offscreen(tmp_path: Path) -> None:
         (ese_dir / "mesh.ply").write_text("placeholder", encoding="utf-8")
 
         window.open_project(project)
-        ese = window._mesh_processing_tab.current_ese_mesh()
+        ese = window._ese_tab.current_ese_mesh()
         assert ese is not None
         assert len(ese.vertices) == 3
     finally:
@@ -911,7 +911,7 @@ def test_viewer_open_restores_ese_overlay_offscreen(
         )
         (ese_dir / "mesh.ply").write_text("placeholder", encoding="utf-8")
         window.open_project(project)
-        assert window._mesh_processing_tab.current_ese_mesh() is not None
+        assert window._ese_tab.current_ese_mesh() is not None
 
         class _Viewer:
             def __init__(self) -> None:
@@ -999,7 +999,7 @@ def test_ese_signal_schedules_localization_without_viewer_offscreen(tmp_path: Pa
 
         window.open_project(project)
         assert window._viewer_widget is None
-        ese = window._mesh_processing_tab.current_ese_mesh()
+        ese = window._ese_tab.current_ese_mesh()
         assert ese is not None
 
         window._localize_timer.stop()
@@ -1060,7 +1060,7 @@ def test_blocked_localization_drops_cached_result_offscreen(
                 )
             ]
         )
-        window._mesh_processing_tab._ese_mesh = None  # as after a preview recompute
+        window._ese_tab._ese_mesh = None  # as after clearing the ESE tab
         window._schedule_localization()
         assert window._localized_electrodes is None
         assert "ESE mesh" in window._editors_tab.localization._hint.text()

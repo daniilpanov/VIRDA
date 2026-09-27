@@ -79,8 +79,7 @@ from .viewer.viewer import ViewerWidget
 from .widgets import ElectrodeGroupRow
 
 _ESE_BLOCKED_REASON = (
-    "Generate the ESE mesh first (Mesh Processing tab -> Generate ESE mesh): "
-    "localization runs on the ESE surface."
+    "Generate the ESE mesh first (open the ESE Surface tab): localization runs on the ESE surface."
 )
 _FIDUCIALS_BLOCKED_REASON = "Add at least three fiducial rows before localizing."
 _MEASUREMENTS_BLOCKED_REASON = "Add at least one measurement row before localizing."
@@ -123,12 +122,11 @@ class IdeWindow(QMainWindow):
 
         self._mesh_processing_tab = MeshProcessingTab(self._state)
         self._mesh_processing_tab.previewMesh.connect(self._on_mesh_preview)
-        self._mesh_processing_tab.eseMesh.connect(self._on_ese_mesh)
         self._mesh_processing_tab.saved.connect(self._on_mesh_saved)
         self._mesh_processing_tab.continueRequested.connect(self._show_editors_tab)
+        self._mesh_processing_tab.eseRequested.connect(self._show_ese_tab)
         self._mesh_processing_tab.status.connect(self._status)
         self._mesh_processing_tab.previewMesh.connect(lambda _m: self._refresh_pipeline())
-        self._mesh_processing_tab.eseMesh.connect(lambda _m: self._refresh_pipeline())
         self._mesh_processing_tab.baseMeshChanged.connect(lambda _p: self._refresh_pipeline())
         self._editors_tab.fiducials.rowsChanged.connect(lambda: self._refresh_pipeline())
         self._editors_tab.measurements.rowsChanged.connect(lambda: self._refresh_pipeline())
@@ -139,7 +137,7 @@ class IdeWindow(QMainWindow):
             base_provider=lambda: self._mesh_processing_tab.current_scalp_mesh(),
         )
         self._mesh_processing_tab.previewMesh.connect(self._ese_tab.show_preview)
-        self._mesh_processing_tab.eseMesh.connect(self._ese_tab.show_ese)
+        self._ese_tab.eseMesh.connect(self._on_ese_mesh)
         self._ese_tab.eseMesh.connect(self._on_ese_mesh)
         self._ese_tab.eseMesh.connect(lambda _m: self._refresh_pipeline())
         self._ese_tab.saved.connect(self._on_ese_saved)
