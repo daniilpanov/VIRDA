@@ -604,7 +604,10 @@ class IdeWindow(QMainWindow):
                 continue
             if role.key == "nifti" and not self._confirm_nifti_replace():
                 continue
-            self._perform_import(role, Path(source))
+            target = self._perform_import(role, Path(source))
+            if role.key == "nifti" and target is not None:
+                self._show_mesh_processing_tab()
+                self._mesh_processing_tab.autostart_base_from_nifti(target)
 
     def _confirm_nifti_replace(self) -> bool:
         """Warn that a new scan supersedes the project's inputs; False aborts.
