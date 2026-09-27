@@ -100,7 +100,7 @@ def generate_mesh_from_nifti(
 
 
 class MeshProcessingTab(QWidget):
-    """In-memory mesh editing with a single explicit "Save to project" step."""
+    """Base mesh in, autosaved postprocessed final mesh out."""
 
     previewMesh = Signal(object)  # noqa: N815 - a ScalpMesh preview in world coords
     saved = Signal()  # noqa: N815 - fired after Save wrote the mesh to disk
@@ -117,7 +117,6 @@ class MeshProcessingTab(QWidget):
         self._base_path: Path | None = None
         self._preview_mesh: ScalpMesh | None = None
         self._final_mesh: ScalpMesh | None = None
-        self._mesh_dirty = False
         self._active_mesh_label: QLabel | None = None
         self._vertices_export_button: QPushButton | None = None
         self._faces_export_button: QPushButton | None = None
@@ -627,7 +626,6 @@ class MeshProcessingTab(QWidget):
             self.status.emit(f"Mesh preview failed: {exc}")
             return
         self._preview_mesh = preview
-        self._mesh_dirty = True
         self._result_hidden = False
         self._preview_label.setText(
             f"Preview: {self._describe_mesh(preview)} (base {self._describe_mesh(base)})"
@@ -651,7 +649,6 @@ class MeshProcessingTab(QWidget):
             self.status.emit(f"Auto-save failed:\n{exc}")
             return
         self._final_mesh = preview
-        self._mesh_dirty = False
         self.status.emit(
             f"Auto-saved final mesh ({len(preview.vertices)} vertices) to {final_path}."
         )
@@ -694,7 +691,6 @@ class MeshProcessingTab(QWidget):
         self._set_base_path(path)
         self._preview_mesh = None
         self._final_mesh = None
-        self._mesh_dirty = False
         self._result_hidden = False
         self._base_label.setText(str(path))
         self._preview_label.setText(f"Base mesh: {self._describe_mesh(mesh)}")
@@ -903,7 +899,6 @@ class MeshProcessingTab(QWidget):
                 export_scalp_mesh(final_path, mesh)
             except (OSError, ValueError) as exc:
                 self._set_base_path(None)
-                self._mesh_dirty = True
                 self._base_label.setText(
                     f"Generated from {source_path.name}: {self._describe_mesh(mesh)} (unsaved)"
                 )
@@ -911,13 +906,11 @@ class MeshProcessingTab(QWidget):
             else:
                 self._set_base_path(base_path)
                 self._final_mesh = mesh
-                self._mesh_dirty = False
                 self._base_label.setText(str(base_path))
                 self.status.emit(f"Base mesh saved to {base_path}; final mesh initialized.")
         else:
             self._set_base_path(None)  # generated in memory; gains a path only on Save
             self._final_mesh = None
-            self._mesh_dirty = True
             self._base_label.setText(
                 f"Generated from {source_path.name}: {self._describe_mesh(mesh)} (unsaved)"
             )
@@ -1032,6 +1025,7 @@ class MeshProcessingTab(QWidget):
         """
         if self._interactor is not None:
             self._interactor.close()
+        self._save_timer.stop()
         self._cancel_running_generation()
 
     def _on_reset(self) -> None:
@@ -1124,18 +1118,14 @@ class MeshProcessingTab(QWidget):
         """Restore a splitter layout saved by :meth:`splitter_state`."""
         self._splitter.restoreState(state)
 
-    def has_unsaved_work(self) -> bool:
-        """Whether the working preview mesh is not saved yet."""
-        return self._mesh_dirty
-
     def clear(self) -> None:
         """Forget the in-memory mesh state without touching the project."""
+        self._save_timer.stop()
         self._cancel_running_generation()
         self._base_mesh = None
         self._set_base_path(None)
         self._preview_mesh = None
         self._final_mesh = None
-        self._mesh_dirty = False
         self._nifti_volume = None
         self._nifti_transform = np.eye(4)
         self._nifti_mm_scene = True
