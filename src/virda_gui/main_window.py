@@ -54,6 +54,8 @@ from .importing import (
     import_target,
     validate_import_source,
 )
+from .pipeline_bar import PipelineBar
+from .pipeline_status import pipeline_steps
 from .preferences import Preferences
 from .project import classify_artifact
 from .sidebar import ProjectSidebar
@@ -124,6 +126,12 @@ class IdeWindow(QMainWindow):
         self._mesh_processing_tab.saved.connect(self._on_mesh_saved)
         self._mesh_processing_tab.continueRequested.connect(self._show_editors_tab)
         self._mesh_processing_tab.status.connect(self._status)
+        self._mesh_processing_tab.previewMesh.connect(lambda _m: self._refresh_pipeline())
+        self._mesh_processing_tab.eseMesh.connect(lambda _m: self._refresh_pipeline())
+        self._mesh_processing_tab.baseMeshChanged.connect(lambda _p: self._refresh_pipeline())
+        self._editors_tab.fiducials.rowsChanged.connect(lambda: self._refresh_pipeline())
+        self._editors_tab.measurements.rowsChanged.connect(lambda: self._refresh_pipeline())
+        self._editors_tab.localization.resultChanged.connect(self._refresh_pipeline)
 
         self._fiducial_overlay_timer = QTimer(self)
         self._fiducial_overlay_timer.setSingleShot(True)
@@ -149,6 +157,7 @@ class IdeWindow(QMainWindow):
 
         self._sidebar = ProjectSidebar(self)
         self._editors_tab.filesSaved.connect(self._sidebar.refresh)
+        self._editors_tab.filesSaved.connect(self._refresh_pipeline)
         self._sidebar.openViewerRequested.connect(self._on_open_viewer)
         self._sidebar.importFilesRequested.connect(self._on_import_files)
         self._sidebar.fileActivated.connect(self._open_file_tab)
@@ -165,8 +174,18 @@ class IdeWindow(QMainWindow):
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([300, 800])
         self._splitter = splitter
-        self.setCentralWidget(splitter)
+
+        self._pipeline_bar = PipelineBar(self)
+        self._pipeline_bar.stepActivated.connect(self._on_pipeline_step)
+        central = QWidget(self)
+        central_layout = QVBoxLayout(central)
+        central_layout.setContentsMargins(0, 0, 0, 0)
+        central_layout.setSpacing(0)
+        central_layout.addWidget(self._pipeline_bar)
+        central_layout.addWidget(splitter, 1)
+        self.setCentralWidget(central)
         self._restore_layout()
+        self._refresh_pipeline()
 
         self._build_menu()
         self._status("")
@@ -313,6 +332,7 @@ class IdeWindow(QMainWindow):
         self._refresh_recent_menu()
         self.setWindowTitle(f"VIRDA — {project.name}")
         self._status(f"Project opened: {project}", 5000)
+        self._refresh_pipeline()
 
     def close_project(self) -> None:
         """Close the project and reset the window to the empty state."""
@@ -337,6 +357,7 @@ class IdeWindow(QMainWindow):
         self._localized_electrodes = None
         self._last_preview_mesh = None
         self.setWindowTitle("VIRDA — Electrode Localization System")
+        self._refresh_pipeline()
 
     def _confirm_discard(self) -> bool:
         """Ask before dropping unsaved table edits or mesh work; False aborts."""
@@ -422,6 +443,49 @@ class IdeWindow(QMainWindow):
 
     def _show_mesh_processing_tab(self) -> None:
         self._add_tab(self._mesh_processing_tab, "Mesh Processing")
+
+    def _refresh_pipeline(self) -> None:
+        """Recompute the stepper bar from project files and tab memory."""
+        project = self._project
+        nifti_saved = mesh_saved = ese_saved = False
+        if project is not None:
+            nifti_saved = any(project.glob("input/*.nii*"))
+            mesh_saved = (project / "mesh" / "final_mesh.ply").is_file()
+            ese_saved = (project / "ese" / "mesh.ply").is_file()
+        try:
+            fiducials_filled = len(self._editors_tab.fiducials.filled_rows())
+        except ValueError:
+            fiducials_filled = 0
+        try:
+            measurement_rows = len(self._editors_tab.measurements.measurement_rows())
+        except ValueError:
+            measurement_rows = 0
+        self._pipeline_bar.set_steps(
+            pipeline_steps(
+                nifti_saved=nifti_saved,
+                mesh_saved=mesh_saved,
+                ese_saved=ese_saved,
+                mesh_in_memory=self._mesh_processing_tab.current_scalp_mesh() is not None,
+                ese_in_memory=self._mesh_processing_tab.current_ese_mesh() is not None,
+                fiducials_filled=fiducials_filled,
+                measurement_rows=measurement_rows,
+                localized_summary=self._editors_tab.localization.localized_summary(),
+            )
+        )
+
+    def _on_pipeline_step(self, key: str) -> None:
+        """Navigate to the tab where pipeline step *key* is performed."""
+        if key == "scan":
+            self._on_import_files()
+        elif key in ("mesh", "ese"):
+            self._show_mesh_processing_tab()
+        elif key == "points":
+            self._show_editors_tab()
+        elif key == "electrodes":
+            if self._viewer_widget is not None and self._viewer_tab_widget is not None:
+                self._tabs.setCurrentWidget(self._viewer_tab_widget)
+            else:
+                self._show_editors_tab()
 
     # ------------------------------------------------------------------
     # Project file tabs
@@ -743,6 +807,7 @@ class IdeWindow(QMainWindow):
             self._localized_electrodes = payload
             self._show_localized_electrodes(payload)
             self._refresh_localization_preview()
+            self._refresh_pipeline()
             localized_count = sum(1 for electrode in payload.items if electrode.is_localized)
             self._status(
                 f"Localized {localized_count}/{len(payload.items)} electrodes "
@@ -1189,6 +1254,7 @@ class IdeWindow(QMainWindow):
         if self._state.last_project_dir:
             self._sidebar.set_project(Path(self._state.last_project_dir))
         self._status("Mesh saved. Re-open the 3D viewer to inspect the persisted surface.", 5000)
+        self._refresh_pipeline()
 
     # ------------------------------------------------------------------
     # Lifecycle
