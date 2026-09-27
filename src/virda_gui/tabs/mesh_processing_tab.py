@@ -159,6 +159,8 @@ class MeshProcessingTab(QWidget):
         self._generate_ese_btn: QPushButton | None = None
         self._save_ese_btn: QPushButton | None = None
         self._cancel_generation_btn: QPushButton | None = None
+        self._parameters_box: QGroupBox | None = None
+        self._actions_box: QGroupBox | None = None
         self._generation_thread: QThread | None = None
         self._generation_worker: _BackgroundWorker | None = None
         self._generation_seq = 0
@@ -249,6 +251,7 @@ class MeshProcessingTab(QWidget):
 
     def _build_parameters_box(self) -> QGroupBox:
         box = QGroupBox("Mesh parameters", self)
+        self._parameters_box = box
         grid = QVBoxLayout(box)
         grid.setContentsMargins(4, 4, 4, 4)
         grid.setSpacing(6)
@@ -384,6 +387,7 @@ class MeshProcessingTab(QWidget):
 
     def _build_actions_box(self) -> QGroupBox:
         box = QGroupBox("Actions", self)
+        self._actions_box = box
         outer = QVBoxLayout(box)
         outer.setContentsMargins(4, 4, 4, 4)
         outer.setSpacing(6)
@@ -1120,6 +1124,19 @@ class MeshProcessingTab(QWidget):
         self._cancel_running_generation()
         self.status.emit("Generation cancelled.")
 
+    def set_locked(self, locked: bool) -> None:
+        """Disable the parameter and action controls while generation runs.
+
+        The Cancel button stays enabled so an in-flight generation can always
+        be stopped.
+        """
+        if self._parameters_box is not None:
+            self._parameters_box.setEnabled(not locked)
+        if self._actions_box is not None:
+            self._actions_box.setEnabled(not locked)
+        if locked and self._cancel_generation_btn is not None:
+            self._cancel_generation_btn.setEnabled(True)
+
     def _update_generation_buttons(self) -> None:
         """Reflect the busy flag and ESE's need for a working mesh.
 
@@ -1130,6 +1147,7 @@ class MeshProcessingTab(QWidget):
         generation completions refresh it explicitly.
         """
         ready = not self._generation_busy
+        self.set_locked(not ready)
         if self._mesh_generation_btn is not None:
             self._mesh_generation_btn.setEnabled(ready)
         if self._generate_ese_btn is not None:
