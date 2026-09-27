@@ -203,6 +203,10 @@ class MeshProcessingTab(QWidget):
         self._preview_timer.setSingleShot(True)
         self._preview_timer.setInterval(150)
         self._preview_timer.timeout.connect(self._recompute_preview)
+        self._save_timer = QTimer(self)
+        self._save_timer.setSingleShot(True)
+        self._save_timer.setInterval(1000)
+        self._save_timer.timeout.connect(self._autosave_final)
         self._preview_label = QLabel(
             "No base mesh loaded. Load a mesh or generate from NIfTI.", panel
         )
@@ -286,6 +290,14 @@ class MeshProcessingTab(QWidget):
         self._density_label = QLabel("100%", box)
         density_row.addWidget(self._density_label)
         grid.addLayout(density_row)
+
+        self._from_final_chk = QCheckBox("Apply on final mesh", box)
+        self._from_final_chk.setChecked(False)
+        self._from_final_chk.setToolTip(
+            "Postprocessing starts from the saved final mesh instead of the base mesh."
+        )
+        self._from_final_chk.toggled.connect(self._on_parameter_edited)
+        grid.addWidget(self._from_final_chk)
 
         display_row = QHBoxLayout()
         self._show_nifti_chk = QCheckBox("Show NIfTI", box)
@@ -398,10 +410,10 @@ class MeshProcessingTab(QWidget):
         save_row.setContentsMargins(0, 0, 0, 0)
         save_row.setSpacing(6)
 
-        save_btn = QPushButton("Save to project", box)
-        save_btn.clicked.connect(self._on_save)
-        save_btn.setToolTip("Save the working scalp mesh to mesh/final_mesh.ply.")
-        save_row.addWidget(save_btn)
+        run_all_btn = QPushButton("Run all postprocessings", box)
+        run_all_btn.clicked.connect(self._on_run_all)
+        run_all_btn.setToolTip("Apply smoothing and density now and save the final mesh.")
+        save_row.addWidget(run_all_btn)
 
         self._save_ese_btn = QPushButton("Save ESE to project", box)
         self._save_ese_btn.clicked.connect(self._on_save_ese)
@@ -594,6 +606,12 @@ class MeshProcessingTab(QWidget):
     def _on_display_toggled(self, *_args: Any) -> None:
         self._render_scene()
 
+    def _preview_source(self) -> ScalpMesh | None:
+        """The mesh postprocessing starts from: saved final if checked, else base."""
+        if self._from_final_chk.isChecked() and self._final_mesh is not None:
+            return self._final_mesh
+        return self._base_mesh
+
     def _compute_preview(self, base: ScalpMesh) -> ScalpMesh:
         """Run the configured smoother/density on *base* without mutating it."""
         mesh = base
@@ -718,8 +736,8 @@ class MeshProcessingTab(QWidget):
         return f"{len(mesh.vertices)}v/{len(mesh.faces)}f"
 
     def _recompute_preview(self) -> None:
-        """Recompute the parameter-adjusted preview mesh whenever a base is set."""
-        base = self._base_mesh
+        """Recompute the parameter-adjusted preview mesh from the chosen source."""
+        base = self._preview_source()
         if base is None:
             self._preview_mesh = None
             self._ese_mesh = None
@@ -745,6 +763,32 @@ class MeshProcessingTab(QWidget):
         self._update_generation_buttons()
         self._update_export_controls()
         self.previewMesh.emit(preview)
+        self._save_timer.start()
+
+    def _autosave_final(self) -> None:
+        """Write the current preview to final_mesh.ply (debounced postprocessing)."""
+        project = self._state.last_project_dir
+        preview = self._preview_mesh
+        if not project or preview is None:
+            return
+        final_path = Path(project) / "mesh" / _FINAL_MESH_FILENAME
+        try:
+            export_scalp_mesh(final_path, preview)
+        except (OSError, ValueError) as exc:
+            self.status.emit(f"Auto-save failed:\n{exc}")
+            return
+        self._final_mesh = preview
+        self._mesh_dirty = False
+        self.status.emit(
+            f"Auto-saved final mesh ({len(preview.vertices)} vertices) to {final_path}."
+        )
+        self.saved.emit()
+
+    def _on_run_all(self) -> None:
+        """Recompute postprocessing now and flush the auto-save immediately."""
+        self._save_timer.stop()
+        self._recompute_preview()
+        self._autosave_final()
 
     def _on_load_base(self) -> None:
         path, _selected_filter = QFileDialog.getOpenFileName(
@@ -1117,41 +1161,6 @@ class MeshProcessingTab(QWidget):
             return
         self.generate_ese(base, self._ese_offset_spin.value())
 
-    def _on_save(self) -> None:
-        project = self._state.last_project_dir
-        if not project:
-            QMessageBox.warning(self, "Save mesh", "Open a project first so the mesh has a home.")
-            return
-        target = self._preview_mesh if self._preview_mesh is not None else self._base_mesh
-        if target is None:
-            QMessageBox.warning(self, "Save mesh", "Load a base mesh first.")
-            return
-        root = Path(project)
-        mesh_path = root / "mesh" / _FINAL_MESH_FILENAME
-        if mesh_path.exists():
-            answer = QMessageBox.question(
-                self,
-                "Save mesh",
-                f"File already exists:\n{mesh_path}\n\nOverwrite it?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if answer != QMessageBox.StandardButton.Yes:
-                return
-        try:
-            export_scalp_mesh(mesh_path, target)
-        except (OSError, ValueError) as exc:
-            QMessageBox.critical(self, "Save mesh", f"Could not save mesh:\n{exc}")
-            return
-        self.status.emit(f"Saved working mesh ({len(target.vertices)} vertices) to {mesh_path}.")
-        self._set_base_path(mesh_path)
-        self._base_label.setText(str(mesh_path))
-        self._mesh_dirty = False
-        self._result_hidden = False
-        self._render_scene()
-        self._update_generation_buttons()
-        self.saved.emit()
-
     def _on_save_ese(self) -> None:
         project = self._state.last_project_dir
         if not project:
@@ -1192,6 +1201,7 @@ class MeshProcessingTab(QWidget):
             self._lamb_spin,
             self._nu_spin,
             self._density_slider,
+            self._from_final_chk,
             self._ese_offset_spin,
             self._ese_radius_spin,
             self._ese_k_spin,
@@ -1211,6 +1221,7 @@ class MeshProcessingTab(QWidget):
         self._lamb_spin.setValue(0.5)
         self._nu_spin.setValue(-0.53)
         self._density_slider.setValue(100)
+        self._from_final_chk.setChecked(False)
         self._ese_offset_spin.setValue(2.0)
         self._ese_radius_spin.setValue(10.0)
         self._ese_k_spin.setValue(0)
