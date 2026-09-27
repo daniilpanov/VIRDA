@@ -290,6 +290,7 @@ class MeshProcessingTab(QWidget):
         self._show_base_chk = QCheckBox("Show base mesh", box)
         self._show_result_chk = QCheckBox("Show result mesh", box)
         self._show_ese_chk = QCheckBox("Show ESE mesh", box)
+        self._show_ese_chk.setToolTip("Sensor surface: skin offset outward (ESE).")
         self._show_edges_chk = QCheckBox("Show mesh edges", box)
         self._show_nifti_chk.setChecked(True)
         self._show_base_chk.setChecked(False)
@@ -383,6 +384,7 @@ class MeshProcessingTab(QWidget):
 
         self._generate_ese_btn = QPushButton("Generate ESE mesh", box)
         self._generate_ese_btn.clicked.connect(self._on_generate_ese)
+        self._generate_ese_btn.setToolTip("Build the sensor surface (ESE) from the preview mesh.")
         row.addWidget(self._generate_ese_btn)
 
         self._cancel_generation_btn = QPushButton("Cancel", box)
@@ -401,7 +403,9 @@ class MeshProcessingTab(QWidget):
 
         self._save_ese_btn = QPushButton("Save ESE to project", box)
         self._save_ese_btn.clicked.connect(self._on_save_ese)
-        self._save_ese_btn.setToolTip("Save the ESE mesh to ese/mesh.ply with companions.")
+        self._save_ese_btn.setToolTip(
+            "Save the sensor surface (ESE) to ese/mesh.ply with companions."
+        )
         save_row.addWidget(self._save_ese_btn)
 
         reset_btn = QPushButton("Reset parameters", box)

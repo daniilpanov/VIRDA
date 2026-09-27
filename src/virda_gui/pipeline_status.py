@@ -99,10 +99,12 @@ def pipeline_steps(
             detail=("Scan imported." if nifti_saved else "Import a brain scan (NIfTI)."),
             state="done" if nifti_saved else "active",
         ),
-        PipelineStep(key="mesh", title="2. Skin surface", detail=mesh_detail, state=mesh_state),
+        PipelineStep(
+            key="mesh", title="2. Skin surface (mesh)", detail=mesh_detail, state=mesh_state
+        ),
         PipelineStep(
             key="ese",
-            title="3. Sensor surface",
+            title="3. Sensor surface (ESE)",
             detail=ese_detail,
             state=ese_state,
         ),
