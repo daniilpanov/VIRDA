@@ -51,6 +51,7 @@ from PySide6.QtWidgets import (
 )
 from pyvistaqt import QtInteractor
 
+from virda.io.exporters.ese_mesh import export_ese_companions, export_ese_mesh
 from virda.io.exporters.mesh_arrays import export_mesh_faces, export_mesh_vertices
 from virda.io.exporters.scalp_mesh import export_scalp_mesh
 from virda.io.importers.ese_mesh import import_ese_mesh
@@ -71,7 +72,7 @@ from virda_gui.viewer.scene import scene_placement
 from virda_gui.viewer.viewer_loaders import SceneData, collect_scene_data
 
 _FINAL_MESH_FILENAME = "final_mesh.ply"
-_ESE_MESH_FILENAME = "ese_mesh.ply"
+_ESE_MESH_FILENAME = "mesh.ply"
 _NIFTI_PREVIEW_STRIDE = 2
 _MESH_DENSITY_MIN = 1
 _MESH_DENSITY_MAX = 100
@@ -152,6 +153,7 @@ class MeshProcessingTab(QWidget):
         self._mesh_file_export_button: QPushButton | None = None
         self._mesh_generation_btn: QPushButton | None = None
         self._generate_ese_btn: QPushButton | None = None
+        self._save_ese_btn: QPushButton | None = None
         self._cancel_generation_btn: QPushButton | None = None
         self._generation_thread: QThread | None = None
         self._generation_worker: _BackgroundWorker | None = None
@@ -356,7 +358,13 @@ class MeshProcessingTab(QWidget):
 
         save_btn = QPushButton("Save to project", box)
         save_btn.clicked.connect(self._on_save)
+        save_btn.setToolTip("Save the working scalp mesh to mesh/final_mesh.ply.")
         row.addWidget(save_btn)
+
+        self._save_ese_btn = QPushButton("Save ESE to project", box)
+        self._save_ese_btn.clicked.connect(self._on_save_ese)
+        self._save_ese_btn.setToolTip("Save the ESE mesh to ese/mesh.ply with companions.")
+        row.addWidget(self._save_ese_btn)
 
         reset_btn = QPushButton("Reset parameters", box)
         reset_btn.clicked.connect(self._on_reset)
@@ -1003,6 +1011,8 @@ class MeshProcessingTab(QWidget):
         if self._generate_ese_btn is not None:
             base_ready = self.current_scalp_mesh() is not None
             self._generate_ese_btn.setEnabled(ready and base_ready)
+        if self._save_ese_btn is not None:
+            self._save_ese_btn.setEnabled(ready and self._ese_mesh is not None)
         if self._cancel_generation_btn is not None:
             self._cancel_generation_btn.setEnabled(not ready)
 
@@ -1059,6 +1069,39 @@ class MeshProcessingTab(QWidget):
         self._mesh_dirty = False
         self._result_hidden = False
         self._render_scene()
+        self._update_generation_buttons()
+        self.saved.emit()
+
+    def _on_save_ese(self) -> None:
+        project = self._state.last_project_dir
+        if not project:
+            QMessageBox.warning(
+                self, "Save ESE mesh", "Open a project first so the mesh has a home."
+            )
+            return
+        ese = self._ese_mesh
+        if ese is None:
+            QMessageBox.warning(self, "Save ESE mesh", "Generate an ESE mesh first.")
+            return
+        ese_path = Path(project) / "ese" / _ESE_MESH_FILENAME
+        if ese_path.exists():
+            answer = QMessageBox.question(
+                self,
+                "Save ESE mesh",
+                f"File already exists:\n{ese_path}\n\nOverwrite it?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        try:
+            export_ese_mesh(ese_path, ese)
+            export_ese_companions(ese_path, ese)
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "Save ESE mesh", f"Could not save ESE mesh:\n{exc}")
+            return
+        self.status.emit(f"Saved ESE mesh ({len(ese.vertices)} vertices) to {ese_path}.")
+        self._ese_dirty = False
         self._update_generation_buttons()
         self.saved.emit()
 

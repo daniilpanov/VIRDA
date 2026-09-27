@@ -9,7 +9,7 @@ from virda.models.ese_mesh import ESEMesh
 
 
 def import_ese_mesh(path: str | Path) -> ESEMesh:
-    """Rebuild an :class:`ESEMesh` from ``ese_mesh.ply`` companion files.
+    """Rebuild an :class:`ESEMesh` from ``mesh.ply`` companion files.
 
     Reads ``ese_vertices.npy``, ``ese_faces.npy``, ``normals.npy``,
     ``quality.npy`` and the ``scalp_vertices`` dump of ``point_pairs.json``

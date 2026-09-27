@@ -246,7 +246,7 @@ def test_import_target_resolves_canonical_locations(tmp_path: Path) -> None:
     )
     assert (
         import_target(next(r for r in ROLE_REGISTRY if r.key == "ese_mesh"), project, source)
-        == project / "ese" / "ese_mesh.ply"
+        == project / "ese" / "mesh.ply"
     )
     assert (
         import_target(next(r for r in ROLE_REGISTRY if r.key == "nifti"), project, source)
@@ -844,7 +844,7 @@ def test_localization_blocked_until_ese_mesh_offscreen(
 
 
 def test_open_project_autoloads_ese_mesh_offscreen(tmp_path: Path) -> None:
-    """Opening a project with ese/ese_mesh.ply restores the in-memory ESE mesh."""
+    """Opening a project with ese/mesh.ply restores the in-memory ESE mesh."""
     import json
 
     app = _offscreen_app()
@@ -874,7 +874,7 @@ def test_open_project_autoloads_ese_mesh_offscreen(tmp_path: Path) -> None:
             ),
             encoding="utf-8",
         )
-        (ese_dir / "ese_mesh.ply").write_text("placeholder", encoding="utf-8")
+        (ese_dir / "mesh.ply").write_text("placeholder", encoding="utf-8")
 
         window.open_project(project)
         ese = window._mesh_processing_tab.current_ese_mesh()
@@ -909,7 +909,7 @@ def test_viewer_open_restores_ese_overlay_offscreen(
         (ese_dir / "point_pairs.json").write_text(
             json.dumps({"scalp_vertices": vertices}), encoding="utf-8"
         )
-        (ese_dir / "ese_mesh.ply").write_text("placeholder", encoding="utf-8")
+        (ese_dir / "mesh.ply").write_text("placeholder", encoding="utf-8")
         window.open_project(project)
         assert window._mesh_processing_tab.current_ese_mesh() is not None
 
@@ -961,7 +961,7 @@ def test_ese_signal_schedules_localization_without_viewer_offscreen(tmp_path: Pa
         (ese_dir / "point_pairs.json").write_text(
             json.dumps({"scalp_vertices": vertices}), encoding="utf-8"
         )
-        (ese_dir / "ese_mesh.ply").write_text("placeholder", encoding="utf-8")
+        (ese_dir / "mesh.ply").write_text("placeholder", encoding="utf-8")
 
         inputs = project / "input"
         inputs.mkdir()

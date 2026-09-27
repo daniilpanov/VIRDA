@@ -30,7 +30,7 @@ class ImportRole:
 
 ROLE_REGISTRY: tuple[ImportRole, ...] = (
     ImportRole("mesh", "Usual mesh", "Mesh", "mesh/final_mesh.ply"),
-    ImportRole("ese_mesh", "ESE mesh", "ESE", "ese/ese_mesh.ply"),
+    ImportRole("ese_mesh", "ESE mesh", "ESE", "ese/mesh.ply"),
     ImportRole("normals", "Normals", "ESE", "ese/normals.npy"),
     ImportRole(
         "electrodes",
