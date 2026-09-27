@@ -61,6 +61,7 @@ from .project import classify_artifact
 from .sidebar import ProjectSidebar
 from .state import AppState
 from .tabs.editors_tab import EditorsTab, FiducialRow, canonical_fiducial_id
+from .tabs.ese_tab import EseTab
 from .tabs.mesh_processing_tab import MeshProcessingTab
 from .tabs.preview_tab import PreviewTab
 from .viewer.frames import (
@@ -132,6 +133,18 @@ class IdeWindow(QMainWindow):
         self._editors_tab.fiducials.rowsChanged.connect(lambda: self._refresh_pipeline())
         self._editors_tab.measurements.rowsChanged.connect(lambda: self._refresh_pipeline())
         self._editors_tab.localization.resultChanged.connect(self._refresh_pipeline)
+
+        self._ese_tab = EseTab(
+            self._state,
+            base_provider=lambda: self._mesh_processing_tab.current_scalp_mesh(),
+        )
+        self._mesh_processing_tab.previewMesh.connect(self._ese_tab.show_preview)
+        self._mesh_processing_tab.eseMesh.connect(self._ese_tab.show_ese)
+        self._ese_tab.eseMesh.connect(self._on_ese_mesh)
+        self._ese_tab.eseMesh.connect(lambda _m: self._refresh_pipeline())
+        self._ese_tab.saved.connect(self._on_ese_saved)
+        self._ese_tab.status.connect(self._status)
+        self._ese_tab.busyChanged.connect(self._mesh_processing_tab.set_locked)
 
         self._fiducial_overlay_timer = QTimer(self)
         self._fiducial_overlay_timer.setSingleShot(True)
@@ -278,6 +291,10 @@ class IdeWindow(QMainWindow):
         mesh_action.triggered.connect(self._show_mesh_processing_tab)
         file_menu.addAction(mesh_action)
 
+        ese_action = QAction("&ESE surface", self)
+        ese_action.triggered.connect(self._show_ese_tab)
+        file_menu.addAction(ese_action)
+
         file_menu.addSeparator()
 
         self._close_action = QAction("&Close project", self)
@@ -328,6 +345,7 @@ class IdeWindow(QMainWindow):
         self._state.last_project_dir = str(project)
         self._editors_tab.prefill_from_project(project)
         self._mesh_processing_tab.prefill_from_project(project)
+        self._ese_tab.prefill_from_project(project)
         self._prefs.note_project_opened(project)
         self._refresh_recent_menu()
         self.setWindowTitle(f"VIRDA — {project.name}")
@@ -352,8 +370,10 @@ class IdeWindow(QMainWindow):
             self._viewer_widget.set_project_dir(None)
         self._tabs.removeTab(self._tabs.indexOf(self._editors_tab))
         self._tabs.removeTab(self._tabs.indexOf(self._mesh_processing_tab))
+        self._tabs.removeTab(self._tabs.indexOf(self._ese_tab))
         self._editors_tab.clear()
         self._mesh_processing_tab.clear()
+        self._ese_tab.clear()
         self._localized_electrodes = None
         self._last_preview_mesh = None
         self.setWindowTitle("VIRDA — Electrode Localization System")
@@ -444,6 +464,9 @@ class IdeWindow(QMainWindow):
     def _show_mesh_processing_tab(self) -> None:
         self._add_tab(self._mesh_processing_tab, "Mesh Processing")
 
+    def _show_ese_tab(self) -> None:
+        self._add_tab(self._ese_tab, "ESE Surface")
+
     def _refresh_pipeline(self) -> None:
         """Recompute the stepper bar from project files and tab memory."""
         project = self._project
@@ -466,7 +489,7 @@ class IdeWindow(QMainWindow):
                 mesh_saved=mesh_saved,
                 ese_saved=ese_saved,
                 mesh_in_memory=self._mesh_processing_tab.current_scalp_mesh() is not None,
-                ese_in_memory=self._mesh_processing_tab.current_ese_mesh() is not None,
+                ese_in_memory=self._ese_tab.current_ese_mesh() is not None,
                 fiducials_filled=fiducials_filled,
                 measurement_rows=measurement_rows,
                 localized_summary=self._editors_tab.localization.localized_summary(),
@@ -477,8 +500,10 @@ class IdeWindow(QMainWindow):
         """Navigate to the tab where pipeline step *key* is performed."""
         if key == "scan":
             self._on_import_files()
-        elif key in ("mesh", "ese"):
+        elif key == "mesh":
             self._show_mesh_processing_tab()
+        elif key == "ese":
+            self._show_ese_tab()
         elif key == "points":
             self._show_editors_tab()
         elif key == "electrodes":
@@ -613,7 +638,7 @@ class IdeWindow(QMainWindow):
         canonical fiducials and at least one measurement row) so the read-only
         preview self-fills without a manual "Localize" trigger.
         """
-        if self._mesh_processing_tab.current_ese_mesh() is None:
+        if self._ese_tab.current_ese_mesh() is None:
             self._localized_electrodes = None
             self._editors_tab.localization.set_blocked(_ESE_BLOCKED_REASON)
             return
@@ -691,7 +716,7 @@ class IdeWindow(QMainWindow):
             self._localize_rerun_pending = True
             return
 
-        mesh = self._mesh_processing_tab.current_ese_mesh()
+        mesh = self._ese_tab.current_ese_mesh()
         if mesh is None:
             self._localize_warning(_ESE_BLOCKED_REASON, interactive)
             self._editors_tab.localization.set_blocked(_ESE_BLOCKED_REASON)
@@ -1184,7 +1209,7 @@ class IdeWindow(QMainWindow):
         if self._last_preview_mesh is not None:
             mesh = self._last_preview_mesh
             viewer.set_extra_mesh(self._mesh_to_scene_poly(mesh.vertices, mesh.faces), "scalp")
-        ese = self._mesh_processing_tab.current_ese_mesh()
+        ese = self._ese_tab.current_ese_mesh()
         if ese is not None:
             viewer.set_extra_mesh(self._mesh_to_scene_poly(ese.vertices, ese.faces), "ese")
 
@@ -1256,6 +1281,12 @@ class IdeWindow(QMainWindow):
         self._status("Mesh saved. Re-open the 3D viewer to inspect the persisted surface.", 5000)
         self._refresh_pipeline()
 
+    def _on_ese_saved(self) -> None:
+        if self._state.last_project_dir:
+            self._sidebar.set_project(Path(self._state.last_project_dir))
+        self._status("ESE mesh saved.", 5000)
+        self._refresh_pipeline()
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -1281,3 +1312,4 @@ class IdeWindow(QMainWindow):
         if self._viewer_widget is not None:
             self._viewer_widget.shutdown()
         self._mesh_processing_tab.shutdown()
+        self._ese_tab.shutdown()

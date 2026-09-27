@@ -32,7 +32,7 @@ from typing import Any, Literal
 
 import numpy as np
 import pyvista as pv
-from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -71,6 +71,7 @@ from virda.ops.options import (
 from virda_gui.state import AppState
 from virda_gui.viewer.scene import scene_placement
 from virda_gui.viewer.viewer_loaders import SceneData, collect_scene_data
+from virda_gui.workers import BackgroundWorker
 
 _FINAL_MESH_FILENAME = "final_mesh.ply"
 _BASE_MESH_FILENAME = "base_mesh.ply"
@@ -100,35 +101,11 @@ def generate_mesh_from_nifti(
     Runs :func:`virda.io.importers.nifti.import_nifti`,
     :func:`virda.ops.atoms.generate_scalp_surface` and
     :func:`virda.ops.atoms.clean` in sequence.  Qt-free; meant to run on a
-    worker thread (see :class:`_BackgroundWorker`).
+    worker thread (see :class:`virda_gui.workers.BackgroundWorker`).
     """
     mri = import_nifti(path)
     surface = generate_scalp_surface(mri, sealing)
     return clean(surface.mesh, cleaning)
-
-
-class _BackgroundWorker(QObject):
-    """Run a pure callable off the GUI thread.
-
-    Lives on a dedicated :class:`QThread`; ``done``/``failed`` are delivered
-    back to the main thread because the tab (the receiver) lives there.
-    """
-
-    done = Signal(int, object)  # noqa: N815 - seq, result
-    failed = Signal(int, str)  # noqa: N815 - seq, error message
-
-    def __init__(self, fn: Callable[[], object], seq: int) -> None:
-        super().__init__()
-        self._fn = fn
-        self._seq = seq
-
-    def run(self) -> None:
-        try:
-            result = self._fn()
-        except Exception as exc:  # noqa: BLE001 - surfaced to the user
-            self.failed.emit(self._seq, str(exc))
-        else:
-            self.done.emit(self._seq, result)
 
 
 class MeshProcessingTab(QWidget):
@@ -162,7 +139,7 @@ class MeshProcessingTab(QWidget):
         self._parameters_box: QGroupBox | None = None
         self._actions_box: QGroupBox | None = None
         self._generation_thread: QThread | None = None
-        self._generation_worker: _BackgroundWorker | None = None
+        self._generation_worker: BackgroundWorker | None = None
         self._generation_seq = 0
         self._generation_busy = False
         self._pending_kind: str | None = None
@@ -962,7 +939,7 @@ class MeshProcessingTab(QWidget):
         self._update_generation_buttons()
 
         self._generation_thread = QThread(self)
-        self._generation_worker = _BackgroundWorker(fn, seq)
+        self._generation_worker = BackgroundWorker(fn, seq)
         self._generation_worker.moveToThread(self._generation_thread)
         self._generation_thread.started.connect(self._generation_worker.run)
         self._generation_worker.done.connect(self._on_generation_done)
