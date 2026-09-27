@@ -18,6 +18,7 @@ import pyvista as pv
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QDialog,
     QFileDialog,
@@ -194,16 +195,43 @@ class IdeWindow(QMainWindow):
         dialog.exec()
 
     def _restore_layout(self) -> None:
-        """Restore window geometry and splitter layout from the last session."""
+        """Restore window geometry and splitter layout from the last session.
+
+        The stored blob carries a screen number and position, so on a changed
+        monitor setup (unplugged display, RDP, smaller resolution) the window
+        could land outside every screen.  In that case the size is clamped to
+        the primary screen and the window is centered on it; splitter blobs
+        simply fall back to the defaults when they cannot be applied.
+        """
         geometry = self._prefs.window_geometry()
-        if geometry is not None:
-            self.restoreGeometry(geometry)
+        if geometry is not None and self.restoreGeometry(geometry):
+            self._ensure_visible_on_screen()
         splitter = self._prefs.main_splitter()
         if splitter is not None:
             self._splitter.restoreState(splitter)
         mesh_splitter = self._prefs.mesh_splitter()
         if mesh_splitter is not None:
             self._mesh_processing_tab.restore_splitter_state(mesh_splitter)
+
+    def _ensure_visible_on_screen(self) -> None:
+        """Center the window on the primary screen when it is fully off-screen."""
+        screens = QApplication.screens()
+        if not screens:
+            return
+        frame = self.frameGeometry()
+        if any(screen.availableGeometry().intersects(frame) for screen in screens):
+            return
+        primary = QApplication.primaryScreen()
+        area = (
+            primary.availableGeometry() if primary is not None else screens[0].availableGeometry()
+        )
+        width = min(frame.width(), area.width())
+        height = min(frame.height(), area.height())
+        self.resize(width, height)
+        self.move(
+            area.center().x() - width // 2,
+            area.center().y() - height // 2,
+        )
 
     def _build_menu(self) -> None:
         file_menu = self.menuBar().addMenu("&File")
