@@ -765,7 +765,19 @@ class MeshProcessingTab(QWidget):
                 self._pending_nifti_path = Path(path)
                 self.newProjectRequested.emit()
                 return
-        self.generate_from_nifti(Path(path), self._generation_options(), Path(path).name)
+        self.generate_base_from_nifti(path)
+
+    def generate_base_from_nifti(self, path: str | Path) -> None:
+        """Start base generation from *path* with the tab's sealing options."""
+        target = Path(path)
+        self.generate_from_nifti(target, self._generation_options(), target.name)
+
+    def autostart_base_from_nifti(self, path: str | Path) -> None:
+        """Import-flow helper: start base generation unless a final mesh exists."""
+        if self._final_exists_in_project():
+            self.status.emit("Final mesh exists; pick Generate to rebuild the base mesh.")
+            return
+        self.generate_base_from_nifti(path)
 
     def _final_exists_in_project(self) -> bool:
         """Whether the project already holds a final mesh that generation replaces."""
