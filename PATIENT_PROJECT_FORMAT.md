@@ -120,6 +120,7 @@ Example `measurements.json` (the Stage 3 input):
 
 | File | Description |
 |---|---|
+| `base_mesh.ply` | Base scalp mesh straight from segmentation (trimesh PLY export). |
 | `final_mesh.ply` | Final scalp mesh (trimesh PLY export). |
 | `scalp_vertices.npy` | `(N, 3)` `float64` array of vertex coordinates in world millimeters. |
 | `scalp_faces.npy` | `(M, 3)` `int64` array of triangular faces referencing vertices. |
