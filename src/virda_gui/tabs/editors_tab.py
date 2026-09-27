@@ -195,10 +195,6 @@ class FiducialsEditor(QWidget):
         )
         self._frame_layout.addStretch(1)
 
-        add_btn = QPushButton("Add row")
-        add_btn.clicked.connect(self.add_row)
-        remove_btn = QPushButton("Remove row")
-        remove_btn.clicked.connect(self.remove_selected)
         clear_btn = QPushButton("Clear all")
         clear_btn.clicked.connect(self.clear_all)
         load_btn = QPushButton("Load...")
@@ -209,8 +205,6 @@ class FiducialsEditor(QWidget):
         save_as_btn.clicked.connect(self._on_save_as)
 
         buttons = QHBoxLayout()
-        buttons.addWidget(add_btn)
-        buttons.addWidget(remove_btn)
         buttons.addWidget(clear_btn)
         buttons.addStretch(1)
         buttons.addWidget(load_btn)
@@ -387,15 +381,29 @@ class FiducialsEditor(QWidget):
                 f"Fiducial {fiducial_id!r} row {row + 1}: {FIDUCIAL_HEADERS[col]} must be a number"
             ) from None
 
-    def add_row(self) -> None:
-        index = self._table.rowCount()
-        self._table.insertRow(index)
-        self._coord_systems.append(COORDINATE_SYSTEMS[0])
-        self._row_meta.append(("", COORDINATE_SYSTEMS[0], "manual", 1.0))
-        self._table.scrollToBottom()
-
     def append_point(self, fiducial_id: str, coordinates: tuple[float, float, float]) -> None:
-        """Append a row with the given id and coordinates (e.g. surface-picked)."""
+        """Fill the blank row for *fiducial_id* or append a new row.
+
+        Surface picking targets the fixed canonical rows first, so the table
+        keeps its shape; genuinely new ids still append a row.
+        """
+        for index in range(self._table.rowCount()):
+            if canonical_fiducial_id(self._text(index, COL_ID).strip()) != fiducial_id:
+                continue
+            if any(self._text(index, col).strip() for col in (COL_X, COL_Y, COL_Z, COL_W)):
+                continue
+            self._loading = True
+            try:
+                self._set_item(index, COL_X, f"{coordinates[0]}")
+                self._set_item(index, COL_Y, f"{coordinates[1]}")
+                self._set_item(index, COL_Z, f"{coordinates[2]}")
+            finally:
+                self._loading = False
+            self._dirty = True
+            self._highlight_duplicates()
+            self.rowsChanged.emit()
+            self._table.setCurrentCell(index, COL_ID)
+            return
         index = self._table.rowCount()
         self._table.insertRow(index)
         self._coord_systems.append(COORDINATE_SYSTEMS[0])
@@ -415,33 +423,39 @@ class FiducialsEditor(QWidget):
         self._table.setCurrentCell(index, COL_ID)
         self._table.scrollToBottom()
 
-    def remove_selected(self) -> None:
-        row = self._table.currentRow()
-        if row < 0:
-            return
-        self._table.removeRow(row)
-        if row < len(self._coord_systems):
-            self._coord_systems.pop(row)
-        if row < len(self._row_meta):
-            self._row_meta.pop(row)
-        self._dirty = True
-        self._highlight_duplicates()
-        self.rowsChanged.emit()
-
     def clear_all(self) -> None:
-        """Remove all rows after an explicit confirmation."""
-        if self._table.rowCount() == 0:
-            return
+        """Reset to blank canonical rows after an explicit confirmation."""
         answer = QMessageBox.question(
             self,
             "Clear fiducials",
-            "Remove all fiducial rows?",
+            "Clear all fiducial coordinates?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
-        self.set_rows([])
+        self.set_rows(
+            [
+                FiducialRow(
+                    fiducial_id=fiducial_id,
+                    name=fiducial_id,
+                    coordinates=(0.0, 0.0, 0.0),
+                    coordinate_system=COORDINATE_SYSTEMS[0],
+                    definition_method="manual",
+                    weight=1.0,
+                )
+                for fiducial_id in CANONICAL_FIDUCIALS
+            ]
+        )
+        for index in range(self._table.rowCount()):
+            self._loading = True
+            try:
+                for col in (COL_X, COL_Y, COL_Z, COL_W):
+                    self._set_item(index, col, "")
+            finally:
+                self._loading = False
+        self._highlight_duplicates()
+        self.rowsChanged.emit()
 
     def _highlight_duplicates(self) -> None:
         """Mark ID cells sharing a canonical id with a red background.

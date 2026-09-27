@@ -380,10 +380,30 @@ def test_editors_tab_seeds_blank_canonical_rows_offscreen() -> None:
 
     tab = EditorsTab(AppState())
     try:
-        assert tab.fiducials.fiducial_ids() == ["NAS", "LPA", "RPA"]
+        assert tab.fiducials.fiducial_ids() == ["LPA", "RPA", "NAS"]
         assert tab.fiducials.filled_rows() == []
         assert tab.measurements.fiducial_ready is True
         assert tab.fiducials.is_dirty() is False
+    finally:
+        tab.close()
+        app.quit()
+
+
+def test_fiducials_clear_all_reseeds_blanks_offscreen(monkeypatch: pytest.MonkeyPatch) -> None:
+    from PySide6.QtWidgets import QMessageBox
+
+    from virda_gui.state import AppState
+    from virda_gui.tabs.editors_tab import EditorsTab
+
+    app = _qt_app()
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+    tab = EditorsTab(AppState())
+    try:
+        tab.fiducials.append_point("NAS", (1.0, 2.0, 3.0))
+        assert tab.fiducials.filled_rows() != []
+        tab.fiducials.clear_all()
+        assert tab.fiducials.fiducial_ids() == ["LPA", "RPA", "NAS"]
+        assert tab.fiducials.filled_rows() == []
     finally:
         tab.close()
         app.quit()
