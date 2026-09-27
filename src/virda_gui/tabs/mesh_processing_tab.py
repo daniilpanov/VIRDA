@@ -73,6 +73,7 @@ from virda_gui.viewer.scene import scene_placement
 from virda_gui.viewer.viewer_loaders import SceneData, collect_scene_data
 
 _FINAL_MESH_FILENAME = "final_mesh.ply"
+_BASE_MESH_FILENAME = "base_mesh.ply"
 _ESE_MESH_FILENAME = "mesh.ply"
 _NIFTI_PREVIEW_STRIDE = 2
 _MESH_DENSITY_MIN = 1
@@ -146,6 +147,7 @@ class MeshProcessingTab(QWidget):
         self._base_mesh: ScalpMesh | None = None
         self._base_path: Path | None = None
         self._preview_mesh: ScalpMesh | None = None
+        self._final_mesh: ScalpMesh | None = None
         self._ese_mesh: ESEMesh | None = None
         self._mesh_dirty = False
         self._ese_dirty = False
@@ -774,6 +776,7 @@ class MeshProcessingTab(QWidget):
         self._base_mesh = mesh
         self._set_base_path(path)
         self._preview_mesh = None
+        self._final_mesh = None
         self._ese_mesh = None
         self._mesh_dirty = False
         self._ese_dirty = False
@@ -955,14 +958,37 @@ class MeshProcessingTab(QWidget):
         mesh: ScalpMesh = result  # type: ignore[assignment]
         assert source_path is not None
         self._base_mesh = mesh
-        self._set_base_path(None)  # generated in memory; gains a path only on Save
         self._preview_mesh = None
         self._ese_mesh = None
-        self._mesh_dirty = True
         self._ese_dirty = False
-        self._base_label.setText(
-            f"Generated from {source_path.name}: {self._describe_mesh(mesh)} (unsaved)"
-        )
+        self._result_hidden = False
+        project = self._state.last_project_dir
+        if project:
+            base_path = Path(project) / "mesh" / _BASE_MESH_FILENAME
+            final_path = Path(project) / "mesh" / _FINAL_MESH_FILENAME
+            try:
+                export_scalp_mesh(base_path, mesh)
+                export_scalp_mesh(final_path, mesh)
+            except (OSError, ValueError) as exc:
+                self._set_base_path(None)
+                self._mesh_dirty = True
+                self._base_label.setText(
+                    f"Generated from {source_path.name}: {self._describe_mesh(mesh)} (unsaved)"
+                )
+                self.status.emit(f"Could not auto-save base mesh:\n{exc}")
+            else:
+                self._set_base_path(base_path)
+                self._final_mesh = mesh
+                self._mesh_dirty = False
+                self._base_label.setText(str(base_path))
+                self.status.emit(f"Base mesh saved to {base_path}; final mesh initialized.")
+        else:
+            self._set_base_path(None)  # generated in memory; gains a path only on Save
+            self._final_mesh = None
+            self._mesh_dirty = True
+            self._base_label.setText(
+                f"Generated from {source_path.name}: {self._describe_mesh(mesh)} (unsaved)"
+            )
         self._preview_label.setText(f"Base mesh: {self._describe_mesh(mesh)}")
         self._result_hidden = False
         self._render_scene()
@@ -1205,12 +1231,20 @@ class MeshProcessingTab(QWidget):
     # ---- project lifecycle ----
 
     def prefill_from_project(self, project: str | Path) -> None:
-        """Load the project's final scalp mesh as the base plus its ESE mesh, if any."""
+        """Load the project's base and final scalp meshes plus its ESE mesh, if any."""
         self.clear()
         root = Path(project)
-        candidate = root / "mesh" / _FINAL_MESH_FILENAME
-        if candidate.is_file():
-            self.load_base(candidate)
+        base_candidate = root / "mesh" / _BASE_MESH_FILENAME
+        final_candidate = root / "mesh" / _FINAL_MESH_FILENAME
+        if base_candidate.is_file():
+            self.load_base(base_candidate)
+        elif final_candidate.is_file():
+            self.load_base(final_candidate)
+        if final_candidate.is_file():
+            try:
+                self._final_mesh = import_scalp_mesh(final_candidate)
+            except Exception as exc:  # noqa: BLE001 - surfaced to the user
+                self.status.emit(f"Final mesh not loaded: {exc}")
         ese_candidate = root / "ese" / _ESE_MESH_FILENAME
         if ese_candidate.is_file():
             try:
@@ -1280,6 +1314,7 @@ class MeshProcessingTab(QWidget):
         self._base_mesh = None
         self._set_base_path(None)
         self._preview_mesh = None
+        self._final_mesh = None
         self._ese_mesh = None
         self._mesh_dirty = False
         self._ese_dirty = False
