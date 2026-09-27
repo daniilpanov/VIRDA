@@ -134,7 +134,7 @@ along local normals); written only when Stage 2 runs.
 
 | File | Description |
 |---|---|
-| `ese_mesh.ply` | The ESE surface as a trimesh PLY export. |
+| `mesh.ply` | The ESE surface as a trimesh PLY export. |
 | `ese_vertices.npy` | `(N, 3)` `float64` array of ESE vertex coordinates (world mm). |
 | `ese_faces.npy` | `(M, 3)` `int64` triangular faces of the ESE mesh. |
 | `normals.npy` | `(N, 3)` unit normal at each scalp vertex used for the offset. |
