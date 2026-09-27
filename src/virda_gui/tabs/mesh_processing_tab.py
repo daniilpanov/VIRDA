@@ -108,6 +108,7 @@ class MeshProcessingTab(QWidget):
     baseMeshChanged = Signal(object)  # noqa: N815 - the new base mesh path (Path | None)
     continueRequested = Signal()  # noqa: N815 - jump to live editing
     eseRequested = Signal()  # noqa: N815 - jump to the ESE Surface tab
+    newProjectRequested = Signal()  # noqa: N815 - create a project for generation
 
     def __init__(self, state: AppState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -130,6 +131,7 @@ class MeshProcessingTab(QWidget):
         self._generation_seq = 0
         self._generation_busy = False
         self._pending_kind: str | None = None
+        self._pending_nifti_path: Path | None = None
         self._mesh_source_path: Path | None = None
         self._interactor: QtInteractor | None = None
         self._result_actor: Any | None = None
@@ -755,7 +757,54 @@ class MeshProcessingTab(QWidget):
         )
         if not path:
             return
+        if self._final_exists_in_project():
+            choice = self._confirm_final_overwrite()
+            if choice is None:
+                return
+            if choice == "new":
+                self._pending_nifti_path = Path(path)
+                self.newProjectRequested.emit()
+                return
         self.generate_from_nifti(Path(path), self._generation_options(), Path(path).name)
+
+    def _final_exists_in_project(self) -> bool:
+        """Whether the project already holds a final mesh that generation replaces."""
+        project = self._state.last_project_dir
+        return bool(project) and (Path(project) / "mesh" / _FINAL_MESH_FILENAME).is_file()
+
+    def _confirm_final_overwrite(self) -> str | None:
+        """Warn that generation replaces base and final meshes.
+
+        Returns ``"generate"``, ``"new"`` (create a project first) or None
+        when the user cancels.
+        """
+        box = QMessageBox(self)
+        box.setWindowTitle("Generate scalp mesh")
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setText(
+            "The project already holds a final mesh. Generating replaces the base "
+            "and final meshes. To keep previous work, create a new project."
+        )
+        generate_btn = box.addButton("Generate anyway", QMessageBox.ButtonRole.AcceptRole)
+        new_btn = box.addButton("New project...", QMessageBox.ButtonRole.ActionRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked == new_btn:
+            return "new"
+        if clicked == generate_btn:
+            return "generate"
+        return None
+
+    def start_pending_generation(self) -> None:
+        """Start generation for a NIfTI picked before a project switch."""
+        pending, self._pending_nifti_path = self._pending_nifti_path, None
+        if pending is not None:
+            self.generate_from_nifti(pending, self._generation_options(), pending.name)
+
+    def clear_pending_generation(self) -> None:
+        """Forget a NIfTI picked before a cancelled project switch."""
+        self._pending_nifti_path = None
 
     def generate_from_nifti(
         self,

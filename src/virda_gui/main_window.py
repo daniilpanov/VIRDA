@@ -125,6 +125,7 @@ class IdeWindow(QMainWindow):
         self._mesh_processing_tab.saved.connect(self._on_mesh_saved)
         self._mesh_processing_tab.continueRequested.connect(self._show_editors_tab)
         self._mesh_processing_tab.eseRequested.connect(self._show_ese_tab)
+        self._mesh_processing_tab.newProjectRequested.connect(self._on_new_project_for_generation)
         self._mesh_processing_tab.status.connect(self._status)
         self._mesh_processing_tab.previewMesh.connect(lambda _m: self._refresh_pipeline())
         self._mesh_processing_tab.baseMeshChanged.connect(lambda _p: self._refresh_pipeline())
@@ -396,6 +397,16 @@ class IdeWindow(QMainWindow):
         if project is not None:
             self.open_project(project)
 
+    def _on_new_project_for_generation(self) -> None:
+        """Create a project and start the pending NIfTI generation there."""
+        project = ask_create_project_folder(self)
+        if project is None:
+            self._mesh_processing_tab.clear_pending_generation()
+            return
+        self.open_project(project)
+        self._show_mesh_processing_tab()
+        self._mesh_processing_tab.start_pending_generation()
+
     def _open_project_dialog(self) -> None:
         project = ask_open_project_folder(self)
         if project is not None:
@@ -591,7 +602,39 @@ class IdeWindow(QMainWindow):
             except ValueError as exc:
                 QMessageBox.critical(self, "Import error", str(exc))
                 continue
+            if role.key == "nifti" and not self._confirm_nifti_replace():
+                continue
             self._perform_import(role, Path(source))
+
+    def _confirm_nifti_replace(self) -> bool:
+        """Warn that a new scan supersedes the project's inputs; False aborts.
+
+        The base/final/ESE meshes derived from the previous scan go stale, so
+        the dialog offers a fresh project as an alternative.
+        """
+        assert self._project is not None
+        if not any(self._project.glob("input/*.nii*")):
+            return True
+        box = QMessageBox(self)
+        box.setWindowTitle("Import NIfTI scan")
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setText(
+            "The project already holds a brain scan. Importing another one makes "
+            "the base, final and ESE meshes stale. To keep previous work, "
+            "create a new project."
+        )
+        import_btn = box.addButton("Import anyway", QMessageBox.ButtonRole.AcceptRole)
+        new_btn = box.addButton("New project...", QMessageBox.ButtonRole.ActionRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked == new_btn:
+            project = ask_create_project_folder(self)
+            if project is None:
+                return False
+            self.open_project(project)
+            return True
+        return clicked == import_btn
 
     def _perform_import(self, role: ImportRole, source: Path) -> Path | None:
         """Copy *source* into the project as *role*; return the target or None."""
