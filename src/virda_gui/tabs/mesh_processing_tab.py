@@ -1,26 +1,23 @@
-"""Mesh processing tab: trial smoothers/density on the original mesh in memory.
+"""Mesh processing tab: base mesh in, postprocessed final mesh out.
 
-The tab holds the *base* scalp mesh read once from the project and keeps it
-untouched in memory.  Any change to a smoothing or density parameter
-recomputes a preview from that base mesh via the pure ``virda.ops`` atoms (
+The tab holds the *base* scalp mesh (segmentation output, saved as
+``mesh/base_mesh.ply``) untouched in memory.  Any change to a smoothing or
+density parameter recomputes a preview from the base mesh (or from the saved
+final mesh when checked) via the pure ``virda.ops`` atoms (
 :func:`virda.ops.atoms.smooth` / :func:`virda.ops.atoms.decimate`), applies no
-smoothing when the smoother is set to "none", and never writes to disk.  The
-working mesh is only persisted when the user presses "Save to project";
-the current density/smoother parameters are GUI-only and are never written to a
-pipeline config file.  The generated ESE mesh
-(:func:`virda.ops.atoms.generate_ese` with the chosen offset) is streamed to
-the host for overlay, not saved.  A scalp mesh can be produced straight from a
-NIfTI scan ("Generate scalp mesh from NIfTI...") through the pure atoms
-:func:`virda.ops.atoms.generate_scalp_surface` + :func:`virda.ops.atoms.clean`.
+smoothing when the smoother is set to "none", and auto-saves the result to
+``mesh/final_mesh.ply``.  The current density/smoother parameters are GUI-only
+and are never written to a pipeline config file.  A scalp mesh can be produced
+straight from a NIfTI scan ("Generate scalp mesh from NIfTI...") through the
+pure atoms :func:`virda.ops.atoms.generate_scalp_surface` +
+:func:`virda.ops.atoms.clean`.
 
 The tab is host-agnostic: everything the host needs to render or persist
 travels through Qt signals carrying domain objects.  Mesh generation runs on a
-dedicated worker thread (see :meth:`MeshProcessingTab.generate_from_nifti` and
-:meth:`MeshProcessingTab.generate_ese`); only the pure atoms execute on the
-thread, the resulting
-:class:`~virda.models.scalp_mesh.ScalpMesh` /
-:class:`~virda.models.ese_mesh.ESEMesh` is applied to the tab and signalled to
-the host on the GUI thread.
+dedicated worker thread (see :meth:`MeshProcessingTab.generate_from_nifti`
+and :class:`virda_gui.workers.BackgroundWorker`); only the pure atoms execute
+on the thread, the resulting :class:`~virda.models.scalp_mesh.ScalpMesh` is
+applied to the tab and signalled to the host on the GUI thread.
 """
 
 from __future__ import annotations
@@ -46,25 +43,20 @@ from PySide6.QtWidgets import (
     QSlider,
     QSpinBox,
     QSplitter,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 from pyvistaqt import QtInteractor
 
-from virda.io.exporters.ese_mesh import export_ese_companions, export_ese_mesh
 from virda.io.exporters.mesh_arrays import export_mesh_faces, export_mesh_vertices
 from virda.io.exporters.scalp_mesh import export_scalp_mesh
-from virda.io.importers.ese_mesh import import_ese_mesh
 from virda.io.importers.nifti import import_nifti
 from virda.io.importers.scalp_mesh import import_scalp_mesh
-from virda.models.ese_mesh import ESEMesh
 from virda.models.scalp_mesh import ScalpMesh
-from virda.ops.atoms import clean, decimate, generate_ese, generate_scalp_surface, smooth
+from virda.ops.atoms import clean, decimate, generate_scalp_surface, smooth
 from virda.ops.options import (
     CleanOptions,
     DecimateOptions,
-    EseOptions,
     SealingOptions,
     SmoothOptions,
 )
@@ -75,7 +67,6 @@ from virda_gui.workers import BackgroundWorker
 
 _FINAL_MESH_FILENAME = "final_mesh.ply"
 _BASE_MESH_FILENAME = "base_mesh.ply"
-_ESE_MESH_FILENAME = "mesh.ply"
 _NIFTI_PREVIEW_STRIDE = 2
 _MESH_DENSITY_MIN = 1
 _MESH_DENSITY_MAX = 100
@@ -112,11 +103,11 @@ class MeshProcessingTab(QWidget):
     """In-memory mesh editing with a single explicit "Save to project" step."""
 
     previewMesh = Signal(object)  # noqa: N815 - a ScalpMesh preview in world coords
-    eseMesh = Signal(object)  # noqa: N815 - the generated ESEMesh in world coords
     saved = Signal()  # noqa: N815 - fired after Save wrote the mesh to disk
     status = Signal(str)  # noqa: N815 - non-blocking log lines
     baseMeshChanged = Signal(object)  # noqa: N815 - the new base mesh path (Path | None)
     continueRequested = Signal()  # noqa: N815 - jump to live editing
+    eseRequested = Signal()  # noqa: N815 - jump to the ESE Surface tab
 
     def __init__(self, state: AppState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -125,16 +116,12 @@ class MeshProcessingTab(QWidget):
         self._base_path: Path | None = None
         self._preview_mesh: ScalpMesh | None = None
         self._final_mesh: ScalpMesh | None = None
-        self._ese_mesh: ESEMesh | None = None
         self._mesh_dirty = False
-        self._ese_dirty = False
         self._active_mesh_label: QLabel | None = None
         self._vertices_export_button: QPushButton | None = None
         self._faces_export_button: QPushButton | None = None
         self._mesh_file_export_button: QPushButton | None = None
         self._mesh_generation_btn: QPushButton | None = None
-        self._generate_ese_btn: QPushButton | None = None
-        self._save_ese_btn: QPushButton | None = None
         self._cancel_generation_btn: QPushButton | None = None
         self._parameters_box: QGroupBox | None = None
         self._actions_box: QGroupBox | None = None
@@ -147,7 +134,6 @@ class MeshProcessingTab(QWidget):
         self._interactor: QtInteractor | None = None
         self._result_actor: Any | None = None
         self._base_actor: Any | None = None
-        self._ese_actor: Any | None = None
         self._nifti_actor: Any | None = None
         self._nifti_volume: pv.ImageData | None = None
         self._nifti_transform: np.ndarray = np.eye(4)
@@ -283,82 +269,21 @@ class MeshProcessingTab(QWidget):
         self._show_nifti_chk = QCheckBox("Show NIfTI", box)
         self._show_base_chk = QCheckBox("Show base mesh", box)
         self._show_result_chk = QCheckBox("Show result mesh", box)
-        self._show_ese_chk = QCheckBox("Show ESE mesh", box)
-        self._show_ese_chk.setToolTip("Sensor surface: skin offset outward (ESE).")
         self._show_edges_chk = QCheckBox("Show mesh edges", box)
         self._show_nifti_chk.setChecked(True)
         self._show_base_chk.setChecked(False)
         self._show_result_chk.setChecked(True)
-        self._show_ese_chk.setChecked(True)
         self._show_edges_chk.setChecked(False)
         self._show_nifti_chk.toggled.connect(self._on_display_toggled)
         self._show_base_chk.toggled.connect(self._on_display_toggled)
         self._show_result_chk.toggled.connect(self._on_display_toggled)
-        self._show_ese_chk.toggled.connect(self._on_display_toggled)
         self._show_edges_chk.toggled.connect(self._on_display_toggled)
         display_row.addWidget(self._show_nifti_chk)
         display_row.addWidget(self._show_base_chk)
         display_row.addWidget(self._show_result_chk)
-        display_row.addWidget(self._show_ese_chk)
         display_row.addWidget(self._show_edges_chk)
         display_row.addStretch(1)
         grid.addLayout(display_row)
-
-        ese_row = QHBoxLayout()
-        ese_row.addWidget(QLabel("Offset (mm):", box))
-        self._ese_offset_spin = QDoubleSpinBox(box)
-        self._ese_offset_spin.setRange(0.1, 50.0)
-        self._ese_offset_spin.setSingleStep(0.5)
-        self._ese_offset_spin.setValue(2.0)
-        self._ese_offset_spin.setToolTip(
-            "Outward offset; generation uses the current preview mesh."
-        )
-        ese_row.addWidget(self._ese_offset_spin)
-        ese_row.addStretch(1)
-        grid.addLayout(ese_row)
-
-        ese_toggle = QToolButton(box)
-        ese_toggle.setText("ESE advanced")
-        ese_toggle.setCheckable(True)
-        ese_toggle.setChecked(False)
-        ese_toggle.setToolTip("Normal-estimation options for ESE generation.")
-        grid.addWidget(ese_toggle)
-
-        ese_adv_box = QWidget(box)
-        ese_adv_row = QHBoxLayout(ese_adv_box)
-        ese_adv_row.setContentsMargins(0, 0, 0, 0)
-        ese_adv_row.addWidget(QLabel("Radius:", ese_adv_box))
-        self._ese_radius_spin = QDoubleSpinBox(ese_adv_box)
-        self._ese_radius_spin.setRange(1.0, 30.0)
-        self._ese_radius_spin.setSingleStep(0.5)
-        self._ese_radius_spin.setValue(10.0)
-        self._ese_radius_spin.setToolTip("Neighborhood radius in mm.")
-        ese_adv_row.addWidget(self._ese_radius_spin)
-        ese_adv_row.addWidget(QLabel("k-NN:", ese_adv_box))
-        self._ese_k_spin = QSpinBox(ese_adv_box)
-        self._ese_k_spin.setRange(0, 500)
-        self._ese_k_spin.setValue(0)
-        self._ese_k_spin.setToolTip("Neighbors per vertex; 0 picks from the radius.")
-        ese_adv_row.addWidget(self._ese_k_spin)
-        self._ese_weighted_chk = QCheckBox("Weighted PCA", ese_adv_box)
-        self._ese_weighted_chk.setChecked(False)
-        ese_adv_row.addWidget(self._ese_weighted_chk)
-        ese_adv_row.addWidget(QLabel("Sigma:", ese_adv_box))
-        self._ese_sigma_spin = QDoubleSpinBox(ese_adv_box)
-        self._ese_sigma_spin.setRange(1.0, 15.0)
-        self._ese_sigma_spin.setSingleStep(0.5)
-        self._ese_sigma_spin.setValue(5.0)
-        self._ese_sigma_spin.setToolTip("Falloff in mm for weighted PCA.")
-        ese_adv_row.addWidget(self._ese_sigma_spin)
-        ese_adv_row.addWidget(QLabel("Min nbrs:", ese_adv_box))
-        self._ese_min_nbrs_spin = QSpinBox(ese_adv_box)
-        self._ese_min_nbrs_spin.setRange(1, 50)
-        self._ese_min_nbrs_spin.setValue(5)
-        ese_adv_row.addWidget(self._ese_min_nbrs_spin)
-        ese_adv_row.addStretch(1)
-        ese_adv_box.setVisible(False)
-        ese_toggle.toggled.connect(ese_adv_box.setVisible)
-        grid.addWidget(ese_adv_box)
 
         return box
 
@@ -377,10 +302,11 @@ class MeshProcessingTab(QWidget):
         self._mesh_generation_btn.clicked.connect(self._on_generate_from_nifti)
         row.addWidget(self._mesh_generation_btn)
 
-        self._generate_ese_btn = QPushButton("Generate ESE mesh", box)
-        self._generate_ese_btn.clicked.connect(self._on_generate_ese)
-        self._generate_ese_btn.setToolTip("Build the sensor surface (ESE) from the preview mesh.")
-        row.addWidget(self._generate_ese_btn)
+        ese_next_btn = QPushButton("Generate ESE \u2192", box)
+        ese_next_btn.setToolTip("Continue to the ESE Surface tab to build the sensor surface.")
+        ese_next_btn.setStyleSheet("font-weight: bold;")
+        ese_next_btn.clicked.connect(self.eseRequested.emit)
+        row.addWidget(ese_next_btn)
 
         self._cancel_generation_btn = QPushButton("Cancel", box)
         self._cancel_generation_btn.clicked.connect(self._on_cancel_generation)
@@ -395,13 +321,6 @@ class MeshProcessingTab(QWidget):
         run_all_btn.clicked.connect(self._on_run_all)
         run_all_btn.setToolTip("Apply smoothing and density now and save the final mesh.")
         save_row.addWidget(run_all_btn)
-
-        self._save_ese_btn = QPushButton("Save ESE to project", box)
-        self._save_ese_btn.clicked.connect(self._on_save_ese)
-        self._save_ese_btn.setToolTip(
-            "Save the sensor surface (ESE) to ese/mesh.ply with companions."
-        )
-        save_row.addWidget(self._save_ese_btn)
 
         reset_btn = QPushButton("Reset parameters", box)
         reset_btn.clicked.connect(self._on_reset)
@@ -429,37 +348,24 @@ class MeshProcessingTab(QWidget):
         layout.addWidget(self._mesh_file_export_button)
         return box
 
-    def _active_mesh(self) -> tuple[ScalpMesh | ESEMesh, MeshKind] | None:
-        if self._ese_mesh is not None:
-            return self._ese_mesh, "ese"
-        scalp = self.current_scalp_mesh()
-        if scalp is not None:
-            return scalp, "scalp"
-        return None
+    def _active_mesh(self) -> ScalpMesh | None:
+        return self.current_scalp_mesh()
 
     def _update_export_controls(self) -> None:
         active = self._active_mesh()
         if self._active_mesh_label is not None:
             self._active_mesh_label.setText(
-                "Active mesh: none" if active is None else f"Active mesh: {active[1]}"
+                "Active mesh: none" if active is None else "Active mesh: scalp"
             )
         if self._vertices_export_button is not None:
             self._vertices_export_button.setEnabled(active is not None)
-            self._vertices_export_button.setText(
-                "Export vertices (NPY)..."
-                if active is None
-                else f"Export {active[1]} vertices (NPY)..."
-            )
+            self._vertices_export_button.setText("Export scalp vertices (NPY)...")
         if self._faces_export_button is not None:
             self._faces_export_button.setEnabled(active is not None)
-            self._faces_export_button.setText(
-                "Export faces (NPY)..." if active is None else f"Export {active[1]} faces (NPY)..."
-            )
+            self._faces_export_button.setText("Export scalp faces (NPY)...")
         if self._mesh_file_export_button is not None:
             self._mesh_file_export_button.setEnabled(active is not None)
-            self._mesh_file_export_button.setText(
-                "Export mesh (PLY)..." if active is None else f"Export {active[1]} mesh (PLY)..."
-            )
+            self._mesh_file_export_button.setText("Export scalp mesh (PLY)...")
 
     def _on_export_vertices(self) -> None:
         self._export_active_mesh_array("vertices")
@@ -516,14 +422,13 @@ class MeshProcessingTab(QWidget):
         return filename
 
     def _export_active_mesh_array(self, array_kind: MeshArray) -> None:
-        active = self._active_mesh()
-        if active is None:
+        mesh = self._active_mesh()
+        if mesh is None:
             return
-        mesh, mesh_kind = active
         path, _selected_filter = QFileDialog.getSaveFileName(
             self,
-            f"Export {mesh_kind} {array_kind}",
-            self._export_start_path(mesh_kind, array_kind),
+            f"Export scalp {array_kind}",
+            self._export_start_path("scalp", array_kind),
             "NumPy array (*.npy);;All files (*)",
         )
         if not path:
@@ -538,12 +443,12 @@ class MeshProcessingTab(QWidget):
         except (OSError, ValueError) as exc:
             QMessageBox.critical(
                 self,
-                f"Export {mesh_kind} {array_kind}",
-                f"Could not export {mesh_kind} {array_kind}:\n{exc}",
+                f"Export scalp {array_kind}",
+                f"Could not export scalp {array_kind}:\n{exc}",
             )
             return
         frame_suffix = " in world coordinates" if array_kind == "vertices" else ""
-        self.status.emit(f"Exported {mesh_kind} {array_kind} to {target}{frame_suffix}")
+        self.status.emit(f"Exported scalp {array_kind} to {target}{frame_suffix}")
 
     # ---- parameter plumbing ----
 
@@ -620,18 +525,18 @@ class MeshProcessingTab(QWidget):
             self._interactor = QtInteractor(parent=self)
         return self._interactor
 
-    def _mesh_to_polydata(self, mesh: ScalpMesh | ESEMesh) -> pv.PolyData:
+    def _mesh_to_polydata(self, mesh: ScalpMesh) -> pv.PolyData:
         """Build a :class:`pv.PolyData` actor surface from a mesh model."""
         faces = np.column_stack(
             [np.full(len(mesh.faces), 3, dtype=np.int64), np.asarray(mesh.faces, dtype=np.int64)]
         ).ravel()
         return pv.PolyData(np.asarray(mesh.vertices, dtype=np.float64), faces)
 
-    def _display_poly(self, mesh: ScalpMesh | ESEMesh) -> pv.PolyData:
+    def _display_poly(self, mesh: ScalpMesh) -> pv.PolyData:
         """Build a preview-pane surface with the pane's display transform applied.
 
-        Every layer (base, result, ESE) goes through this helper so all of
-        them live in the same display frame even when the NIfTI scene is not
+        Every layer (base, result) goes through this helper so all of them
+        live in the same display frame even when the NIfTI scene is not
         stored in millimetres.
         """
         poly = self._mesh_to_polydata(mesh)
@@ -642,25 +547,20 @@ class MeshProcessingTab(QWidget):
     def _render_scene(self) -> None:
         """Compose the preview pane from the visible layers and their flags.
 
-        The three checkboxes decide which layer is drawn: the NIfTI volume, the
+        The checkboxes decide which layer is drawn: the NIfTI volume, the
         original base mesh and the in-RAM working result.  The base layer is
-        skipped when it *is* the mesh currently shown as the result, and the
-        result layer disappears after a save until the next edit.  The camera
-        is framed only when the pane was empty, so parameter edits, layer
-        toggles and volume loads keep the user's view.
+        skipped when it *is* the mesh currently shown as the result.  The
+        camera is framed only when the pane was empty, so parameter edits,
+        layer toggles and volume loads keep the user's view.
         """
         interactor = self._ensure_preview_pane()
         result = self.current_scalp_mesh()
         was_empty = (
-            self._result_actor is None
-            and self._base_actor is None
-            and self._ese_actor is None
-            and self._nifti_actor is None
+            self._result_actor is None and self._base_actor is None and self._nifti_actor is None
         )
         interactor.clear()
         self._nifti_actor = None
         self._base_actor = None
-        self._ese_actor = None
         self._result_actor = None
         if self._show_nifti_chk.isChecked() and self._nifti_volume is not None:
             self._nifti_actor = interactor.add_volume(
@@ -685,13 +585,6 @@ class MeshProcessingTab(QWidget):
                 opacity=0.9,
                 show_edges=self._show_edges_chk.isChecked(),
             )
-        if self._show_ese_chk.isChecked() and self._ese_mesh is not None:
-            self._ese_actor = interactor.add_mesh(
-                self._display_poly(self._ese_mesh),
-                color="royalblue",
-                opacity=0.7,
-                show_edges=self._show_edges_chk.isChecked(),
-            )
         interactor.add_axes(interactive=False)  # type: ignore[call-arg]
         if was_empty:
             interactor.reset_camera()  # type: ignore[call-arg]
@@ -701,18 +594,18 @@ class MeshProcessingTab(QWidget):
     # ---- preview / actions ----
 
     def _refresh_pipeline_badge(self) -> None:
-        """Show the NIfTI -> mesh -> ESE pipeline state as short badges."""
+        """Show the NIfTI -> base -> final pipeline state as short badges."""
 
         def _mark(ready: bool) -> str:
             return "[ok]" if ready else "[missing]"
 
         self._pipeline_label.setText(
             f"NIfTI {_mark(self._nifti_volume is not None)}  "
-            f"Mesh {_mark(self.current_scalp_mesh() is not None)}  "
-            f"ESE {_mark(self._ese_mesh is not None)}"
+            f"Base {_mark(self._base_mesh is not None)}  "
+            f"Final {_mark(self._final_mesh is not None)}"
         )
 
-    def _describe_mesh(self, mesh: ScalpMesh | ESEMesh) -> str:
+    def _describe_mesh(self, mesh: ScalpMesh) -> str:
         """Short vertex/face summary used by the status labels."""
         return f"{len(mesh.vertices)}v/{len(mesh.faces)}f"
 
@@ -721,7 +614,6 @@ class MeshProcessingTab(QWidget):
         base = self._preview_source()
         if base is None:
             self._preview_mesh = None
-            self._ese_mesh = None
             self._result_hidden = False
             self._render_scene()
             self._update_generation_buttons()
@@ -733,8 +625,6 @@ class MeshProcessingTab(QWidget):
             self.status.emit(f"Mesh preview failed: {exc}")
             return
         self._preview_mesh = preview
-        self._ese_mesh = None
-        self._ese_dirty = False
         self._mesh_dirty = True
         self._result_hidden = False
         self._preview_label.setText(
@@ -802,9 +692,7 @@ class MeshProcessingTab(QWidget):
         self._set_base_path(path)
         self._preview_mesh = None
         self._final_mesh = None
-        self._ese_mesh = None
         self._mesh_dirty = False
-        self._ese_dirty = False
         self._result_hidden = False
         self._base_label.setText(str(path))
         self._preview_label.setText(f"Base mesh: {self._describe_mesh(mesh)}")
@@ -897,30 +785,6 @@ class MeshProcessingTab(QWidget):
             start_message=f"Generating scalp mesh from {name or path.name}...",
         )
 
-    def generate_ese(self, base: ScalpMesh, offset_mm: float) -> None:
-        """Offset *base* into an ESE mesh on a background thread."""
-        if self._generation_busy:
-            return
-        offset_mm = round(offset_mm, 6)
-        k_value = self._ese_k_spin.value()
-        options = EseOptions(
-            ese_offset_mm=offset_mm,
-            neighborhood_radius_mm=round(self._ese_radius_spin.value(), 6),
-            k_neighbors=k_value if k_value > 0 else None,
-            use_weighted_pca=self._ese_weighted_chk.isChecked(),
-            pca_sigma_mm=round(self._ese_sigma_spin.value(), 6),
-            min_neighbors=self._ese_min_nbrs_spin.value(),
-        )
-
-        def _run() -> ESEMesh:
-            return generate_ese(base, options)
-
-        self._start_generation(
-            _run,
-            kind="ese",
-            start_message=f"Generating ESE mesh at {offset_mm:g} mm offset...",
-        )
-
     def _start_generation(
         self,
         fn: Callable[[], object],
@@ -964,28 +828,10 @@ class MeshProcessingTab(QWidget):
                 self.status.emit(f"NIfTI preview loaded ({scene.volume.dimensions}).")
                 self._render_scene()
             return
-        if kind == "ese":
-            ese: ESEMesh = result  # type: ignore[assignment]
-            self._ese_mesh = ese
-            self._ese_dirty = True
-            current = self.current_scalp_mesh()
-            detail = (
-                f"Preview: {self._describe_mesh(current)} + ESE: {self._describe_mesh(ese)}"
-                if current is not None
-                else f"ESE mesh: {self._describe_mesh(ese)}"
-            )
-            self._preview_label.setText(detail)
-            self._render_scene()
-            self.status.emit(f"ESE mesh generated: {len(ese.vertices)} vertices.")
-            self._update_export_controls()
-            self.eseMesh.emit(ese)
-            return
         mesh: ScalpMesh = result  # type: ignore[assignment]
         assert source_path is not None
         self._base_mesh = mesh
         self._preview_mesh = None
-        self._ese_mesh = None
-        self._ese_dirty = False
         self._result_hidden = False
         project = self._state.last_project_dir
         if project:
@@ -1030,20 +876,12 @@ class MeshProcessingTab(QWidget):
             self._finish_generation()
             self.status.emit(f"NIfTI preview failed: {message}")
             return
-        if kind == "ese":
-            title = "Generate ESE"
-            subject = "ESE mesh"
-            detail = f"ESE generation failed:\n{message}"
-        else:
-            title = "Generate scalp mesh"
-            subject = "Scalp mesh"
-            name = (
-                self._mesh_source_path.name if self._mesh_source_path is not None else "NIfTI scan"
-            )
-            detail = f"Generation failed for {name}:\n{message}"
         self._finish_generation()
-        QMessageBox.critical(self, title, detail)
-        self.status.emit(f"{subject} generation failed: {message}")
+        name = self._mesh_source_path.name if self._mesh_source_path is not None else "NIfTI scan"
+        QMessageBox.critical(
+            self, "Generate scalp mesh", f"Generation failed for {name}:\n{message}"
+        )
+        self.status.emit(f"Scalp mesh generation failed: {message}")
 
     def _finish_generation(self) -> None:
         """Retire the finished generation thread and re-enable the UI."""
@@ -1115,23 +953,11 @@ class MeshProcessingTab(QWidget):
             self._cancel_generation_btn.setEnabled(True)
 
     def _update_generation_buttons(self) -> None:
-        """Reflect the busy flag and ESE's need for a working mesh.
-
-        Nothing can start while a generation runs; the ESE button is enabled
-        whenever an in-memory scalp mesh exists (loaded or freshly generated),
-        so no prior "Save to project" is required. Any change to the base
-        path re-runs this via :attr:`baseMeshChanged`; preview recomputes and
-        generation completions refresh it explicitly.
-        """
+        """Reflect the busy flag; nothing can start while a generation runs."""
         ready = not self._generation_busy
         self.set_locked(not ready)
         if self._mesh_generation_btn is not None:
             self._mesh_generation_btn.setEnabled(ready)
-        if self._generate_ese_btn is not None:
-            base_ready = self.current_scalp_mesh() is not None
-            self._generate_ese_btn.setEnabled(ready and base_ready)
-        if self._save_ese_btn is not None:
-            self._save_ese_btn.setEnabled(ready and self._ese_mesh is not None)
         if self._cancel_generation_btn is not None:
             self._cancel_generation_btn.setEnabled(not ready)
 
@@ -1147,48 +973,6 @@ class MeshProcessingTab(QWidget):
             self._interactor.close()
         self._cancel_running_generation()
 
-    def _on_generate_ese(self) -> None:
-        base = self.current_scalp_mesh()
-        if base is None:
-            QMessageBox.warning(
-                self, "Generate ESE", "Load a base mesh or generate one from NIfTI first."
-            )
-            return
-        self.generate_ese(base, self._ese_offset_spin.value())
-
-    def _on_save_ese(self) -> None:
-        project = self._state.last_project_dir
-        if not project:
-            QMessageBox.warning(
-                self, "Save ESE mesh", "Open a project first so the mesh has a home."
-            )
-            return
-        ese = self._ese_mesh
-        if ese is None:
-            QMessageBox.warning(self, "Save ESE mesh", "Generate an ESE mesh first.")
-            return
-        ese_path = Path(project) / "ese" / _ESE_MESH_FILENAME
-        if ese_path.exists():
-            answer = QMessageBox.question(
-                self,
-                "Save ESE mesh",
-                f"File already exists:\n{ese_path}\n\nOverwrite it?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if answer != QMessageBox.StandardButton.Yes:
-                return
-        try:
-            export_ese_mesh(ese_path, ese)
-            export_ese_companions(ese_path, ese)
-        except (OSError, ValueError) as exc:
-            QMessageBox.critical(self, "Save ESE mesh", f"Could not save ESE mesh:\n{exc}")
-            return
-        self.status.emit(f"Saved ESE mesh ({len(ese.vertices)} vertices) to {ese_path}.")
-        self._ese_dirty = False
-        self._update_generation_buttons()
-        self.saved.emit()
-
     def _on_reset(self) -> None:
         widgets = (
             self._smoother_combo,
@@ -1197,16 +981,9 @@ class MeshProcessingTab(QWidget):
             self._nu_spin,
             self._density_slider,
             self._from_final_chk,
-            self._ese_offset_spin,
-            self._ese_radius_spin,
-            self._ese_k_spin,
-            self._ese_weighted_chk,
-            self._ese_sigma_spin,
-            self._ese_min_nbrs_spin,
             self._show_nifti_chk,
             self._show_base_chk,
             self._show_result_chk,
-            self._show_ese_chk,
             self._show_edges_chk,
         )
         for widget in widgets:
@@ -1217,16 +994,9 @@ class MeshProcessingTab(QWidget):
         self._nu_spin.setValue(-0.53)
         self._density_slider.setValue(100)
         self._from_final_chk.setChecked(False)
-        self._ese_offset_spin.setValue(2.0)
-        self._ese_radius_spin.setValue(10.0)
-        self._ese_k_spin.setValue(0)
-        self._ese_weighted_chk.setChecked(False)
-        self._ese_sigma_spin.setValue(5.0)
-        self._ese_min_nbrs_spin.setValue(5)
         self._show_nifti_chk.setChecked(True)
         self._show_base_chk.setChecked(False)
         self._show_result_chk.setChecked(True)
-        self._show_ese_chk.setChecked(True)
         self._show_edges_chk.setChecked(False)
         for widget in widgets:
             widget.blockSignals(False)
@@ -1237,7 +1007,7 @@ class MeshProcessingTab(QWidget):
     # ---- project lifecycle ----
 
     def prefill_from_project(self, project: str | Path) -> None:
-        """Load the project's base and final scalp meshes plus its ESE mesh, if any."""
+        """Load the project's base and final scalp meshes, if any."""
         self.clear()
         root = Path(project)
         base_candidate = root / "mesh" / _BASE_MESH_FILENAME
@@ -1251,19 +1021,6 @@ class MeshProcessingTab(QWidget):
                 self._final_mesh = import_scalp_mesh(final_candidate)
             except Exception as exc:  # noqa: BLE001 - surfaced to the user
                 self.status.emit(f"Final mesh not loaded: {exc}")
-        ese_candidate = root / "ese" / _ESE_MESH_FILENAME
-        if ese_candidate.is_file():
-            try:
-                ese = import_ese_mesh(ese_candidate)
-            except ValueError as exc:
-                self.status.emit(f"ESE mesh not loaded: {exc}")
-            else:
-                self._ese_mesh = ese
-                self._ese_dirty = False
-                self._update_export_controls()
-                self._render_scene()
-                self.eseMesh.emit(ese)
-                self.status.emit(f"ESE mesh loaded: {len(ese.vertices)} vertices.")
         nifti = self._find_project_nifti(root)
         if nifti is not None:
             self._start_nifti_scene(nifti)
@@ -1298,10 +1055,6 @@ class MeshProcessingTab(QWidget):
         """The in-memory mesh the user is working on (preview, else the base)."""
         return self._preview_mesh if self._preview_mesh is not None else self._base_mesh
 
-    def current_ese_mesh(self) -> ESEMesh | None:
-        """The in-memory ESE mesh, if one was generated for the current preview."""
-        return self._ese_mesh
-
     def splitter_state(self) -> Any:
         """Opaque splitter layout for session restore."""
         return self._splitter.saveState()
@@ -1311,8 +1064,8 @@ class MeshProcessingTab(QWidget):
         self._splitter.restoreState(state)
 
     def has_unsaved_work(self) -> bool:
-        """Whether preview params, a generated mesh or an ESE mesh are unsaved."""
-        return self._mesh_dirty or self._ese_dirty
+        """Whether the working preview mesh is not saved yet."""
+        return self._mesh_dirty
 
     def clear(self) -> None:
         """Forget the in-memory mesh state without touching the project."""
@@ -1321,9 +1074,7 @@ class MeshProcessingTab(QWidget):
         self._set_base_path(None)
         self._preview_mesh = None
         self._final_mesh = None
-        self._ese_mesh = None
         self._mesh_dirty = False
-        self._ese_dirty = False
         self._nifti_volume = None
         self._nifti_transform = np.eye(4)
         self._nifti_mm_scene = True
