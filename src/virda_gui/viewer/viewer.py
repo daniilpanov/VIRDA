@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSplitter,
     QVBoxLayout,
     QWidget,
 )
@@ -174,13 +175,15 @@ class ViewerWidget(QWidget):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
-        layout.addWidget(self._plotter, 1)
 
         self._layers_panel = QGroupBox("Layers", self)
         panel_layout = QVBoxLayout(self._layers_panel)
         panel_layout.setContentsMargins(0, 0, 0, 0)
         scroll = QScrollArea(self._layers_panel)
         scroll.setWidgetResizable(True)
+        # A scroll area reports a tiny size hint, so without a floor the
+        # panel collapses to a strip next to the 3D view.
+        scroll.setMinimumWidth(240)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         inner = QWidget(scroll)
         self._layers_layout = QVBoxLayout(inner)
@@ -188,7 +191,14 @@ class ViewerWidget(QWidget):
         self._layers_layout.setSpacing(4)
         scroll.setWidget(inner)
         panel_layout.addWidget(scroll)
-        layout.addWidget(self._layers_panel, 0)
+
+        self._splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        self._splitter.addWidget(self._plotter)
+        self._splitter.addWidget(self._layers_panel)
+        self._splitter.setStretchFactor(0, 1)
+        self._splitter.setStretchFactor(1, 0)
+        self._splitter.setChildrenCollapsible(False)
+        layout.addWidget(self._splitter)
 
     # ---- scene loading (background thread -> GUI thread) ----
 
