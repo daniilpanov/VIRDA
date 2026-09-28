@@ -2,23 +2,23 @@
 
 ## Toolchain
 
-- Python >=3.14, `uv` workspace: core package `virda` (`src/virda`) + GUI `virda-gui` (`src/virda_gui`). Install everything with `uv sync --all-extras --all-packages`; run any tool via `uv run <cmd>`.
-- Lint/format/typecheck are **local pre-commit hooks** (`black`, `isort`, `ruff check --fix`, `ruff format`, `mypy src/virda/ tests/` — strict, line-length 100). Run the full gate before committing:
-  `uv run pre-commit run --all-files`
-- Tests: `uv run pytest tests/` (coverage of `src/virda` is on by default via `addopts`). Integration-marked tests are skipped unless you pass `--run-integration`. GUI tests avoid `QApplication`; offscreen smoke tests set `QT_QPA_PLATFORM=offscreen` themselves, but the machine needs Qt system libs to install/import PySide6 (`libegl1 libgl1 libxkbcommon0` on Ubuntu; see `.github/actions/install-qt-libs`).
+- Python >=3.14, `uv` workspace: core `virda` (root manifest, `src/virda`) + `virda-gui` (`src/virda_gui`). `uv sync --all-extras --all-packages`; run everything via `uv run <cmd>` (CI appends `--frozen`).
+- Full gate before committing: `uv run pre-commit run --all-files` (`black`, `isort`, `ruff check --fix`, `ruff format`, `mypy src/virda/ tests/` — strict, line-length 100).
+- Tests: `uv run pytest tests/` (addopts inject `--cov=src/virda --cov-report=term-missing`). Single file: `uv run pytest tests/test_<name>.py -v`. `integration`-marked tests are skipped unless `--run-integration`.
 
-## Architecture (current state)
+## Architecture
 
-- `src/virda` is the pure core (`ops/`, `io/importers`, `io/exporters`, `ese/`, `mesh/`, `segmentation/`, `localization/`, `models/`, `qc/`, `fiducials/`, `geometry/`). `src/virda_gui` is the PySide6 app (pyvista for 3D) with console scripts `virda-gui`, `virda-gui-viewer`, `virda-gui-html` (defined in `src/virda_gui/pyproject.toml`).
-- **`develop` is mid-refactor** (79 commits ahead of `master`): GUI is being stripped of pipeline/config/log layers in favor of the pure `ops`/`io` API and a project-folder workflow. `TZ_GUI_REFACTOR.md` (Russian) is the authoritative plan — read it fully before touching GUI code. The target architecture and terminology (MRI-world / voxel / head-RAS frames) are in `VIRDA_TECH_SPEC.md`; the on-disk patient-project format is `PATIENT_PROJECT_FORMAT.md`. `src/virda/pipelines/` still exists but is deprecated/bypassing the docs.
-- Read repo guidance first: `CONTRIBUTING.md`, `VIRDA_TECH_SPEC.md`, `PATIENT_PROJECT_FORMAT.md`, `TZ_GUI_REFACTOR.md`.
+- `src/virda` is the pure core; public API is `virda.ops` (option dataclasses, `ScalpSurface` bundle, pure atoms: `generate_scalp_surface`, `clean`, `smooth`, `decimate`, `generate_ese`, `localize`). File parsing/serialization lives in `io/importers` / `io/exporters`; domain types in `models/`, algorithms in `mesh/`, `ese/`, `localization/`, `segmentation/`, `geometry/`, `qc/`. There is no `pipelines/` package and no core CLI.
+- `src/virda_gui` is the PySide6 app (pyvista for 3D) with console scripts `virda-gui`, `virda-gui-viewer`, `virda-gui-html` (defined in `src/virda_gui/pyproject.toml`).
+- On-disk patient-project layout is specified in `PATIENT_PROJECT_FORMAT.md` — read it before touching pipeline I/O or the GUI run/export flow.
 
 ## Conventions (see CONTRIBUTING.md)
 
 - English (ASCII) only: code, comments, docs, commits, branches.
-- Commits: `<prefix>(<module>): <subject>` with `prefix` in `feat|fix|hotfix|chore|refactor`; 1 commit = 1 microfeature (code + its tests together); every commit must leave tests + pre-commit green. No pushing to `master` directly — branch names `feature|improve|fix/[<scope>/]<name>` and MR/PR.
+- Commits: `<prefix>(<module>): <subject>` with `prefix` in `feat|fix|hotfix|chore|refactor`; 1 commit = 1 microfeature (code + its tests together); every commit must leave tests + pre-commit green. No pushing to `master` directly — branches `feature|improve|fix/[<scope>/]<name>` + PR.
 
 ## Gotchas
 
-- The core `virda` package has **no CLI** (no `__main__.py`, no script entry in the root `pyproject.toml`). `full-test.sh` and `.github/workflows/test-data.yml` still call a removed `virda` / `python -m virda` CLI — stale, don't follow them. `ci.yml`'s integration job references the removed `tests/test_stage3_e2e.py`, too.
-- `research/` is excluded from mypy and contains experimental scripts/data. Real MRI datasets live in `test-data/`. `.coverage`, `htmlcov/`, `dist/`, `build/`, `research/out/` are generated. `PLAN.md`, `TODO.md`, `task1.md` are personal scratch notes (untracked); `feature/` and `wt/` are empty scratch dirs.
+- Stale CI references, don't follow them: `ci.yml`'s integration job runs non-existent `tests/test_stage3_e2e.py`; `test-data.yml` invokes a removed `virda` CLI (`uv run --no-sync virda --nifti-path ...` fails — root manifest defines no scripts and there is no `__main__.py`).
+- GUI tests: most avoid `QApplication` entirely; widget tests (`test_gui_app.py`, `test_live_edit_widgets.py`) set `QT_QPA_PLATFORM=offscreen` themselves, but the machine needs Qt system libs to import PySide6 (`libegl1 libgl1 libxkbcommon0` on Ubuntu; see `.github/actions/install-qt-libs`).
+- `TASK.md` and `.scratch/` are git-ignored local notes; `wt/`, `dist/`, `build/`, `htmlcov/`, `.coverage` are generated/scratch — ignore them.
