@@ -995,11 +995,7 @@ def test_ese_display_checkboxes_toggle_layers_offscreen(tmp_path: Path) -> None:
 
         ese_tab = window._ese_tab
         assert ese_tab.current_ese_mesh() is not None
-        # The ESE backdrop arrives over the preview signal; replay it after
-        # prefill cleared the tab state.
-        working = window._mesh_processing_tab.current_scalp_mesh()
-        assert working is not None
-        ese_tab.show_preview(working)
+        assert ese_tab._final_mesh is not None  # working mesh pushed as the backdrop
         assert ese_tab._final_actor is not None
         assert ese_tab._ese_actor is not None
 
