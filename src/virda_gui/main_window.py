@@ -60,6 +60,7 @@ from .preferences import Preferences
 from .project import classify_artifact
 from .sidebar import ProjectSidebar
 from .state import AppState
+from .tabs.base_generation_tab import BaseGenerationTab
 from .tabs.editors_tab import EditorsTab, FiducialRow, canonical_fiducial_id
 from .tabs.ese_tab import EseTab
 from .tabs.mesh_processing_tab import MeshProcessingTab
@@ -124,7 +125,7 @@ class IdeWindow(QMainWindow):
         self._mesh_processing_tab.previewMesh.connect(self._on_mesh_preview)
         self._mesh_processing_tab.saved.connect(self._on_mesh_saved)
         self._mesh_processing_tab.eseRequested.connect(self._show_ese_tab)
-        self._mesh_processing_tab.newProjectRequested.connect(self._on_new_project_for_generation)
+        self._mesh_processing_tab.baseRequested.connect(self._show_base_tab)
         self._mesh_processing_tab.status.connect(self._status)
         self._mesh_processing_tab.previewMesh.connect(lambda _m: self._refresh_pipeline())
         self._mesh_processing_tab.baseMeshChanged.connect(lambda _p: self._refresh_pipeline())
@@ -143,6 +144,13 @@ class IdeWindow(QMainWindow):
         self._ese_tab.continueRequested.connect(self._show_editors_tab)
         self._ese_tab.status.connect(self._status)
         self._ese_tab.busyChanged.connect(self._mesh_processing_tab.set_locked)
+
+        self._base_tab = BaseGenerationTab(self._state)
+        self._base_tab.baseMesh.connect(self._on_base_generated)
+        self._base_tab.saved.connect(self._refresh_pipeline)
+        self._base_tab.meshRequested.connect(self._show_mesh_processing_tab)
+        self._base_tab.status.connect(self._status)
+        self._base_tab.busyChanged.connect(self._mesh_processing_tab.set_locked)
 
         self._fiducial_overlay_timer = QTimer(self)
         self._fiducial_overlay_timer.setSingleShot(True)
@@ -343,6 +351,7 @@ class IdeWindow(QMainWindow):
         self._close_action.setEnabled(True)
         self._state.last_project_dir = str(project)
         self._editors_tab.prefill_from_project(project)
+        self._base_tab.prefill_from_project(project)
         self._mesh_processing_tab.prefill_from_project(project)
         self._ese_tab.prefill_from_project(project)
         self._prefs.note_project_opened(project)
@@ -368,9 +377,11 @@ class IdeWindow(QMainWindow):
         if self._viewer_widget is not None:
             self._viewer_widget.set_project_dir(None)
         self._tabs.removeTab(self._tabs.indexOf(self._editors_tab))
+        self._tabs.removeTab(self._tabs.indexOf(self._base_tab))
         self._tabs.removeTab(self._tabs.indexOf(self._mesh_processing_tab))
         self._tabs.removeTab(self._tabs.indexOf(self._ese_tab))
         self._editors_tab.clear()
+        self._base_tab.clear()
         self._mesh_processing_tab.clear()
         self._ese_tab.clear()
         self._localized_electrodes = None
@@ -395,16 +406,6 @@ class IdeWindow(QMainWindow):
         project = ask_create_project_folder(self)
         if project is not None:
             self.open_project(project)
-
-    def _on_new_project_for_generation(self) -> None:
-        """Create a project and start the pending NIfTI generation there."""
-        project = ask_create_project_folder(self)
-        if project is None:
-            self._mesh_processing_tab.clear_pending_generation()
-            return
-        self.open_project(project)
-        self._show_mesh_processing_tab()
-        self._mesh_processing_tab.start_pending_generation()
 
     def _open_project_dialog(self) -> None:
         project = ask_open_project_folder(self)
@@ -471,6 +472,16 @@ class IdeWindow(QMainWindow):
 
     def _show_mesh_processing_tab(self) -> None:
         self._add_tab(self._mesh_processing_tab, "Mesh Processing")
+
+    def _show_base_tab(self) -> None:
+        self._add_tab(self._base_tab, "Base Generation")
+
+    def _on_base_generated(self, _mesh: object) -> None:
+        """Reload the mesh tab from disk after the base tab saved its result."""
+        project = self._project
+        if project is not None:
+            self._mesh_processing_tab.prefill_from_project(project)
+        self._refresh_pipeline()
 
     def _show_ese_tab(self) -> None:
         self._add_tab(self._ese_tab, "ESE Surface")
@@ -614,8 +625,8 @@ class IdeWindow(QMainWindow):
                 continue
             target = self._perform_import(role, Path(source))
             if role.key == "nifti" and target is not None:
-                self._show_mesh_processing_tab()
-                self._mesh_processing_tab.autostart_base_from_nifti(target)
+                self._show_base_tab()
+                self._base_tab.autostart_base_from_nifti(target)
 
     def _confirm_nifti_replace(self) -> bool:
         """Warn that a new scan supersedes the project's inputs; False aborts.
@@ -1365,3 +1376,4 @@ class IdeWindow(QMainWindow):
             self._viewer_widget.shutdown()
         self._mesh_processing_tab.shutdown()
         self._ese_tab.shutdown()
+        self._base_tab.shutdown()

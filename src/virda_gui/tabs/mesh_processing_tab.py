@@ -7,17 +7,13 @@ final mesh when checked) via the pure ``virda.ops`` atoms (
 :func:`virda.ops.atoms.smooth` / :func:`virda.ops.atoms.decimate`), applies no
 smoothing when the smoother is set to "none", and auto-saves the result to
 ``mesh/final_mesh.ply``.  The current density/smoother parameters are GUI-only
-and are never written to a pipeline config file.  A scalp mesh can be produced
-straight from a NIfTI scan ("Generate scalp mesh from NIfTI...") through the
-pure atoms :func:`virda.ops.atoms.generate_scalp_surface` +
-:func:`virda.ops.atoms.clean`.
+and are never written to a pipeline config file.  The base mesh itself is
+produced in the Base Generation tab.
 
 The tab is host-agnostic: everything the host needs to render or persist
-travels through Qt signals carrying domain objects.  Mesh generation runs on a
-dedicated worker thread (see :meth:`MeshProcessingTab.generate_from_nifti`
-and :class:`virda_gui.workers.BackgroundWorker`); only the pure atoms execute
-on the thread, the resulting :class:`~virda.models.scalp_mesh.ScalpMesh` is
-applied to the tab and signalled to the host on the GUI thread.
+travels through Qt signals carrying domain objects.  NIfTI volume previews
+load on a dedicated worker thread (see :class:`virda_gui.workers.BackgroundWorker`);
+only the pure loader executes on the thread.
 """
 
 from __future__ import annotations
@@ -50,16 +46,10 @@ from pyvistaqt import QtInteractor
 
 from virda.io.exporters.mesh_arrays import export_mesh_faces, export_mesh_vertices
 from virda.io.exporters.scalp_mesh import export_scalp_mesh
-from virda.io.importers.nifti import import_nifti
 from virda.io.importers.scalp_mesh import import_scalp_mesh
 from virda.models.scalp_mesh import ScalpMesh
-from virda.ops.atoms import clean, decimate, generate_scalp_surface, smooth
-from virda.ops.options import (
-    CleanOptions,
-    DecimateOptions,
-    SealingOptions,
-    SmoothOptions,
-)
+from virda.ops.atoms import decimate, smooth
+from virda.ops.options import DecimateOptions, SmoothOptions
 from virda_gui.export.mesh_ply import export_mesh_ply
 from virda_gui.state import AppState
 from virda_gui.viewer.scene import scene_placement
@@ -83,23 +73,6 @@ MeshKind = Literal["scalp", "ese"]
 MeshArray = Literal["vertices", "faces"]
 
 
-def generate_mesh_from_nifti(
-    path: str | Path,
-    sealing: SealingOptions,
-    cleaning: CleanOptions,
-) -> ScalpMesh:
-    """Segment *path* into a scalp mesh via the pure atoms.
-
-    Runs :func:`virda.io.importers.nifti.import_nifti`,
-    :func:`virda.ops.atoms.generate_scalp_surface` and
-    :func:`virda.ops.atoms.clean` in sequence.  Qt-free; meant to run on a
-    worker thread (see :class:`virda_gui.workers.BackgroundWorker`).
-    """
-    mri = import_nifti(path)
-    surface = generate_scalp_surface(mri, sealing)
-    return clean(surface.mesh, cleaning)
-
-
 class MeshProcessingTab(QWidget):
     """Base mesh in, autosaved postprocessed final mesh out."""
 
@@ -108,7 +81,7 @@ class MeshProcessingTab(QWidget):
     status = Signal(str)  # noqa: N815 - non-blocking log lines
     baseMeshChanged = Signal(object)  # noqa: N815 - the new base mesh path (Path | None)
     eseRequested = Signal()  # noqa: N815 - jump to the ESE Surface tab
-    newProjectRequested = Signal()  # noqa: N815 - create a project for generation
+    baseRequested = Signal()  # noqa: N815 - jump to the Base Generation tab
 
     def __init__(self, state: AppState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -121,7 +94,6 @@ class MeshProcessingTab(QWidget):
         self._vertices_export_button: QPushButton | None = None
         self._faces_export_button: QPushButton | None = None
         self._mesh_file_export_button: QPushButton | None = None
-        self._mesh_generation_btn: QPushButton | None = None
         self._cancel_generation_btn: QPushButton | None = None
         self._parameters_box: QGroupBox | None = None
         self._actions_box: QGroupBox | None = None
@@ -130,7 +102,6 @@ class MeshProcessingTab(QWidget):
         self._generation_seq = 0
         self._generation_busy = False
         self._pending_kind: str | None = None
-        self._pending_nifti_path: Path | None = None
         self._mesh_source_path: Path | None = None
         self._interactor: QtInteractor | None = None
         self._result_actor: Any | None = None
@@ -295,9 +266,10 @@ class MeshProcessingTab(QWidget):
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(6)
 
-        self._mesh_generation_btn = QPushButton("Generate scalp mesh from NIfTI...", box)
-        self._mesh_generation_btn.clicked.connect(self._on_generate_from_nifti)
-        row.addWidget(self._mesh_generation_btn)
+        base_btn = QPushButton("\u2190 Regenerate base", box)
+        base_btn.setToolTip("Go to the Base Generation tab to rebuild the base mesh.")
+        base_btn.clicked.connect(self.baseRequested.emit)
+        row.addWidget(base_btn)
 
         ese_next_btn = QPushButton("Generate ESE \u2192", box)
         ese_next_btn.setToolTip("Continue to the ESE Surface tab to build the sensor surface.")
@@ -701,140 +673,6 @@ class MeshProcessingTab(QWidget):
             return str(Path(project) / "mesh")
         return ""
 
-    def _nifti_start_dir(self) -> str:
-        project = self._state.last_project_dir
-        if project:
-            return str(Path(project) / "input")
-        return ""
-
-    def _generation_options(self) -> tuple[SealingOptions, CleanOptions]:
-        """Build mesh-generation options from the GUI advanced settings."""
-        advanced = self._state.advanced
-
-        def _bool(key: str, default: bool) -> bool:
-            return (advanced.get(key, "").strip().lower() == "true") or (
-                not advanced.get(key, "").strip() and default
-            )
-
-        def _int(key: str, default: int) -> int:
-            try:
-                value = int(float(advanced.get(key, "")))
-            except TypeError, ValueError:
-                return default
-            return value or default
-
-        return (
-            SealingOptions(
-                seal_enabled=_bool("seal_enabled", True),
-                seal_radius=_int("seal_radius", 4),
-            ),
-            CleanOptions(
-                min_component_vertices=_int("cleaner_min_vertices", 100),
-                merge_digits=_int("cleaner_merge_digits", 7),
-            ),
-        )
-
-    def _on_generate_from_nifti(self) -> None:
-        """Pick a NIfTI scan and start generating the scalp mesh in the background."""
-        if self._generation_busy:
-            return
-        path, _selected_filter = QFileDialog.getOpenFileName(
-            self,
-            "Generate scalp mesh from NIfTI",
-            self._nifti_start_dir(),
-            "NIfTI scans (*.nii.gz *.nii);;All files (*)",
-        )
-        if not path:
-            return
-        if self._final_exists_in_project():
-            choice = self._confirm_final_overwrite()
-            if choice is None:
-                return
-            if choice == "new":
-                self._pending_nifti_path = Path(path)
-                self.newProjectRequested.emit()
-                return
-        self.generate_base_from_nifti(path)
-
-    def generate_base_from_nifti(self, path: str | Path) -> None:
-        """Start base generation from *path* with the tab's sealing options."""
-        target = Path(path)
-        self.generate_from_nifti(target, self._generation_options(), target.name)
-
-    def autostart_base_from_nifti(self, path: str | Path) -> None:
-        """Import-flow helper: start base generation unless a final mesh exists."""
-        if self._final_exists_in_project():
-            self.status.emit("Final mesh exists; pick Generate to rebuild the base mesh.")
-            return
-        self.generate_base_from_nifti(path)
-
-    def _final_exists_in_project(self) -> bool:
-        """Whether the project already holds a final mesh that generation replaces."""
-        project = self._state.last_project_dir
-        return bool(project) and (Path(project) / "mesh" / _FINAL_MESH_FILENAME).is_file()
-
-    def _confirm_final_overwrite(self) -> str | None:
-        """Warn that generation replaces base and final meshes.
-
-        Returns ``"generate"``, ``"new"`` (create a project first) or None
-        when the user cancels.
-        """
-        box = QMessageBox(self)
-        box.setWindowTitle("Generate scalp mesh")
-        box.setIcon(QMessageBox.Icon.Warning)
-        box.setText(
-            "The project already holds a final mesh. Generating replaces the base "
-            "and final meshes. To keep previous work, create a new project."
-        )
-        generate_btn = box.addButton("Generate anyway", QMessageBox.ButtonRole.AcceptRole)
-        new_btn = box.addButton("New project...", QMessageBox.ButtonRole.ActionRole)
-        box.addButton(QMessageBox.StandardButton.Cancel)
-        box.exec()
-        clicked = box.clickedButton()
-        if clicked == new_btn:
-            return "new"
-        if clicked == generate_btn:
-            return "generate"
-        return None
-
-    def start_pending_generation(self) -> None:
-        """Start generation for a NIfTI picked before a project switch."""
-        pending, self._pending_nifti_path = self._pending_nifti_path, None
-        if pending is not None:
-            self.generate_from_nifti(pending, self._generation_options(), pending.name)
-
-    def clear_pending_generation(self) -> None:
-        """Forget a NIfTI picked before a cancelled project switch."""
-        self._pending_nifti_path = None
-
-    def generate_from_nifti(
-        self,
-        path: str | Path,
-        options: tuple[SealingOptions, CleanOptions],
-        name: str | None = None,
-    ) -> None:
-        """Segment *path* into a scalp mesh on a background thread.
-
-        The worker thread only runs the pure atoms; the resulting mesh is
-        applied to the tab and emitted to the host on the GUI thread.  A new
-        generation request retires any in-flight one; stale results are dropped
-        via the generation counter.
-        """
-        if self._generation_busy:
-            return
-        path = Path(path)
-        sealing, cleaning = options
-
-        def _run() -> ScalpMesh:
-            return generate_mesh_from_nifti(path, sealing, cleaning)
-
-        self._start_generation(
-            _run,
-            kind="nifti",
-            source_path=path,
-            start_message=f"Generating scalp mesh from {name or path.name}...",
-        )
-
     def _start_generation(
         self,
         fn: Callable[[], object],
@@ -864,71 +702,23 @@ class MeshProcessingTab(QWidget):
     def _on_generation_done(self, seq: int, result: object) -> None:
         if seq != self._generation_seq:
             return
-        kind = self._pending_kind
         source_path = self._mesh_source_path
         self._finish_generation()
-        if kind == "nifti_scene":
-            scene: SceneData = result  # type: ignore[assignment]
-            if scene.volume is not None:
-                _, _, transform, mm_scene = scene_placement(scene.affine)
-                self._nifti_path = source_path
-                self._nifti_volume = scene.volume
-                self._nifti_transform = transform
-                self._nifti_mm_scene = mm_scene
-                self.status.emit(f"NIfTI preview loaded ({scene.volume.dimensions}).")
-                self._render_scene()
-            return
-        mesh: ScalpMesh = result  # type: ignore[assignment]
-        assert source_path is not None
-        self._base_mesh = mesh
-        self._preview_mesh = None
-        self._result_hidden = False
-        project = self._state.last_project_dir
-        if project:
-            base_path = Path(project) / "mesh" / _BASE_MESH_FILENAME
-            final_path = Path(project) / "mesh" / _FINAL_MESH_FILENAME
-            try:
-                export_scalp_mesh(base_path, mesh)
-                export_scalp_mesh(final_path, mesh)
-            except (OSError, ValueError) as exc:
-                self._set_base_path(None)
-                self._base_label.setText(
-                    f"Generated from {source_path.name}: {self._describe_mesh(mesh)} (unsaved)"
-                )
-                self.status.emit(f"Could not auto-save base mesh:\n{exc}")
-            else:
-                self._set_base_path(base_path)
-                self._final_mesh = mesh
-                self._base_label.setText(str(base_path))
-                self.status.emit(f"Base mesh saved to {base_path}; final mesh initialized.")
-        else:
-            self._set_base_path(None)  # generated in memory; gains a path only on Save
-            self._final_mesh = None
-            self._base_label.setText(
-                f"Generated from {source_path.name}: {self._describe_mesh(mesh)} (unsaved)"
-            )
-        self._preview_label.setText(f"Base mesh: {self._describe_mesh(mesh)}")
-        self._result_hidden = False
-        self._render_scene()
-        self._update_generation_buttons()
-        self._update_export_controls()
-        self.previewMesh.emit(mesh)
-        self.status.emit(f"Scalp mesh generated: {len(mesh.vertices)} vertices.")
+        scene: SceneData = result  # type: ignore[assignment]
+        if scene.volume is not None:
+            _, _, transform, mm_scene = scene_placement(scene.affine)
+            self._nifti_path = source_path
+            self._nifti_volume = scene.volume
+            self._nifti_transform = transform
+            self._nifti_mm_scene = mm_scene
+            self.status.emit(f"NIfTI preview loaded ({scene.volume.dimensions}).")
+            self._render_scene()
 
     def _on_generation_failed(self, seq: int, message: str) -> None:
         if seq != self._generation_seq:
             return
-        kind = self._pending_kind
-        if kind == "nifti_scene":
-            self._finish_generation()
-            self.status.emit(f"NIfTI preview failed: {message}")
-            return
         self._finish_generation()
-        name = self._mesh_source_path.name if self._mesh_source_path is not None else "NIfTI scan"
-        QMessageBox.critical(
-            self, "Generate scalp mesh", f"Generation failed for {name}:\n{message}"
-        )
-        self.status.emit(f"Scalp mesh generation failed: {message}")
+        self.status.emit(f"NIfTI preview failed: {message}")
 
     def _finish_generation(self) -> None:
         """Retire the finished generation thread and re-enable the UI."""
@@ -1003,8 +793,6 @@ class MeshProcessingTab(QWidget):
         """Reflect the busy flag; nothing can start while a generation runs."""
         ready = not self._generation_busy
         self.set_locked(not ready)
-        if self._mesh_generation_btn is not None:
-            self._mesh_generation_btn.setEnabled(ready)
         if self._cancel_generation_btn is not None:
             self._cancel_generation_btn.setEnabled(not ready)
 
