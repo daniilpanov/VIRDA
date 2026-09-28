@@ -2170,3 +2170,33 @@ def test_ese_offset_allows_zero_offscreen() -> None:
         tab.shutdown()
         tab.close()
         app.quit()
+
+
+def test_group_color_picker_uses_dialog_offscreen(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The group color picker runs a non-native dialog and applies the pick."""
+    from PySide6.QtGui import QColor
+    from PySide6.QtWidgets import QColorDialog, QDialog
+
+    from virda_gui.widgets import ElectrodeGroupRow
+
+    app = _offscreen_app()
+    row = ElectrodeGroupRow(color="yellow")
+    try:
+        seen: dict[str, bool] = {}
+
+        def _exec(self: QColorDialog) -> object:
+            seen["native"] = self.testOption(QColorDialog.ColorDialogOption.DontUseNativeDialog)
+            return QDialog.DialogCode.Accepted
+
+        monkeypatch.setattr(QColorDialog, "exec", _exec)
+        monkeypatch.setattr(QColorDialog, "selectedColor", lambda self: QColor("red"))
+        row._pick_color()
+        assert seen["native"] is True
+        assert row.get_color() == "#ff0000"
+
+        monkeypatch.setattr(QColorDialog, "exec", lambda self: QDialog.DialogCode.Rejected)
+        row._pick_color()
+        assert row.get_color() == "#ff0000"
+    finally:
+        row.close()
+        app.quit()
