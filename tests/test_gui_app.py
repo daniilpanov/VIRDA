@@ -1640,11 +1640,19 @@ def test_import_new_scan_invalidates_meshes_but_keeps_tables_offscreen(
         assert window._ese_tab.current_ese_mesh() is not None
 
         monkeypatch.setattr(window, "_confirm_nifti_replace", lambda: True)
+        questions: list[str] = []
+
+        def _record_question(*args: object, **_kwargs: object) -> object:
+            questions.append(str(args[2]))
+            return QMessageBox.StandardButton.Yes
+
+        monkeypatch.setattr(QMessageBox, "question", _record_question)
         other = tmp_path / "head2.nii.gz"
         other.write_bytes(b"a different scan")
         role = next(r for r in ROLE_REGISTRY if r.key == "nifti")
         window._import_nifti_scan(role, other)
 
+        assert questions == []  # replace-confirm covers the overwrite
         assert not (project / "mesh" / "base_mesh.ply").exists()
         assert not (project / "mesh" / "final_mesh.ply").exists()
         assert list((project / "ese").glob("*")) == []
