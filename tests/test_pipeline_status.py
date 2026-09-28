@@ -21,6 +21,40 @@ def _states(steps):
     return [(step.key, step.state) for step in steps]
 
 
+def _enabled(steps):
+    return [(step.key, step.enabled) for step in steps]
+
+
+def test_empty_project_only_scan_enabled() -> None:
+    assert _enabled(_base()) == [
+        ("scan", True),
+        ("mesh", False),
+        ("ese", False),
+        ("points", False),
+    ]
+
+
+def test_steps_unlock_in_order() -> None:
+    assert _enabled(_base(nifti_saved=True)) == [
+        ("scan", True),
+        ("mesh", True),
+        ("ese", False),
+        ("points", False),
+    ]
+    assert _enabled(_base(nifti_saved=True, mesh_in_memory=True)) == [
+        ("scan", True),
+        ("mesh", True),
+        ("ese", True),
+        ("points", False),
+    ]
+    assert _enabled(_base(nifti_saved=True, mesh_saved=True, ese_saved=True)) == [
+        ("scan", True),
+        ("mesh", True),
+        ("ese", True),
+        ("points", True),
+    ]
+
+
 def test_empty_project_first_step_active() -> None:
     assert _states(_base()) == [
         ("scan", "active"),

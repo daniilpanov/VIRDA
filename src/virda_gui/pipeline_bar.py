@@ -21,7 +21,7 @@ _MARKS = {
 
 
 class PipelineBar(QWidget):
-    """Five-step pipeline navigator driven by :func:`set_steps`."""
+    """Four-step pipeline navigator driven by :func:`set_steps`."""
 
     stepActivated = Signal(str)  # noqa: N815 - step key
 
@@ -31,6 +31,11 @@ class PipelineBar(QWidget):
         self._layout.setContentsMargins(8, 4, 8, 4)
         self._layout.setSpacing(6)
         self._buttons: list[QPushButton] = []
+        self._steps: list[PipelineStep] = []
+
+    def is_enabled(self, key: str) -> bool:
+        """Whether the step with *key* is currently unlocked."""
+        return next((step.enabled for step in self._steps if step.key == key), False)
 
     def set_steps(self, steps: list[PipelineStep]) -> None:
         """Rebuild the chips from the given pipeline steps."""
@@ -40,9 +45,11 @@ class PipelineBar(QWidget):
             if widget is not None:
                 widget.deleteLater()
         self._buttons = []
+        self._steps = list(steps)
         for step in steps:
             button = QPushButton(f"{step.title}\n{_MARKS[step.state]}", self)
             button.setToolTip(step.detail)
+            button.setEnabled(step.enabled)
             button.clicked.connect(
                 lambda _checked=False, key=step.key: self.stepActivated.emit(key)
             )

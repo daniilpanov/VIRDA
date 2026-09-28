@@ -505,6 +505,8 @@ class IdeWindow(QMainWindow):
 
     def _on_pipeline_step(self, key: str) -> None:
         """Navigate to the tab where pipeline step *key* is performed."""
+        if not self._pipeline_bar.is_enabled(key):
+            return
         if key == "scan":
             self._on_import_files()
         elif key == "mesh":
