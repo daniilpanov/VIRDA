@@ -139,3 +139,29 @@ def test_points_drop_without_ese_but_tables_kept() -> None:
     )
     assert _states(steps)[4] == ("points", "waiting")
     assert _enabled(steps)[4] == ("points", False)
+
+
+def test_hole_forces_linear_prefix_without_ok() -> None:
+    """Orphaned files behind a gap stay waiting and locked, never [ok]."""
+    steps = _base(
+        nifti_saved=True,
+        mesh_saved=True,
+        ese_saved=True,
+        fiducials_filled=3,
+        measurement_rows=1,
+    )
+    assert _states(steps) == [
+        ("scan", "done"),
+        ("base", "active"),
+        ("mesh", "waiting"),
+        ("ese", "waiting"),
+        ("points", "waiting"),
+    ]
+    assert _enabled(steps) == [
+        ("scan", True),
+        ("base", True),
+        ("mesh", False),
+        ("ese", False),
+        ("points", False),
+    ]
+    assert steps[0].state == "done"  # the only [ok] chip

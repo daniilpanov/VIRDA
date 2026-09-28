@@ -1702,3 +1702,33 @@ def test_base_generated_drops_ese_but_keeps_tables_offscreen(tmp_path: Path) -> 
     finally:
         window.close()
         app.quit()
+
+
+def test_legacy_hole_project_shows_linear_prefix_offscreen(tmp_path: Path) -> None:
+    """Final+ESE without a base: only scan is [ok], base is active, rest locked."""
+    app = _offscreen_app()
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
+    try:
+        project = tmp_path / "hole-project"
+        _write_full_project(project)
+        (project / "mesh" / "base_mesh.ply").unlink()
+        window.open_project(project)
+
+        assert "[ok]" in _chip_text(window, "1. Brain")
+        assert "[>]" in _chip_text(window, "2. Base")
+        assert "[ok]" not in _chip_text(window, "3. Skin")
+        assert "[ok]" not in _chip_text(window, "4. Sensor")
+        assert "[ok]" not in _chip_text(window, "5. Points")
+        assert window._pipeline_bar.is_enabled("base")
+        assert not window._pipeline_bar.is_enabled("mesh")
+        assert not window._pipeline_bar.is_enabled("ese")
+        assert not window._pipeline_bar.is_enabled("points")
+        assert [row.fiducial_id for row in window._editors_tab.fiducials.fiducial_rows()] == [
+            "NAS",
+            "LPA",
+            "RPA",
+        ]
+    finally:
+        window.close()
+        app.quit()
