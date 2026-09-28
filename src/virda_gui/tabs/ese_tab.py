@@ -54,6 +54,7 @@ class EseTab(QWidget):
     saved = Signal()  # noqa: N815 - fired after auto-save wrote the mesh to disk
     status = Signal(str)  # noqa: N815 - non-blocking log lines
     busyChanged = Signal(bool)  # noqa: N815 - generation running
+    continueRequested = Signal()  # noqa: N815 - jump to live editing
 
     def __init__(
         self,
@@ -171,6 +172,12 @@ class EseTab(QWidget):
         self._generate_btn.setToolTip("Build and immediately save the sensor surface (ESE).")
         self._generate_btn.clicked.connect(self._on_generate)
         row.addWidget(self._generate_btn)
+
+        continue_btn = QPushButton("Continue in Live Editing \u2192", box)
+        continue_btn.setToolTip("Open live editing with the current meshes.")
+        continue_btn.setStyleSheet("font-weight: bold;")
+        continue_btn.clicked.connect(self.continueRequested.emit)
+        row.addWidget(continue_btn)
         return box
 
     def _build_display_box(self) -> QGroupBox:
