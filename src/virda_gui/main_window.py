@@ -685,19 +685,16 @@ class IdeWindow(QMainWindow):
             QMessageBox.critical(self, "Import error", f"Could not read scan:\n{exc}")
             return
         stored = read_source_hash(self._project / "mesh")
-        has_scan = any(self._project.glob("input/*.nii*"))
-        same_name = self._project / "input" / source.name
-        if same_name.is_file():
+        known = [stored] if stored is not None else []
+        for candidate in sorted(self._project.glob("input/*.nii*")):
             try:
-                same_content = sha256_file(same_name) == incoming
+                known.append(sha256_file(candidate))
             except OSError:
-                same_content = False
-            if same_content:
-                self._status("Existing NIfTI is identical to the imported one.", 5000)
-                return
-        elif stored is not None and stored == incoming and has_scan:
-            self._status("Existing NIfTI is identical to the imported one.", 5000)
+                continue
+        if incoming in known:
+            self._warn_identical_scan()
             return
+
         if not self._confirm_nifti_replace():
             return
         target = self._perform_import(role, source)
@@ -706,6 +703,15 @@ class IdeWindow(QMainWindow):
         self._invalidate_derived_meshes(delete_base=True)
         self._show_base_tab()
         self._base_tab.autostart_base_from_nifti(target)
+
+    def _warn_identical_scan(self) -> None:
+        """Tell the user the scan is already in the project (modal + status)."""
+        self._status("Existing NIfTI is identical to the imported one.", 5000)
+        QMessageBox.information(
+            self,
+            "Import NIfTI scan",
+            "Existing NIfTI is identical to the imported one.",
+        )
 
     def _invalidate_derived_meshes(self, *, delete_base: bool) -> None:
         """Drop derived meshes from disk and memory; tables are always kept.
