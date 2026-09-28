@@ -46,11 +46,14 @@ def pipeline_steps(
     ``enabled`` only when its prerequisites are ready, enforcing the
     1 -> 2 -> 3 -> 4 -> 5 order: scan, base, mesh, ESE, points.  The points
     step additionally needs the sensor surface, so dropping the ESE mesh
-    un-dones it while the tables themselves are kept.
+    un-dones it while the tables themselves are kept.  Progress is a strict
+    prefix without holes: a step is actionable only when the previous
+    artifact exists, so orphaned files behind a gap (e.g. a final mesh
+    without a base) stay waiting and locked instead of showing a stale [ok].
     """
-    base_ready = base_saved or base_in_memory
-    mesh_ready = mesh_saved or mesh_in_memory
-    ese_ready = ese_saved or ese_in_memory
+    base_present = base_saved or base_in_memory
+    mesh_present = mesh_saved or mesh_in_memory
+    ese_present = ese_saved or ese_in_memory
 
     if base_saved:
         base_state: StepState = "done"
@@ -65,38 +68,42 @@ def pipeline_steps(
             if nifti_saved
             else "Import a brain scan first."
         )
-
-    if mesh_saved:
-        mesh_state: StepState = "done"
+    if not base_present:
+        mesh_state = "waiting"
+        mesh_detail = "Generate the base surface first."
+    elif mesh_saved:
+        mesh_state = "done"
         mesh_detail = "Skin surface saved."
     elif mesh_in_memory:
         mesh_state = "unsaved"
         mesh_detail = "Save the skin surface to continue."
     else:
-        mesh_state = "active" if base_ready else "waiting"
-        mesh_detail = (
-            "Postprocess the base surface." if base_ready else "Generate the base surface first."
-        )
+        mesh_state = "active"
+        mesh_detail = "Postprocess the base surface."
+    mesh_eff = base_present and mesh_present
 
-    if ese_saved:
-        ese_state: StepState = "done"
+    if not mesh_eff:
+        ese_state = "waiting"
+        ese_detail = "Needs the skin surface first."
+    elif ese_saved:
+        ese_state = "done"
         ese_detail = "Sensor surface saved."
     elif ese_in_memory:
         ese_state = "unsaved"
         ese_detail = "Save the sensor surface to continue."
     else:
-        ese_state = "active" if mesh_ready else "waiting"
-        ese_detail = (
-            "Set the offset and generate the sensor surface."
-            if mesh_ready
-            else "Needs the skin surface first."
-        )
+        ese_state = "active"
+        ese_detail = "Set the offset and generate the sensor surface."
+    ese_eff = mesh_eff and ese_present
 
     tables_ready = fiducials_filled >= 3 and measurement_rows >= 1
-    if tables_ready and ese_ready:
-        points_state: StepState = "done"
+    if not ese_eff:
+        points_state = "waiting"
+        points_detail = "Needs the sensor surface first."
+    elif tables_ready:
+        points_state = "done"
         points_detail = "Points and measures ready."
-    elif ese_ready:
+    else:
         points_state = "active"
         missing = []
         if fiducials_filled < 3:
@@ -104,9 +111,6 @@ def pipeline_steps(
         if measurement_rows < 1:
             missing.append("add one measurement row")
         points_detail = "To continue: " + " and ".join(missing) + "."
-    else:
-        points_state = "waiting"
-        points_detail = "Needs the sensor surface first."
 
     return [
         PipelineStep(
@@ -128,20 +132,20 @@ def pipeline_steps(
             title="3. Skin surface (mesh)",
             detail=mesh_detail,
             state=mesh_state,
-            enabled=base_ready,
+            enabled=base_present,
         ),
         PipelineStep(
             key="ese",
             title="4. Sensor surface (ESE)",
             detail=ese_detail,
             state=ese_state,
-            enabled=mesh_ready,
+            enabled=mesh_eff,
         ),
         PipelineStep(
             key="points",
             title="5. Points and measures",
             detail=points_detail,
             state=points_state,
-            enabled=ese_ready,
+            enabled=ese_eff,
         ),
     ]
