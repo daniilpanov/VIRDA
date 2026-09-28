@@ -1680,6 +1680,7 @@ def test_import_identical_scan_skips_with_warning_offscreen(
 
     app = _offscreen_app()
     monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: QMessageBox.StandardButton.Ok)
     prefs = _make_prefs(tmp_path)
     window = IdeWindow(prefs=prefs)
     try:
@@ -1713,11 +1714,97 @@ def test_import_identical_scan_skips_with_warning_offscreen(
         app.quit()
 
 
+def test_import_identical_scan_shows_modal_dialog_offscreen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The identical-scan warning is a modal dialog, not just a status line."""
+    from PySide6.QtWidgets import QMessageBox
+
+    app = _offscreen_app()
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
+    try:
+        project = tmp_path / "scan-project"
+        (project / "input").mkdir(parents=True)
+        scan = _write_mini_nifti(project / "input" / "head.nii.gz")
+        window.open_project(project)
+
+        shown: list[str] = []
+
+        def _shown(*args: object, **_kwargs: object) -> object:
+            shown.append(str(args[2]))
+            return QMessageBox.StandardButton.Ok
+
+        monkeypatch.setattr(QMessageBox, "information", _shown)
+        role = next(r for r in ROLE_REGISTRY if r.key == "nifti")
+        window._import_nifti_scan(role, scan)
+
+        assert len(shown) == 1
+        assert "identical" in shown[0]
+    finally:
+        window.close()
+        app.quit()
+
+
+def test_scan_chip_imports_identical_scan_with_dialog_offscreen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Clicking the Scan chip and picking the same file warns and stops."""
+    from PySide6.QtWidgets import QFileDialog, QMessageBox, QPushButton
+
+    app = _offscreen_app()
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
+    try:
+        project = tmp_path / "scan-project"
+        (project / "input").mkdir(parents=True)
+        scan = _write_mini_nifti(project / "input" / "head.nii.gz")
+        window.open_project(project)
+
+        monkeypatch.setattr(QFileDialog, "getOpenFileNames", lambda *a, **k: ([str(scan)], ""))
+        shown: list[str] = []
+
+        def _shown(*args: object, **_kwargs: object) -> object:
+            shown.append(str(args[2]))
+            return QMessageBox.StandardButton.Ok
+
+        monkeypatch.setattr(QMessageBox, "information", _shown)
+        confirms: list[str] = []
+
+        def _no_confirm() -> bool:
+            confirms.append("asked")
+            return True
+
+        monkeypatch.setattr(window, "_confirm_nifti_replace", _no_confirm)
+        autostarted: list[str] = []
+        monkeypatch.setattr(
+            window._base_tab, "autostart_base_from_nifti", lambda p: autostarted.append(str(p))
+        )
+        chip = next(
+            button
+            for button in window._pipeline_bar.findChildren(QPushButton)
+            if button.text().startswith("1. Brain")
+        )
+        assert chip.isEnabled()
+        chip.click()
+
+        assert len(shown) == 1
+        assert "identical" in shown[0]
+        assert confirms == []
+        assert autostarted == []
+    finally:
+        window.close()
+        app.quit()
+
+
 def test_import_same_name_scan_skips_without_sidecar_offscreen(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Re-importing the same file warns even when no sidecar was recorded."""
+    from PySide6.QtWidgets import QMessageBox
+
     app = _offscreen_app()
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: QMessageBox.StandardButton.Ok)
     prefs = _make_prefs(tmp_path)
     window = IdeWindow(prefs=prefs)
     try:
