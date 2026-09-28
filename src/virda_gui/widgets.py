@@ -281,6 +281,8 @@ class ElectrodeGroupRow(QFrame):
     each with its own color.
     """
 
+    pathChanged = Signal(str)  # noqa: N815 - the typed file path
+
     def __init__(
         self,
         parent: QWidget | None = None,
@@ -299,6 +301,7 @@ class ElectrodeGroupRow(QFrame):
             label="",
             filetypes=[("Electrodes", "*.json *.tsv *.csv *.txt"), ("All files", "*")],
         )
+        self._selector.textChanged.connect(self.pathChanged.emit)
         layout.addWidget(self._selector, 1)
 
         self._swatch = QPushButton()
