@@ -1504,3 +1504,201 @@ def test_base_mesh_handoff_buttons_switch_tabs_offscreen(tmp_path: Path) -> None
     finally:
         window.close()
         app.quit()
+
+
+def _write_full_project(project: Path) -> None:
+    """Project with scan, base/final meshes, ESE companions and point tables."""
+    import json
+
+    import numpy as np
+
+    (project / "mesh").mkdir(parents=True)
+    (project / "input").mkdir(parents=True)
+    _write_mini_nifti(project / "input" / "head.nii.gz")
+    _write_triangle_ply(project / "mesh" / "base_mesh.ply")
+    _write_triangle_ply(project / "mesh" / "final_mesh.ply")
+
+    vertices = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
+    ese_dir = project / "ese"
+    ese_dir.mkdir()
+    np.save(ese_dir / "ese_vertices.npy", np.array(vertices))
+    np.save(ese_dir / "ese_faces.npy", np.array([[0, 1, 2]]))
+    np.save(ese_dir / "normals.npy", np.array([[0.0, 0.0, 1.0]] * 3))
+    np.save(ese_dir / "quality.npy", np.array([1.0, 1.0, 1.0]))
+    (ese_dir / "point_pairs.json").write_text(
+        json.dumps(
+            {
+                "n_points": 3,
+                "scalp_vertices": vertices,
+                "ese_vertices": vertices,
+                "normals": [[0.0, 0.0, 1.0]] * 3,
+                "quality": [1.0, 1.0, 1.0],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (ese_dir / "mesh.ply").write_text("placeholder", encoding="utf-8")
+
+    (project / "input" / "fiducials.json").write_text(
+        json.dumps(
+            {
+                "fiducials": [
+                    {
+                        "fiducial_id": fiducial_id,
+                        "name": fiducial_id,
+                        "coordinates": [1.0, 2.0, 3.0],
+                        "coordinate_system": "world",
+                        "definition_method": "manual",
+                        "weight": 1.0,
+                    }
+                    for fiducial_id in ("NAS", "LPA", "RPA")
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (project / "input" / "measurements.json").write_text(
+        json.dumps(
+            {
+                "electrodes": [
+                    {
+                        "electrode_id": "E1",
+                        "measured_distances": {"NAS": 1.0, "LPA": 2.0, "RPA": 3.0},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _chip_text(window: IdeWindow, key: str) -> str:
+    chips = {
+        button.text().split("\n")[0]: button.text() for button in window._pipeline_bar._buttons
+    }
+    return next(text for title, text in chips.items() if key in title)
+
+
+def test_import_new_scan_invalidates_meshes_but_keeps_tables_offscreen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A different scan drops base/final/ESE while fiducials/measurements survive."""
+    from PySide6.QtWidgets import QMessageBox
+
+    from virda_gui.scan_hash import sha256_file, write_source_hash
+
+    app = _offscreen_app()
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
+    try:
+        project = tmp_path / "full-project"
+        _write_full_project(project)
+        scan = project / "input" / "head.nii.gz"
+        write_source_hash(project / "mesh", scan, sha256_file(scan))
+        window.open_project(project)
+        assert window._ese_tab.current_ese_mesh() is not None
+
+        monkeypatch.setattr(window, "_confirm_nifti_replace", lambda: True)
+        autostarted: list[str] = []
+        monkeypatch.setattr(
+            window._base_tab, "autostart_base_from_nifti", lambda p: autostarted.append(str(p))
+        )
+        other = tmp_path / "head2.nii.gz"
+        other.write_bytes(b"a different scan")
+        role = next(r for r in ROLE_REGISTRY if r.key == "nifti")
+        window._import_nifti_scan(role, other)
+
+        assert not (project / "mesh" / "base_mesh.ply").exists()
+        assert not (project / "mesh" / "final_mesh.ply").exists()
+        assert list((project / "ese").glob("*")) == []
+        assert window._mesh_processing_tab.base_mesh() is None
+        assert window._ese_tab.current_ese_mesh() is None
+        assert window._localized_electrodes is None
+        assert [row.fiducial_id for row in window._editors_tab.fiducials.fiducial_rows()] == [
+            "NAS",
+            "LPA",
+            "RPA",
+        ]
+        assert (project / "input" / "fiducials.json").is_file()
+        assert (project / "input" / "measurements.json").is_file()
+        assert autostarted == [str(project / "input" / "head2.nii.gz")]
+        assert "[ok]" not in _chip_text(window, "2. Base")
+        assert "[ok]" not in _chip_text(window, "5. Points")
+    finally:
+        window.close()
+        app.quit()
+
+
+def test_import_identical_scan_skips_with_warning_offscreen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Re-importing the same scan warns and keeps every derived mesh."""
+    from PySide6.QtWidgets import QMessageBox
+
+    from virda_gui.scan_hash import sha256_file, write_source_hash
+
+    app = _offscreen_app()
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
+    try:
+        project = tmp_path / "full-project"
+        _write_full_project(project)
+        scan = project / "input" / "head.nii.gz"
+        write_source_hash(project / "mesh", scan, sha256_file(scan))
+        window.open_project(project)
+
+        confirms: list[str] = []
+
+        def _no_confirm() -> bool:
+            confirms.append("asked")
+            return True
+
+        monkeypatch.setattr(window, "_confirm_nifti_replace", _no_confirm)
+        autostarted: list[str] = []
+        monkeypatch.setattr(
+            window._base_tab, "autostart_base_from_nifti", lambda p: autostarted.append(str(p))
+        )
+        role = next(r for r in ROLE_REGISTRY if r.key == "nifti")
+        window._import_nifti_scan(role, scan)
+
+        assert confirms == []
+        assert autostarted == []
+        assert (project / "mesh" / "base_mesh.ply").is_file()
+        assert window._ese_tab.current_ese_mesh() is not None
+        assert "identical" in window.statusBar().currentMessage()
+    finally:
+        window.close()
+        app.quit()
+
+
+def test_base_generated_drops_ese_but_keeps_tables_offscreen(tmp_path: Path) -> None:
+    """A fresh base invalidates the ESE step while tables and base survive."""
+    app = _offscreen_app()
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
+    try:
+        project = tmp_path / "full-project"
+        _write_full_project(project)
+        window.open_project(project)
+        assert window._ese_tab.current_ese_mesh() is not None
+
+        window._on_base_generated(object())
+
+        assert (project / "mesh" / "base_mesh.ply").is_file()
+        assert (project / "mesh" / "final_mesh.ply").is_file()
+        assert list((project / "ese").glob("*")) == []
+        assert window._ese_tab.current_ese_mesh() is None
+        assert window._localized_electrodes is None
+        assert "ESE mesh" in window._editors_tab.localization._hint.text()
+        assert [row.fiducial_id for row in window._editors_tab.fiducials.fiducial_rows()] == [
+            "NAS",
+            "LPA",
+            "RPA",
+        ]
+        assert "[ok]" not in _chip_text(window, "4. Sensor")
+        assert "[ok]" not in _chip_text(window, "5. Points")
+    finally:
+        window.close()
+        app.quit()

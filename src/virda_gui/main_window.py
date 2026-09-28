@@ -58,6 +58,7 @@ from .pipeline_bar import PipelineBar
 from .pipeline_status import pipeline_steps
 from .preferences import Preferences
 from .project import classify_artifact
+from .scan_hash import read_source_hash, sha256_file
 from .sidebar import ProjectSidebar
 from .state import AppState
 from .tabs.base_generation_tab import BaseGenerationTab
@@ -481,7 +482,8 @@ class IdeWindow(QMainWindow):
         self._add_tab(self._base_tab, "Base Generation")
 
     def _on_base_generated(self, _mesh: object) -> None:
-        """Reload the mesh tab from disk after the base tab saved its result."""
+        """Reload the mesh tab after the base tab saved; the ESE mesh went stale."""
+        self._invalidate_derived_meshes(delete_base=False)
         project = self._project
         if project is not None:
             self._mesh_processing_tab.prefill_from_project(project)
@@ -633,12 +635,70 @@ class IdeWindow(QMainWindow):
             except ValueError as exc:
                 QMessageBox.critical(self, "Import error", str(exc))
                 continue
-            if role.key == "nifti" and not self._confirm_nifti_replace():
+            if role.key == "nifti":
+                self._import_nifti_scan(role, Path(source))
                 continue
-            target = self._perform_import(role, Path(source))
-            if role.key == "nifti" and target is not None:
-                self._show_base_tab()
-                self._base_tab.autostart_base_from_nifti(target)
+            self._perform_import(role, Path(source))
+
+    def _import_nifti_scan(self, role: ImportRole, source: Path) -> None:
+        """Import a NIfTI scan, invalidating stale meshes when it is new.
+
+        A scan identical to the recorded source is skipped with a warning;
+        anything else replaces the project's scan and drops the derived
+        base, final and ESE meshes (fiducials and measurements are kept).
+        """
+        assert self._project is not None
+        try:
+            incoming = sha256_file(source)
+        except OSError as exc:
+            QMessageBox.critical(self, "Import error", f"Could not read scan:\n{exc}")
+            return
+        stored = read_source_hash(self._project / "mesh")
+        has_scan = any(self._project.glob("input/*.nii*"))
+        if stored is not None and stored == incoming and has_scan:
+            self._status("Existing NIfTI is identical to the imported one.", 5000)
+            return
+        if not self._confirm_nifti_replace():
+            return
+        target = self._perform_import(role, source)
+        if target is None:
+            return
+        self._invalidate_derived_meshes(delete_base=True)
+        self._show_base_tab()
+        self._base_tab.autostart_base_from_nifti(target)
+
+    def _invalidate_derived_meshes(self, *, delete_base: bool) -> None:
+        """Drop derived meshes from disk and memory; tables are always kept.
+
+        With *delete_base* the base and final mesh files go too (a new scan
+        arrived); otherwise only the ESE artifacts are dropped (a fresh base
+        was just generated).  Fiducials and measurements survive either way.
+        """
+        project = self._project
+        if project is not None:
+            stale: list[Path] = []
+            ese_dir = project / "ese"
+            if ese_dir.is_dir():
+                stale.extend(path for path in ese_dir.glob("*") if path.is_file())
+            if delete_base:
+                stale.append(project / "mesh" / "base_mesh.ply")
+                stale.append(project / "mesh" / "final_mesh.ply")
+            for path in stale:
+                self._close_file_tab(str(path))
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError as exc:
+                    self._status(f"Could not remove stale file {path.name}:\n{exc}", 5000)
+        if delete_base:
+            self._mesh_processing_tab.clear()
+            self._base_tab.clear()
+        self._ese_tab.clear()
+        self._last_preview_mesh = None
+        self._localized_electrodes = None
+        self._editors_tab.localization.set_blocked(_ESE_BLOCKED_REASON)
+        if project is not None:
+            self._sidebar.set_project(project)
+        self._refresh_pipeline()
 
     def _confirm_nifti_replace(self) -> bool:
         """Warn that a new scan supersedes the project's inputs; False aborts.
