@@ -60,6 +60,7 @@ from virda.ops.options import (
     SealingOptions,
     SmoothOptions,
 )
+from virda_gui.export.mesh_ply import export_mesh_ply
 from virda_gui.state import AppState
 from virda_gui.viewer.scene import scene_placement
 from virda_gui.viewer.viewer_loaders import SceneData, collect_scene_data
@@ -394,14 +395,7 @@ class MeshProcessingTab(QWidget):
         if not path:
             return
         try:
-            import trimesh
-
-            target = Path(path)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            trimesh.Trimesh(
-                vertices=np.asarray(mesh.vertices, dtype=np.float64),
-                faces=np.asarray(mesh.faces, dtype=np.int64),
-            ).export(str(target))
+            target = export_mesh_ply(path, mesh.vertices, mesh.faces)
         except (OSError, ValueError) as exc:
             QMessageBox.critical(
                 self,
@@ -416,7 +410,7 @@ class MeshProcessingTab(QWidget):
                 f"Could not export {mesh_kind} mesh:\n{exc}",
             )
             return
-        self.status.emit(f"Exported {mesh_kind} mesh to {path}")
+        self.status.emit(f"Exported {mesh_kind} mesh to {target} in world coordinates")
 
     def _export_start_path(self, mesh_kind: MeshKind, array_kind: MeshArray) -> str:
         """Default location for the NPY export dialog (project folder when known)."""
