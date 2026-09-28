@@ -141,7 +141,7 @@ class MeshProcessingTab(QWidget):
         self._save_timer.setInterval(1000)
         self._save_timer.timeout.connect(self._autosave_final)
         self._preview_label = QLabel(
-            "No base mesh loaded. Load a mesh or generate from NIfTI.", panel
+            "No base mesh loaded. Generate one in the Base Generation tab.", panel
         )
         panel_layout.addWidget(self._preview_label)
 
@@ -170,14 +170,15 @@ class MeshProcessingTab(QWidget):
 
     def _build_source_box(self) -> QGroupBox:
         box = QGroupBox("Base scalp mesh", self)
-        row = QHBoxLayout(box)
-        row.setContentsMargins(4, 4, 4, 4)
-        row.setSpacing(6)
+        layout = QVBoxLayout(box)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(4)
         self._base_label = QLabel("No base mesh loaded", box)
-        row.addWidget(self._base_label, 1)
-        load_btn = QPushButton("Load...", box)
-        load_btn.clicked.connect(self._on_load_base)
-        row.addWidget(load_btn)
+        self._base_label.setWordWrap(True)
+        layout.addWidget(self._base_label)
+        hint = QLabel("Generate the base mesh in the Base Generation tab.", box)
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
         return box
 
     def _build_parameters_box(self) -> QGroupBox:
@@ -625,14 +626,6 @@ class MeshProcessingTab(QWidget):
         self._recompute_preview()
         self._autosave_final()
 
-    def _on_load_base(self) -> None:
-        path, _selected_filter = QFileDialog.getOpenFileName(
-            self, "Load scalp mesh", self._start_dir(), "Meshes (*.ply);;All files (*)"
-        )
-        if not path:
-            return
-        self.load_base(Path(path))
-
     def _set_base_path(self, path: Path | None) -> None:
         """Record the base mesh path and notify listeners of the change.
 
@@ -664,14 +657,6 @@ class MeshProcessingTab(QWidget):
         self._update_export_controls()
         self.previewMesh.emit(mesh)
         return True
-
-    def _start_dir(self) -> str:
-        if self._base_path is not None:
-            return str(self._base_path.parent)
-        project = self._state.last_project_dir
-        if project:
-            return str(Path(project) / "mesh")
-        return ""
 
     def _start_generation(
         self,
@@ -921,7 +906,7 @@ class MeshProcessingTab(QWidget):
         self._nifti_path = None
         self._result_hidden = False
         self._base_label.setText("No base mesh loaded")
-        self._preview_label.setText("No base mesh loaded. Load a mesh or generate from NIfTI.")
+        self._preview_label.setText("No base mesh loaded. Generate one in the Base Generation tab.")
         self._render_scene()
         self._update_generation_buttons()
         self._update_export_controls()

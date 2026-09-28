@@ -1506,6 +1506,23 @@ def test_base_tab_store_result_writes_meshes_and_sidecar_offscreen(
         app.quit()
 
 
+def test_source_paths_are_read_only_offscreen(tmp_path: Path) -> None:
+    """Pipeline source rows show paths without file-picker buttons."""
+    from PySide6.QtWidgets import QPushButton
+
+    app = _offscreen_app()
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
+    try:
+        base_buttons = [b.text() for b in window._base_tab.findChildren(QPushButton)]
+        assert not any("Pick" in text for text in base_buttons)
+        mesh_buttons = [b.text() for b in window._mesh_processing_tab.findChildren(QPushButton)]
+        assert "Load..." not in mesh_buttons
+    finally:
+        window.close()
+        app.quit()
+
+
 def test_base_mesh_handoff_buttons_switch_tabs_offscreen(tmp_path: Path) -> None:
     """Regenerate-base and open-in-mesh buttons navigate between the tabs."""
     from PySide6.QtWidgets import QPushButton, QWidget
