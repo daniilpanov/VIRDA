@@ -360,8 +360,6 @@ def _offscreen_app():
 
 
 def test_advanced_defaults_cover_generation_and_localization() -> None:
-    assert ADVANCED_FIELD_DEFAULTS["cleaner_min_vertices"] == "100"
-    assert ADVANCED_FIELD_DEFAULTS["cleaner_merge_digits"] == "7"
     assert ADVANCED_FIELD_DEFAULTS["residual_threshold_mm"] == "10.0"
     assert ADVANCED_FIELD_DEFAULTS["calibrate_ese_offset"] == "true"
 
@@ -484,8 +482,6 @@ def test_advanced_dialog_exposes_only_gui_keys_offscreen() -> None:
     dialog = AdvancedSettingsDialog(None, dict(ADVANCED_FIELD_DEFAULTS))
     try:
         assert set(dialog._fields) == {
-            "cleaner_min_vertices",
-            "cleaner_merge_digits",
             "residual_threshold_mm",
             "calibrate_ese_offset",
         }
@@ -1476,6 +1472,10 @@ def test_base_tab_step_labels_follow_voxel_spin_offscreen(tmp_path: Path) -> Non
         tab._voxel_spin.setValue(2.5)
         assert "marching cube step = 2" in tab._real_label.text()
         assert "2 x 2 x 2" in tab._real_label.text()
+        assert tab._seal_chk.isChecked()
+        assert tab._seal_radius_spin.value() == 4
+        assert tab._cleaner_min_vertices_spin.value() == 100
+        assert tab._cleaner_merge_digits_spin.value() == 7
     finally:
         tab.shutdown()
         tab.close()

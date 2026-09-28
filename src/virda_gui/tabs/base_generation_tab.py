@@ -183,6 +183,26 @@ class BaseGenerationTab(QWidget):
                 box,
             )
         )
+
+        clean_row = QHBoxLayout()
+        clean_row.addWidget(QLabel("Min component vertices:", box))
+        self._cleaner_min_vertices_spin = QSpinBox(box)
+        self._cleaner_min_vertices_spin.setRange(1, 100000)
+        self._cleaner_min_vertices_spin.setValue(100)
+        self._cleaner_min_vertices_spin.setToolTip(
+            "Drop mesh components smaller than this after extraction."
+        )
+        clean_row.addWidget(self._cleaner_min_vertices_spin)
+        clean_row.addWidget(QLabel("Merge digits:", box))
+        self._cleaner_merge_digits_spin = QSpinBox(box)
+        self._cleaner_merge_digits_spin.setRange(1, 12)
+        self._cleaner_merge_digits_spin.setValue(7)
+        self._cleaner_merge_digits_spin.setToolTip(
+            "Coordinate rounding used when merging duplicate vertices."
+        )
+        clean_row.addWidget(self._cleaner_merge_digits_spin)
+        clean_row.addStretch(1)
+        layout.addLayout(clean_row)
         return box
 
     def _build_actions_box(self) -> QGroupBox:
@@ -255,18 +275,9 @@ class BaseGenerationTab(QWidget):
     # ---- generation ----
 
     def _cleaning_options(self) -> CleanOptions:
-        advanced = self._state.advanced
-
-        def _int(key: str, default: int) -> int:
-            try:
-                value = int(float(advanced.get(key, "")))
-            except TypeError, ValueError:
-                return default
-            return value or default
-
         return CleanOptions(
-            min_component_vertices=_int("cleaner_min_vertices", 100),
-            merge_digits=_int("cleaner_merge_digits", 7),
+            min_component_vertices=self._cleaner_min_vertices_spin.value(),
+            merge_digits=self._cleaner_merge_digits_spin.value(),
         )
 
     def _derived_artifacts_exist(self) -> bool:
