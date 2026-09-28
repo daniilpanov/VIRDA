@@ -31,11 +31,25 @@ class PipelineBar(QWidget):
         self._layout.setContentsMargins(8, 4, 8, 4)
         self._layout.setSpacing(6)
         self._buttons: list[QPushButton] = []
+        self._key_buttons: dict[str, QPushButton] = {}
         self._steps: list[PipelineStep] = []
+        self._current: str | None = None
 
     def is_enabled(self, key: str) -> bool:
         """Whether the step with *key* is currently unlocked."""
         return next((step.enabled for step in self._steps if step.key == key), False)
+
+    def current_key(self) -> str | None:
+        """The highlighted step key, or None when no pipeline tab is active."""
+        return self._current
+
+    def set_current(self, key: str | None) -> None:
+        """Highlight the chip of the active tab; None clears the highlight."""
+        self._current = key
+        for step_key, button in self._key_buttons.items():
+            font = button.font()
+            font.setBold(step_key == key)
+            button.setFont(font)
 
     def set_steps(self, steps: list[PipelineStep]) -> None:
         """Rebuild the chips from the given pipeline steps."""
@@ -45,6 +59,7 @@ class PipelineBar(QWidget):
             if widget is not None:
                 widget.deleteLater()
         self._buttons = []
+        self._key_buttons = {}
         self._steps = list(steps)
         for step in steps:
             button = QPushButton(f"{step.title}\n{_MARKS[step.state]}", self)
@@ -57,3 +72,5 @@ class PipelineBar(QWidget):
                 button.setDefault(True)
             self._layout.addWidget(button, 1)
             self._buttons.append(button)
+            self._key_buttons[step.key] = button
+        self.set_current(self._current)

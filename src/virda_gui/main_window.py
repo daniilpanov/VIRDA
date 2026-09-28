@@ -178,6 +178,7 @@ class IdeWindow(QMainWindow):
         self._tabs.setTabsClosable(True)
         self._tabs.setDocumentMode(True)
         self._tabs.tabCloseRequested.connect(self._close_tab)
+        self._tabs.currentChanged.connect(self._on_tab_changed)
 
         splitter = QSplitter(Qt.Orientation.Horizontal, self)
         splitter.addWidget(self._sidebar)
@@ -502,6 +503,19 @@ class IdeWindow(QMainWindow):
                 measurement_rows=measurement_rows,
             )
         )
+
+    def _on_tab_changed(self, _index: int) -> None:
+        """Highlight the stepper chip of the active pipeline tab, if any."""
+        widget = self._tabs.currentWidget()
+        if widget is self._mesh_processing_tab:
+            key: str | None = "mesh"
+        elif widget is self._ese_tab:
+            key = "ese"
+        elif widget is self._editors_tab:
+            key = "points"
+        else:
+            key = None
+        self._pipeline_bar.set_current(key)
 
     def _on_pipeline_step(self, key: str) -> None:
         """Navigate to the tab where pipeline step *key* is performed."""
