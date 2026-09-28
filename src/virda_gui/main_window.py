@@ -107,6 +107,7 @@ class IdeWindow(QMainWindow):
         self._pick_btn: QPushButton | None = None
         self._electrode_group_widgets: list[ElectrodeGroupRow] = []
         self._file_tabs: dict[str, QWidget] = {}
+        self._invalidated_file_tabs: list[str] = []
         self._status_history: list[str] = []
         self._prefs = prefs or Preferences()
 
@@ -489,7 +490,28 @@ class IdeWindow(QMainWindow):
         project = self._project
         if project is not None:
             self._mesh_processing_tab.prefill_from_project(project)
+        self._reopen_invalidated_file_tabs()
+        self._reload_viewer_if_open()
         self._refresh_pipeline()
+
+    def _reload_viewer_if_open(self) -> None:
+        """Reload the open 3D viewer scene so regenerated data reappears."""
+        if self._viewer_widget is None or self._viewer_tab_widget is None:
+            return
+        if self._state.viewer_loading:
+            return
+        project = self._project
+        if project is None and self._state.last_project_dir:
+            project = Path(self._state.last_project_dir)
+        if project is None or not self._collect_viewer_kwargs(project):
+            return
+        self._open_viewer(project)
+
+    def _reopen_invalidated_file_tabs(self) -> None:
+        """Re-open file tabs closed by invalidation; missing files are skipped."""
+        pending, self._invalidated_file_tabs = self._invalidated_file_tabs, []
+        for key in pending:
+            self._open_file_tab(Path(key))
 
     def _show_ese_tab(self) -> None:
         self._sync_ese_backdrop()
@@ -739,7 +761,10 @@ class IdeWindow(QMainWindow):
                 stale.append(project / "mesh" / "base_mesh.ply")
                 stale.append(project / "mesh" / "final_mesh.ply")
             for path in stale:
-                self._close_file_tab(str(path))
+                key = str(path)
+                if key in self._file_tabs and key not in self._invalidated_file_tabs:
+                    self._invalidated_file_tabs.append(key)
+                self._close_file_tab(key)
                 try:
                     path.unlink(missing_ok=True)
                 except OSError as exc:
@@ -1270,6 +1295,8 @@ class IdeWindow(QMainWindow):
 
     def _on_add_electrode_group(self) -> None:
         self._add_electrode_group_row()
+        self._sync_electrode_groups()
+        self._reload_viewer_if_open()
 
     def _add_electrode_group_row(self, path: str = "", color: str | None = None) -> None:
         if color is None:
@@ -1290,6 +1317,7 @@ class IdeWindow(QMainWindow):
             self._electrode_groups_layout.removeWidget(row)
         row.deleteLater()
         self._sync_electrode_groups()
+        self._reload_viewer_if_open()
 
     def _on_electrodes_cras_toggled(self, checked: bool) -> None:
         self._state.electrodes_cras = checked
@@ -1481,6 +1509,8 @@ class IdeWindow(QMainWindow):
         if self._state.last_project_dir:
             self._sidebar.set_project(Path(self._state.last_project_dir))
         self._status("ESE mesh saved.", 5000)
+        self._reopen_invalidated_file_tabs()
+        self._reload_viewer_if_open()
         self._refresh_pipeline()
 
     # ------------------------------------------------------------------
