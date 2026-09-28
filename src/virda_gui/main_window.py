@@ -500,7 +500,6 @@ class IdeWindow(QMainWindow):
                 ese_in_memory=self._ese_tab.current_ese_mesh() is not None,
                 fiducials_filled=fiducials_filled,
                 measurement_rows=measurement_rows,
-                localized_summary=self._editors_tab.localization.localized_summary(),
             )
         )
 
@@ -514,11 +513,6 @@ class IdeWindow(QMainWindow):
             self._show_ese_tab()
         elif key == "points":
             self._show_editors_tab()
-        elif key == "electrodes":
-            if self._viewer_widget is not None and self._viewer_tab_widget is not None:
-                self._tabs.setCurrentWidget(self._viewer_tab_widget)
-            else:
-                self._show_editors_tab()
 
     # ------------------------------------------------------------------
     # Project file tabs
