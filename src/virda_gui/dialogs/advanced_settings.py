@@ -21,7 +21,7 @@ from virda_gui.widgets import LabeledField
 
 
 class AdvancedSettingsDialog(QDialog):
-    """Modal dialog for advanced mesh-generation and localization settings."""
+    """Modal dialog for advanced localization settings."""
 
     def __init__(self, parent: QWidget | None, values: dict[str, str]) -> None:
         super().__init__(parent)
@@ -43,7 +43,6 @@ class AdvancedSettingsDialog(QDialog):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(4)
 
-        self._build_mesh_generation_section(container, layout)
         self._build_localization_section(container, layout)
 
         btn_frame = QFrame(container)
@@ -65,13 +64,6 @@ class AdvancedSettingsDialog(QDialog):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.addWidget(scroll)
-
-    def _build_mesh_generation_section(self, parent: QWidget, outer: QVBoxLayout) -> None:
-        box = QGroupBox("Mesh generation", parent)
-        layout = QVBoxLayout(box)
-        self._add_field(box, layout, "cleaner_min_vertices", "Min component vertices", "entry")
-        self._add_field(box, layout, "cleaner_merge_digits", "Merge digits", "entry")
-        outer.addWidget(box)
 
     def _build_localization_section(self, parent: QWidget, outer: QVBoxLayout) -> None:
         box = QGroupBox("Localization", parent)

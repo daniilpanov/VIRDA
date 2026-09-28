@@ -19,8 +19,6 @@ PROJECT_ARTIFACT_DIRS = [
 #: GUI-only settings; every knob is controlled in the interface and never
 #: persisted to a pipeline config file.
 ADVANCED_FIELD_DEFAULTS: dict[str, str] = {
-    "cleaner_min_vertices": "100",
-    "cleaner_merge_digits": "7",
     "residual_threshold_mm": "10.0",
     "calibrate_ese_offset": "true",
 }
