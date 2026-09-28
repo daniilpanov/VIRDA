@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QStandardItemModel
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -1241,6 +1241,12 @@ class EditorsTab(QWidget):
         self._localization.exported.connect(self.filesSaved.emit)
         self._measurements.rowsChanged.connect(self.refresh_pipeline_badge)
         self._localization.resultChanged.connect(self.refresh_pipeline_badge)
+        self._save_timer = QTimer(self)
+        self._save_timer.setSingleShot(True)
+        self._save_timer.setInterval(1000)
+        self._save_timer.timeout.connect(self._autosave_tables)
+        self._fiducials.rowsChanged.connect(self._schedule_autosave)
+        self._measurements.rowsChanged.connect(self._schedule_autosave)
         self._fiducials.seed_canonical_rows()
         self.refresh_pipeline_badge()
 
@@ -1297,6 +1303,52 @@ class EditorsTab(QWidget):
         if not ready:
             self._localization.set_result(None, None)
         self.refresh_pipeline_badge()
+
+    def _schedule_autosave(self) -> None:
+        """Debounce table edits before writing them back to the project."""
+        self._save_timer.start()
+
+    def _autosave_tables(self) -> None:
+        """Write both tables to the project's ``input/`` files without dialogs.
+
+        Invalid tables are skipped silently (the badge already reports them);
+        with no project open there is nowhere to write and nothing happens.
+        """
+        project = self._state.last_project_dir
+        if not project:
+            return
+        root = Path(project) / "input"
+        try:
+            fiducials = rows_to_fiducials(self._fiducials.fiducial_rows())
+        except ValueError:
+            fiducials = None
+        if fiducials is not None:
+            try:
+                target = root / DEFAULT_FIDUCIALS_FILENAME
+                export_fiducials(target, fiducials)
+            except OSError:
+                pass
+            else:
+                self._fiducials._path = target
+                self._fiducials._dirty = False
+                self._fiducials.fileSaved.emit()
+        try:
+            schema = self._measurements.collected_schema()
+        except ValueError:
+            schema = None
+        if schema is not None:
+            try:
+                target = root / DEFAULT_MEASUREMENTS_FILENAME
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(
+                    json.dumps(schema, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+                )
+            except OSError:
+                pass
+            else:
+                self._measurements._path = target
+                self._measurements._dirty = False
+                self._measurements.fileSaved.emit()
 
     def refresh_pipeline_badge(self) -> None:
         """Show the fiducials -> measurements -> localized pipeline state."""

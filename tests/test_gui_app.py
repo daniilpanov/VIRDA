@@ -1306,3 +1306,113 @@ def test_blocked_localization_drops_cached_result_offscreen(
     finally:
         window.close()
         app.quit()
+
+
+def test_tables_autosave_to_project_on_edit_offscreen(tmp_path: Path) -> None:
+    """Table edits are written back to input/*.json without a Save click."""
+    import json
+
+    from virda_gui.tabs.editors_tab import FiducialRow, MeasurementRow
+
+    app = _offscreen_app()
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
+    try:
+        project = tmp_path / "autosave-project"
+        (project / "input").mkdir(parents=True)
+        window.open_project(project)
+
+        tab = window._editors_tab
+        tab.fiducials.set_rows(
+            [
+                FiducialRow(
+                    fiducial_id=fiducial_id,
+                    name=fiducial_id,
+                    coordinates=(1.0, 2.0, 3.0),
+                    coordinate_system="world",
+                    definition_method="manual",
+                    weight=1.0,
+                )
+                for fiducial_id in ("NAS", "LPA", "RPA")
+            ]
+        )
+        tab.measurements.set_measurement_rows(
+            [
+                MeasurementRow(
+                    electrode_id="E1",
+                    measured_distances={"NAS": 1.0, "LPA": 2.0, "RPA": 3.0},
+                )
+            ]
+        )
+        assert tab._save_timer.isActive()  # edits arm the debounced save
+        tab._autosave_tables()
+
+        fiducials_path = project / "input" / "fiducials.json"
+        measurements_path = project / "input" / "measurements.json"
+        assert fiducials_path.is_file()
+        assert measurements_path.is_file()
+        assert [
+            item["fiducial_id"] for item in json.loads(fiducials_path.read_text())["fiducials"]
+        ] == [
+            "NAS",
+            "LPA",
+            "RPA",
+        ]
+        assert json.loads(measurements_path.read_text())["electrodes"][0]["electrode_id"] == "E1"
+        assert not tab.is_dirty()
+    finally:
+        window.close()
+        app.quit()
+
+
+def test_autosave_skips_invalid_tables_offscreen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Half-filled tables are skipped silently instead of clobbering the files."""
+    from PySide6.QtWidgets import QMessageBox
+
+    from virda_gui.tabs.editors_tab import FiducialRow
+
+    app = _offscreen_app()
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
+    try:
+        project = tmp_path / "invalid-project"
+        (project / "input").mkdir(parents=True)
+        window.open_project(project)
+
+        tab = window._editors_tab
+        tab.fiducials.set_rows(
+            [
+                FiducialRow(
+                    fiducial_id="NAS",
+                    name="NAS",
+                    coordinates=(0.0, 0.0, 0.0),
+                    coordinate_system="world",
+                    definition_method="manual",
+                    weight=1.0,
+                )
+            ]
+        )
+        tab._autosave_tables()
+        assert (project / "input" / "fiducials.json").is_file()
+
+        tab.fiducials.set_rows(
+            [
+                FiducialRow(
+                    fiducial_id="NAS",
+                    name="NAS",
+                    coordinates=("", "", ""),  # type: ignore[arg-type]
+                    coordinate_system="world",
+                    definition_method="manual",
+                    weight=1.0,
+                )
+            ]
+        )
+        before = (project / "input" / "fiducials.json").read_bytes()
+        tab._autosave_tables()  # must not raise, warn, or clobber
+        assert (project / "input" / "fiducials.json").read_bytes() == before
+    finally:
+        window.close()
+        app.quit()
