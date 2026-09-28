@@ -606,6 +606,9 @@ def test_pipeline_bar_tracks_active_tab_offscreen(tmp_path: Path) -> None:
     try:
         assert window._pipeline_bar.current_key() is None
 
+        window._show_base_tab()
+        assert window._pipeline_bar.current_key() == "base"
+
         window._show_mesh_processing_tab()
         assert window._pipeline_bar.current_key() == "mesh"
 

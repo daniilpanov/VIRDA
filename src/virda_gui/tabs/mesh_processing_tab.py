@@ -895,6 +895,10 @@ class MeshProcessingTab(QWidget):
         """The in-memory mesh the user is working on (preview, else the base)."""
         return self._preview_mesh if self._preview_mesh is not None else self._base_mesh
 
+    def base_mesh(self) -> ScalpMesh | None:
+        """The in-memory base mesh, if one was loaded or generated."""
+        return self._base_mesh
+
     def splitter_state(self) -> Any:
         """Opaque splitter layout for session restore."""
         return self._splitter.saveState()
