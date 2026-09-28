@@ -375,12 +375,16 @@ class MeshProcessingTab(QWidget):
         self._export_active_mesh_array("faces")
 
     def _on_export_mesh_file(self) -> None:
-        active = self._active_mesh()
-        if active is None:
+        mesh = self._active_mesh()
+        if mesh is None:
             return
-        mesh, mesh_kind = active
+        mesh_kind = "scalp"
         project = self._state.last_project_dir
-        start = str(Path(project) / f"{mesh_kind}_mesh.ply") if project else f"{mesh_kind}_mesh.ply"
+        start = (
+            str(Path(project) / "mesh" / f"{mesh_kind}_mesh.ply")
+            if project
+            else f"{mesh_kind}_mesh.ply"
+        )
         path, _selected_filter = QFileDialog.getSaveFileName(
             self,
             f"Export {mesh_kind} mesh",
