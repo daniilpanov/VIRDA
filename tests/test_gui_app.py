@@ -493,9 +493,14 @@ def test_advanced_dialog_exposes_only_gui_keys_offscreen() -> None:
         app.quit()
 
 
-def test_ide_window_constructs_and_manages_project_offscreen(tmp_path: Path) -> None:
+def test_ide_window_constructs_and_manages_project_offscreen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """IdeWindow builds, opens/closes a project and closes tabs without a run tab."""
+    from PySide6.QtWidgets import QMessageBox
+
     app = _offscreen_app()
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.No)
     prefs = _make_prefs(tmp_path)
     window = IdeWindow(prefs=prefs)
     try:
@@ -690,9 +695,14 @@ def test_ide_window_prefills_editors_from_project_offscreen(tmp_path: Path) -> N
         app.quit()
 
 
-def test_prefill_ignores_final_mesh_as_base_offscreen(tmp_path: Path) -> None:
+def test_prefill_ignores_final_mesh_as_base_offscreen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A final mesh on disk never becomes the base mesh on project open."""
+    from PySide6.QtWidgets import QMessageBox
+
     app = _offscreen_app()
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.No)
     prefs = _make_prefs(tmp_path)
     window = IdeWindow(prefs=prefs)
     try:
@@ -798,7 +808,10 @@ def test_npy_export_dialogs_default_to_project_dir_offscreen(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """NPY save dialogs open in the current project folder by default."""
+    from PySide6.QtWidgets import QMessageBox
+
     app = _offscreen_app()
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.No)
     prefs = _make_prefs(tmp_path)
     window = IdeWindow(prefs=prefs)
     try:
@@ -1080,11 +1093,16 @@ def test_localization_blocked_until_ese_mesh_offscreen(
         app.quit()
 
 
-def test_open_project_autoloads_ese_mesh_offscreen(tmp_path: Path) -> None:
+def test_open_project_autoloads_ese_mesh_offscreen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Opening a project with ese/mesh.ply restores the in-memory ESE mesh."""
     import json
 
+    from PySide6.QtWidgets import QMessageBox
+
     app = _offscreen_app()
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.No)
     prefs = _make_prefs(tmp_path)
     window = IdeWindow(prefs=prefs)
     try:
@@ -1177,11 +1195,16 @@ def test_viewer_open_restores_ese_overlay_offscreen(
         app.quit()
 
 
-def test_ese_signal_schedules_localization_without_viewer_offscreen(tmp_path: Path) -> None:
+def test_ese_signal_schedules_localization_without_viewer_offscreen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Mesh/ESE signals schedule localization even when the 3D viewer is closed."""
     import json
 
+    from PySide6.QtWidgets import QMessageBox
+
     app = _offscreen_app()
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.No)
     prefs = _make_prefs(tmp_path)
     window = IdeWindow(prefs=prefs)
     try:
@@ -1704,9 +1727,14 @@ def test_base_generated_drops_ese_but_keeps_tables_offscreen(tmp_path: Path) -> 
         app.quit()
 
 
-def test_legacy_hole_project_shows_linear_prefix_offscreen(tmp_path: Path) -> None:
+def test_legacy_hole_project_shows_linear_prefix_offscreen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Final+ESE without a base: only scan is [ok], base is active, rest locked."""
+    from PySide6.QtWidgets import QMessageBox
+
     app = _offscreen_app()
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.No)
     prefs = _make_prefs(tmp_path)
     window = IdeWindow(prefs=prefs)
     try:
@@ -1729,6 +1757,56 @@ def test_legacy_hole_project_shows_linear_prefix_offscreen(tmp_path: Path) -> No
             "LPA",
             "RPA",
         ]
+    finally:
+        window.close()
+        app.quit()
+
+
+def test_hole_dialog_offers_rebuild_from_last_valid_offscreen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Accepting the data-loss dialog navigates to the first missing step."""
+    from PySide6.QtWidgets import QMessageBox
+
+    app = _offscreen_app()
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
+    try:
+        project = tmp_path / "hole-project"
+        _write_full_project(project)
+        (project / "mesh" / "base_mesh.ply").unlink()
+        window.open_project(project)
+
+        assert window._tabs.currentWidget() is window._base_tab
+    finally:
+        window.close()
+        app.quit()
+
+
+def test_hole_dialog_decline_stays_put_offscreen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Declining the data-loss dialog keeps the current tab and the tables."""
+    from PySide6.QtWidgets import QMessageBox
+
+    app = _offscreen_app()
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.No)
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
+    try:
+        project = tmp_path / "hole-project"
+        _write_full_project(project)
+        (project / "mesh" / "base_mesh.ply").unlink()
+        window.open_project(project)
+
+        assert window._tabs.count() == 0  # no tab is forced open
+        assert [row.fiducial_id for row in window._editors_tab.fiducials.fiducial_rows()] == [
+            "NAS",
+            "LPA",
+            "RPA",
+        ]
+        assert (project / "input" / "fiducials.json").is_file()
     finally:
         window.close()
         app.quit()

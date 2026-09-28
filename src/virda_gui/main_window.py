@@ -55,7 +55,7 @@ from .importing import (
     validate_import_source,
 )
 from .pipeline_bar import PipelineBar
-from .pipeline_status import pipeline_steps
+from .pipeline_status import describe_hole, pipeline_steps
 from .preferences import Preferences
 from .project import classify_artifact
 from .scan_hash import read_source_hash, sha256_file
@@ -364,6 +364,7 @@ class IdeWindow(QMainWindow):
         self.setWindowTitle(f"VIRDA — {project.name}")
         self._status(f"Project opened: {project}", 5000)
         self._refresh_pipeline()
+        self._maybe_warn_data_loss()
 
     def close_project(self) -> None:
         """Close the project and reset the window to the empty state."""
@@ -492,37 +493,67 @@ class IdeWindow(QMainWindow):
     def _show_ese_tab(self) -> None:
         self._add_tab(self._ese_tab, "ESE Surface")
 
+    def _pipeline_progress(self) -> dict[str, object]:
+        """Gather the saved and in-memory inputs of the pipeline step model."""
+        project = self._project
+        progress: dict[str, object] = {
+            "nifti_saved": False,
+            "base_saved": False,
+            "mesh_saved": False,
+            "ese_saved": False,
+        }
+        if project is not None:
+            progress["nifti_saved"] = any(project.glob("input/*.nii*"))
+            progress["base_saved"] = (project / "mesh" / "base_mesh.ply").is_file()
+            progress["mesh_saved"] = (project / "mesh" / "final_mesh.ply").is_file()
+            progress["ese_saved"] = (project / "ese" / "mesh.ply").is_file()
+        try:
+            progress["fiducials_filled"] = len(self._editors_tab.fiducials.filled_rows())
+        except ValueError:
+            progress["fiducials_filled"] = 0
+        try:
+            progress["measurement_rows"] = len(self._editors_tab.measurements.measurement_rows())
+        except ValueError:
+            progress["measurement_rows"] = 0
+        progress["base_in_memory"] = (
+            self._mesh_processing_tab.base_mesh() is not None
+            or self._base_tab.current_base_mesh() is not None
+        )
+        progress["mesh_in_memory"] = self._mesh_processing_tab.current_scalp_mesh() is not None
+        progress["ese_in_memory"] = self._ese_tab.current_ese_mesh() is not None
+        return progress
+
     def _refresh_pipeline(self) -> None:
         """Recompute the stepper bar from project files and tab memory."""
-        project = self._project
-        nifti_saved = base_saved = mesh_saved = ese_saved = False
-        if project is not None:
-            nifti_saved = any(project.glob("input/*.nii*"))
-            base_saved = (project / "mesh" / "base_mesh.ply").is_file()
-            mesh_saved = (project / "mesh" / "final_mesh.ply").is_file()
-            ese_saved = (project / "ese" / "mesh.ply").is_file()
-        try:
-            fiducials_filled = len(self._editors_tab.fiducials.filled_rows())
-        except ValueError:
-            fiducials_filled = 0
-        try:
-            measurement_rows = len(self._editors_tab.measurements.measurement_rows())
-        except ValueError:
-            measurement_rows = 0
-        self._pipeline_bar.set_steps(
-            pipeline_steps(
-                nifti_saved=nifti_saved,
-                base_saved=base_saved,
-                mesh_saved=mesh_saved,
-                ese_saved=ese_saved,
-                base_in_memory=self._mesh_processing_tab.base_mesh() is not None
-                or self._base_tab.current_base_mesh() is not None,
-                mesh_in_memory=self._mesh_processing_tab.current_scalp_mesh() is not None,
-                ese_in_memory=self._ese_tab.current_ese_mesh() is not None,
-                fiducials_filled=fiducials_filled,
-                measurement_rows=measurement_rows,
-            )
+        self._pipeline_bar.set_steps(pipeline_steps(**self._pipeline_progress()))  # type: ignore[arg-type]
+
+    def _maybe_warn_data_loss(self) -> None:
+        """Report orphaned meshes on project open and offer a rebuild.
+
+        Fiducials and measurements are never part of the loss: they survive
+        in their tables and files, only the derived meshes go stale.
+        """
+        report = describe_hole(pipeline_steps(**self._pipeline_progress()))  # type: ignore[arg-type]
+        if report is None:
+            return
+        answer = QMessageBox.question(
+            self,
+            "Derived data lost",
+            "Derived data was lost: "
+            + ", ".join(report.orphaned_titles)
+            + f".\n\nThe last valid step is {report.last_valid_title}.\n"
+            f"Go to {report.redo_title} to regenerate?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
         )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        if report.redo_key == "base":
+            self._show_base_tab()
+        elif report.redo_key == "mesh":
+            self._show_mesh_processing_tab()
+        elif report.redo_key == "ese":
+            self._show_ese_tab()
 
     def _on_tab_changed(self, _index: int) -> None:
         """Highlight the stepper chip of the active pipeline tab, if any."""

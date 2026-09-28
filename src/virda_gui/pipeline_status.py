@@ -24,6 +24,41 @@ class PipelineStep:
     detail: str
     state: StepState
     enabled: bool
+    orphaned: bool = False
+
+
+@dataclass(frozen=True)
+class HoleReport:
+    """A real gap in the pipeline: orphaned steps and where to rebuild."""
+
+    redo_key: str
+    redo_title: str
+    last_valid_title: str
+    orphaned_titles: list[str]
+
+
+def describe_hole(steps: list[PipelineStep]) -> HoleReport | None:
+    """Describe the pipeline gap, if any step is orphaned behind it.
+
+    Returns None when every present artifact forms a valid prefix.  The
+    redo step is the first derived step without its artifact; rebuilding
+    starts there, right after the last valid step.
+    """
+    by_key = {step.key: step for step in steps}
+    orphaned = [step for step in steps if step.orphaned]
+    if not orphaned:
+        return None
+    order = ("base", "mesh", "ese")
+    titles = {step.key: step.title for step in steps}
+    redo_key = next(key for key in order if by_key[key].state in ("active", "waiting"))
+    redo_index = order.index(redo_key)
+    last_valid_title = titles["scan"] if redo_index == 0 else titles[order[redo_index - 1]]
+    return HoleReport(
+        redo_key=redo_key,
+        redo_title=titles[redo_key],
+        last_valid_title=last_valid_title,
+        orphaned_titles=[step.title for step in orphaned],
+    )
 
 
 def pipeline_steps(
@@ -68,9 +103,15 @@ def pipeline_steps(
             if nifti_saved
             else "Import a brain scan first."
         )
+    mesh_orphaned = mesh_present and not base_present
     if not base_present:
         mesh_state = "waiting"
-        mesh_detail = "Generate the base surface first."
+        mesh_detail = (
+            "Base surface is missing: this mesh is stale (data loss). "
+            "Regenerate the base surface first."
+            if mesh_orphaned
+            else "Generate the base surface first."
+        )
     elif mesh_saved:
         mesh_state = "done"
         mesh_detail = "Skin surface saved."
@@ -82,9 +123,15 @@ def pipeline_steps(
         mesh_detail = "Postprocess the base surface."
     mesh_eff = base_present and mesh_present
 
+    ese_orphaned = ese_present and not mesh_eff
     if not mesh_eff:
         ese_state = "waiting"
-        ese_detail = "Needs the skin surface first."
+        ese_detail = (
+            "Skin surface is missing: this surface is stale (data loss). "
+            "Rebuild the skin surface first."
+            if ese_orphaned
+            else "Needs the skin surface first."
+        )
     elif ese_saved:
         ese_state = "done"
         ese_detail = "Sensor surface saved."
@@ -133,6 +180,7 @@ def pipeline_steps(
             detail=mesh_detail,
             state=mesh_state,
             enabled=base_present,
+            orphaned=mesh_orphaned,
         ),
         PipelineStep(
             key="ese",
@@ -140,6 +188,7 @@ def pipeline_steps(
             detail=ese_detail,
             state=ese_state,
             enabled=mesh_eff,
+            orphaned=ese_orphaned,
         ),
         PipelineStep(
             key="points",
