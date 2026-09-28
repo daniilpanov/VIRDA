@@ -364,6 +364,7 @@ class IdeWindow(QMainWindow):
         self.setWindowTitle(f"VIRDA — {project.name}")
         self._status(f"Project opened: {project}", 5000)
         self._refresh_pipeline()
+        self._sync_ese_backdrop()
         self._maybe_warn_data_loss()
 
     def close_project(self) -> None:
@@ -491,7 +492,14 @@ class IdeWindow(QMainWindow):
         self._refresh_pipeline()
 
     def _show_ese_tab(self) -> None:
+        self._sync_ese_backdrop()
         self._add_tab(self._ese_tab, "ESE Surface")
+
+    def _sync_ese_backdrop(self) -> None:
+        """Push the working scalp mesh into the ESE tab backdrop, if any."""
+        working = self._mesh_processing_tab.current_scalp_mesh()
+        if working is not None:
+            self._ese_tab.show_preview(working)
 
     def _pipeline_progress(self) -> dict[str, object]:
         """Gather the saved and in-memory inputs of the pipeline step model."""
