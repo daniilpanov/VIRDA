@@ -12,7 +12,6 @@ def _base(**overrides):
         "ese_in_memory": False,
         "fiducials_filled": 0,
         "measurement_rows": 0,
-        "localized_summary": "none",
     }
     args.update(overrides)
     return pipeline_steps(**args)  # type: ignore[arg-type]
@@ -28,7 +27,6 @@ def test_empty_project_first_step_active() -> None:
         ("mesh", "waiting"),
         ("ese", "waiting"),
         ("points", "waiting"),
-        ("electrodes", "waiting"),
     ]
 
 
@@ -39,10 +37,8 @@ def test_full_project_all_done() -> None:
         ese_saved=True,
         fiducials_filled=3,
         measurement_rows=2,
-        localized_summary="4/5",
     )
-    assert [state for _, state in _states(steps)] == ["done"] * 5
-    assert "4/5" in steps[4].detail
+    assert [state for _, state in _states(steps)] == ["done"] * 4
 
 
 def test_memory_only_mesh_is_unsaved() -> None:
@@ -68,4 +64,3 @@ def test_points_need_three_fiducials_and_one_row() -> None:
         measurement_rows=1,
     )
     assert _states(done)[3] == ("points", "done")
-    assert _states(done)[4] == ("electrodes", "active")

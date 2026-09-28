@@ -1,9 +1,9 @@
 """Pipeline step model for the guided workflow bar.
 
 Qt-free: given what is saved in the project folder and what lives only in
-memory, describe the five user-facing steps (brain scan, skin surface,
-sensor surface, points and measures, located sensors) with plain-language
-titles, next-action hints and one of four states.  Unit-testable headless.
+memory, describe the four user-facing steps (brain scan, skin surface,
+sensor surface, points and measures) with plain-language titles, next-action
+hints and one of four states.  Unit-testable headless.
 """
 
 from __future__ import annotations
@@ -33,9 +33,8 @@ def pipeline_steps(
     ese_in_memory: bool,
     fiducials_filled: int,
     measurement_rows: int,
-    localized_summary: str,
 ) -> list[PipelineStep]:
-    """Build the five pipeline steps from saved and in-memory progress.
+    """Build the four pipeline steps from saved and in-memory progress.
 
     Saved files win over memory: a step is ``done`` when its artifact is on
     disk, ``unsaved`` when it exists only in memory, ``active`` when it is
@@ -82,16 +81,6 @@ def pipeline_steps(
             missing.append("add one measurement row")
         points_detail = "To continue: " + " and ".join(missing) + "."
 
-    electrodes_done = localized_summary not in ("", "none")
-    if electrodes_done:
-        electrodes_state: StepState = "done"
-        electrodes_detail = f"Located {localized_summary} sensors."
-    else:
-        electrodes_state = "active" if points_done else "waiting"
-        electrodes_detail = (
-            "Run localization." if points_done else "Needs points and measures first."
-        )
-
     return [
         PipelineStep(
             key="scan",
@@ -113,11 +102,5 @@ def pipeline_steps(
             title="4. Points and measures",
             detail=points_detail,
             state=points_state,
-        ),
-        PipelineStep(
-            key="electrodes",
-            title="5. Sensors found",
-            detail=electrodes_detail,
-            state=electrodes_state,
         ),
     ]
