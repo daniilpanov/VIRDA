@@ -725,6 +725,9 @@ def test_load_base_recomputes_preview_offscreen(tmp_path: Path) -> None:
     prefs = _make_prefs(tmp_path)
     window = IdeWindow(prefs=prefs)
     try:
+        mesh_tab = window._mesh_processing_tab
+        assert mesh_tab._smoother_combo.currentData() == "taubin"
+        assert mesh_tab._iterations_spin.isEnabled()
         project = tmp_path / "preview-project"
         (project / "mesh").mkdir(parents=True)
         base_path = project / "mesh" / "base_mesh.ply"

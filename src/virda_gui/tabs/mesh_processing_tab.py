@@ -193,6 +193,7 @@ class MeshProcessingTab(QWidget):
         self._smoother_combo = QComboBox(box)
         for value, label in _SMOOTHER_ITEMS:
             self._smoother_combo.addItem(label, value)
+        self._smoother_combo.setCurrentIndex(self._smoother_combo.findData("taubin"))
         smoother_row.addWidget(self._smoother_combo)
         smoother_row.addWidget(QLabel("Iterations:", box))
         self._iterations_spin = QSpinBox(box)
