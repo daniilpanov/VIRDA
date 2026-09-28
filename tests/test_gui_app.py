@@ -1640,10 +1640,6 @@ def test_import_new_scan_invalidates_meshes_but_keeps_tables_offscreen(
         assert window._ese_tab.current_ese_mesh() is not None
 
         monkeypatch.setattr(window, "_confirm_nifti_replace", lambda: True)
-        autostarted: list[str] = []
-        monkeypatch.setattr(
-            window._base_tab, "autostart_base_from_nifti", lambda p: autostarted.append(str(p))
-        )
         other = tmp_path / "head2.nii.gz"
         other.write_bytes(b"a different scan")
         role = next(r for r in ROLE_REGISTRY if r.key == "nifti")
@@ -1662,7 +1658,8 @@ def test_import_new_scan_invalidates_meshes_but_keeps_tables_offscreen(
         ]
         assert (project / "input" / "fiducials.json").is_file()
         assert (project / "input" / "measurements.json").is_file()
-        assert autostarted == [str(project / "input" / "head2.nii.gz")]
+        assert window._base_tab._source_path == project / "input" / "head2.nii.gz"
+        assert window._tabs.currentWidget() is window._base_tab
         assert "[ok]" not in _chip_text(window, "2. Base")
         assert "[ok]" not in _chip_text(window, "5. Points")
     finally:
@@ -1697,15 +1694,10 @@ def test_import_identical_scan_skips_with_warning_offscreen(
             return True
 
         monkeypatch.setattr(window, "_confirm_nifti_replace", _no_confirm)
-        autostarted: list[str] = []
-        monkeypatch.setattr(
-            window._base_tab, "autostart_base_from_nifti", lambda p: autostarted.append(str(p))
-        )
         role = next(r for r in ROLE_REGISTRY if r.key == "nifti")
         window._import_nifti_scan(role, scan)
 
         assert confirms == []
-        assert autostarted == []
         assert (project / "mesh" / "base_mesh.ply").is_file()
         assert window._ese_tab.current_ese_mesh() is not None
         assert "identical" in window.statusBar().currentMessage()
@@ -1776,10 +1768,6 @@ def test_scan_chip_imports_identical_scan_with_dialog_offscreen(
             return True
 
         monkeypatch.setattr(window, "_confirm_nifti_replace", _no_confirm)
-        autostarted: list[str] = []
-        monkeypatch.setattr(
-            window._base_tab, "autostart_base_from_nifti", lambda p: autostarted.append(str(p))
-        )
         chip = next(
             button
             for button in window._pipeline_bar.findChildren(QPushButton)
@@ -1791,7 +1779,6 @@ def test_scan_chip_imports_identical_scan_with_dialog_offscreen(
         assert len(shown) == 1
         assert "identical" in shown[0]
         assert confirms == []
-        assert autostarted == []
     finally:
         window.close()
         app.quit()
@@ -1820,15 +1807,10 @@ def test_import_same_name_scan_skips_without_sidecar_offscreen(
             return True
 
         monkeypatch.setattr(window, "_confirm_nifti_replace", _no_confirm)
-        autostarted: list[str] = []
-        monkeypatch.setattr(
-            window._base_tab, "autostart_base_from_nifti", lambda p: autostarted.append(str(p))
-        )
         role = next(r for r in ROLE_REGISTRY if r.key == "nifti")
         window._import_nifti_scan(role, scan)
 
         assert confirms == []
-        assert autostarted == []
         assert "identical" in window.statusBar().currentMessage()
     finally:
         window.close()
