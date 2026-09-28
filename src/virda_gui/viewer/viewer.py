@@ -352,6 +352,8 @@ class ViewerWidget(QWidget):
         self._active_mesh_label = None
         self._vertices_export_button = None
         self._faces_export_button = None
+        self._electrodes_export_button = None
+        self._fiducials_export_button = None
 
     def _clear_layers(self) -> None:
         while self._layers_layout.count():

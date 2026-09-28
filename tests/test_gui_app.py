@@ -2111,3 +2111,27 @@ def test_no_surface_picking_controls_offscreen(tmp_path: Path) -> None:
         window._viewer_tab_widget = None
         window._on_close()
         app.quit()
+
+
+def test_cleared_scene_ignores_live_points_offscreen() -> None:
+    """Live points landing mid-reload must not touch deleted buttons."""
+    import numpy as np
+    from PySide6.QtWidgets import QApplication
+
+    from virda_gui.viewer.viewer import ViewerWidget
+
+    app = _offscreen_app()
+    viewer = ViewerWidget()
+    try:
+        viewer._add_export_controls(None)  # type: ignore[arg-type]
+        assert viewer._electrodes_export_button is not None
+        viewer.clear_scene()
+        QApplication.processEvents()  # flush deleteLater: C++ buttons die here
+        assert viewer._electrodes_export_button is None
+        assert viewer._fiducials_export_button is None
+        viewer.set_live_electrodes(["E1"], np.array([[1.0, 0.0, 0.0]]), np.array([True]))
+        viewer.clear_live_points()
+    finally:
+        viewer.shutdown()
+        viewer.close()
+        app.quit()
