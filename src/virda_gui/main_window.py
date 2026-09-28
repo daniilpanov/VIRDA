@@ -777,13 +777,19 @@ class IdeWindow(QMainWindow):
             return True
         return clicked == import_btn
 
-    def _perform_import(self, role: ImportRole, source: Path) -> Path | None:
-        """Copy *source* into the project as *role*; return the target or None."""
+    def _perform_import(
+        self, role: ImportRole, source: Path, *, overwrite_confirmed: bool = False
+    ) -> Path | None:
+        """Copy *source* into the project as *role*; return the target or None.
+
+        With *overwrite_confirmed* an existing target is replaced without
+        asking again (the caller already confirmed the replacement).
+        """
         if self._project is None:
             return None
         target = import_target(role, self._project, source)
         exists = target.exists()
-        if exists:
+        if exists and not overwrite_confirmed:
             answer = QMessageBox.question(
                 self,
                 "Overwrite?",
