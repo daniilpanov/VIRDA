@@ -298,6 +298,10 @@ class IdeWindow(QMainWindow):
         mesh_action.triggered.connect(self._show_mesh_processing_tab)
         file_menu.addAction(mesh_action)
 
+        base_action = QAction("&Base generation", self)
+        base_action.triggered.connect(self._show_base_tab)
+        file_menu.addAction(base_action)
+
         ese_action = QAction("&ESE surface", self)
         ese_action.triggered.connect(self._show_ese_tab)
         file_menu.addAction(ese_action)
@@ -489,9 +493,10 @@ class IdeWindow(QMainWindow):
     def _refresh_pipeline(self) -> None:
         """Recompute the stepper bar from project files and tab memory."""
         project = self._project
-        nifti_saved = mesh_saved = ese_saved = False
+        nifti_saved = base_saved = mesh_saved = ese_saved = False
         if project is not None:
             nifti_saved = any(project.glob("input/*.nii*"))
+            base_saved = (project / "mesh" / "base_mesh.ply").is_file()
             mesh_saved = (project / "mesh" / "final_mesh.ply").is_file()
             ese_saved = (project / "ese" / "mesh.ply").is_file()
         try:
@@ -505,8 +510,11 @@ class IdeWindow(QMainWindow):
         self._pipeline_bar.set_steps(
             pipeline_steps(
                 nifti_saved=nifti_saved,
+                base_saved=base_saved,
                 mesh_saved=mesh_saved,
                 ese_saved=ese_saved,
+                base_in_memory=self._mesh_processing_tab.base_mesh() is not None
+                or self._base_tab.current_base_mesh() is not None,
                 mesh_in_memory=self._mesh_processing_tab.current_scalp_mesh() is not None,
                 ese_in_memory=self._ese_tab.current_ese_mesh() is not None,
                 fiducials_filled=fiducials_filled,
@@ -517,8 +525,10 @@ class IdeWindow(QMainWindow):
     def _on_tab_changed(self, _index: int) -> None:
         """Highlight the stepper chip of the active pipeline tab, if any."""
         widget = self._tabs.currentWidget()
-        if widget is self._mesh_processing_tab:
-            key: str | None = "mesh"
+        if widget is self._base_tab:
+            key: str | None = "base"
+        elif widget is self._mesh_processing_tab:
+            key = "mesh"
         elif widget is self._ese_tab:
             key = "ese"
         elif widget is self._editors_tab:
@@ -533,6 +543,8 @@ class IdeWindow(QMainWindow):
             return
         if key == "scan":
             self._on_import_files()
+        elif key == "base":
+            self._show_base_tab()
         elif key == "mesh":
             self._show_mesh_processing_tab()
         elif key == "ese":
