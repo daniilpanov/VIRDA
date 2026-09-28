@@ -600,6 +600,34 @@ def test_ask_create_project_folder_warns_if_non_empty(tmp_path: Path, monkeypatc
     app.quit()
 
 
+def test_pipeline_bar_tracks_active_tab_offscreen(tmp_path: Path) -> None:
+    """Switching tabs highlights the matching pipeline chip; off-pipeline clears it."""
+    from PySide6.QtWidgets import QWidget
+
+    app = _offscreen_app()
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
+    try:
+        assert window._pipeline_bar.current_key() is None
+
+        window._show_mesh_processing_tab()
+        assert window._pipeline_bar.current_key() == "mesh"
+
+        window._show_ese_tab()
+        assert window._pipeline_bar.current_key() == "ese"
+
+        window._show_editors_tab()
+        assert window._pipeline_bar.current_key() == "points"
+
+        other = QWidget()
+        window._tabs.addTab(other, "Other")
+        window._tabs.setCurrentWidget(other)
+        assert window._pipeline_bar.current_key() is None
+    finally:
+        window.close()
+        app.quit()
+
+
 class _StubViewer:
     """Stand-in for ``ViewerWidget`` used by the offscreen file-tab tests."""
 
