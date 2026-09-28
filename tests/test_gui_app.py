@@ -805,6 +805,7 @@ def test_npy_export_dialogs_default_to_project_dir_offscreen(
     try:
         project = tmp_path / "sample-project"
         (project / "mesh").mkdir(parents=True)
+        _write_triangle_ply(project / "mesh" / "base_mesh.ply")
         _write_triangle_ply(project / "mesh" / "final_mesh.ply")
         window.open_project(project)
 
@@ -840,6 +841,46 @@ def test_npy_export_dialogs_default_to_project_dir_offscreen(
             viewer.shutdown()
             viewer.close()
         assert captured[-1] == str(project / "scalp_vertices.npy")
+    finally:
+        window.close()
+        app.quit()
+
+
+def test_ply_export_writes_active_scalp_mesh_offscreen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The PLY export writes the active scalp mesh instead of failing to unpack it."""
+    import numpy as np
+
+    from virda.io.importers.scalp_mesh import import_scalp_mesh
+
+    app = _offscreen_app()
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
+    try:
+        project = tmp_path / "ply-project"
+        (project / "mesh").mkdir(parents=True)
+        _write_triangle_ply(project / "mesh" / "base_mesh.ply")
+        window.open_project(project)
+
+        mesh_tab = window._mesh_processing_tab
+        active = mesh_tab._active_mesh()
+        assert active is not None
+
+        target = tmp_path / "exported" / "scalp_mesh.ply"
+        captured: list[str] = []
+
+        def _save(*args: object, **_kwargs: object) -> tuple[str, str]:
+            captured.append(args[2])  # type: ignore[arg-type]
+            return str(target), "PLY (*.ply)"
+
+        monkeypatch.setattr("PySide6.QtWidgets.QFileDialog.getSaveFileName", _save)
+        mesh_tab._on_export_mesh_file()
+
+        assert captured == [str(project / "mesh" / "scalp_mesh.ply")]
+        assert target.is_file()
+        exported = import_scalp_mesh(target)
+        assert np.allclose(exported.vertices, active.vertices)
     finally:
         window.close()
         app.quit()
