@@ -92,6 +92,20 @@ class TestGenerateScalpSurface:
 
         assert surface.mesh.faces.shape[0] > 0
 
+    def test_voxel_size_override_coarsens_mesh(self, sphere_volume: MRIVolume) -> None:
+        native = generate_scalp_surface(sphere_volume)
+        coarse = generate_scalp_surface(sphere_volume, voxel_size_mm=4.0)
+
+        assert coarse.mesh.vertices.shape[0] > 0
+        assert coarse.mesh.vertices.shape[0] <= native.mesh.vertices.shape[0]
+
+    def test_voxel_size_default_matches_detected_spacing(self, sphere_volume: MRIVolume) -> None:
+        mean_spacing = sum(sphere_volume.spacing) / 3.0
+        explicit = generate_scalp_surface(sphere_volume, voxel_size_mm=max(1.0, mean_spacing))
+        implicit = generate_scalp_surface(sphere_volume)
+
+        assert explicit.mesh.vertices.shape == implicit.mesh.vertices.shape
+
 
 class TestSmooth:
     def test_none_returns_input_instance(self) -> None:

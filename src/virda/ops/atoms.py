@@ -32,12 +32,15 @@ from virda.segmentation.seal import MaskSealer
 def generate_scalp_surface(
     mri: MRIVolume,
     sealing: SealingOptions | None = None,
+    voxel_size_mm: float | None = None,
 ) -> ScalpSurface:
     """Segment the head, optionally seal the mask, and extract the scalp mesh.
 
     The marching-cubes step follows the NIfTI voxel size (at least 1 mm
     effective) so high-resolution scans do not produce needlessly dense
     meshes; the native resolution is kept for 1 mm and coarser voxels.
+    An explicit *voxel_size_mm* overrides the scan spacing as the desired
+    effective voxel size of the extracted mesh.
     """
     segmenter = OtsuHeadSegmenter()
     mask = segmenter.process(mri)
@@ -47,7 +50,9 @@ def generate_scalp_surface(
         mask = sealer.process(mask)
 
     mean_spacing = sum(mri.spacing) / 3.0
-    extractor = MarchingCubesExtractor(voxel_size_mm=max(1.0, mean_spacing))
+    if voxel_size_mm is None:
+        voxel_size_mm = max(1.0, mean_spacing)
+    extractor = MarchingCubesExtractor(voxel_size_mm=voxel_size_mm)
     mesh = extractor.process(mask=mask, mri_volume=mri)
 
     return ScalpSurface(mask=mask, mesh=mesh)
