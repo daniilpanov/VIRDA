@@ -1200,9 +1200,6 @@ def test_viewer_open_restores_ese_overlay_offscreen(
             def set_live_fiducials(self, *args: object, **kwargs: object) -> None:
                 return None
 
-            def set_surface_picking(self, *args: object, **kwargs: object) -> None:
-                return None
-
             def shutdown(self) -> None:
                 return None
 
@@ -2085,6 +2082,30 @@ def test_electrode_group_edits_sync_and_reload_offscreen(
             window._on_add_electrode_group()
             window._on_remove_electrode_group(window._electrode_group_widgets[-1])
         assert reloaded == [str(project), str(project)]
+    finally:
+        window._viewer_widget = None
+        window._viewer_tab_widget = None
+        window._on_close()
+        app.quit()
+
+
+def test_no_surface_picking_controls_offscreen(tmp_path: Path) -> None:
+    """The viewer panel offers groups only: no picking, no extra fiducials."""
+    from PySide6.QtWidgets import QPushButton
+
+    app = _offscreen_app()
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
+    try:
+        window._build_viewer_widget()
+        panel = window._viewer_tab_widget
+        assert panel is not None
+        labels = [button.text() for button in panel.findChildren(QPushButton)]
+        assert not any("Pick point" in text for text in labels)
+        assert not any("Clear points" in text for text in labels)
+        assert not hasattr(window, "_pick_btn")
+        assert not hasattr(window, "_on_surface_picked")
+        assert not hasattr(window, "_next_fiducial_id")
     finally:
         window._viewer_widget = None
         window._viewer_tab_widget = None
