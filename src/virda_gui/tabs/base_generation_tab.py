@@ -23,7 +23,6 @@ from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QDoubleSpinBox,
-    QFileDialog,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -103,7 +102,7 @@ class BaseGenerationTab(QWidget):
         panel_layout.addWidget(self._build_actions_box())
         panel_layout.addStretch(1)
 
-        self._status_label = QLabel("Pick a brain scan and generate the base mesh.", panel)
+        self._status_label = QLabel("Import a brain scan, then generate the base mesh.", panel)
         self._status_label.setWordWrap(True)
         panel_layout.addWidget(self._status_label)
 
@@ -126,14 +125,15 @@ class BaseGenerationTab(QWidget):
 
     def _build_source_box(self) -> QGroupBox:
         box = QGroupBox("Brain scan (NIfTI)", self)
-        row = QHBoxLayout(box)
-        row.setContentsMargins(4, 4, 4, 4)
-        row.setSpacing(6)
-        self._source_label = QLabel("No scan selected", box)
-        row.addWidget(self._source_label, 1)
-        pick_btn = QPushButton("Pick NIfTI...", box)
-        pick_btn.clicked.connect(self._on_pick_source)
-        row.addWidget(pick_btn)
+        layout = QVBoxLayout(box)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(4)
+        self._source_label = QLabel("No scan in project", box)
+        self._source_label.setWordWrap(True)
+        layout.addWidget(self._source_label)
+        hint = QLabel("Import scans via File \u2192 Import files.", box)
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
         return box
 
     def _build_parameters_box(self) -> QGroupBox:
@@ -216,18 +216,6 @@ class BaseGenerationTab(QWidget):
         matches = sorted(Path(project).glob("input/*.nii*"))
         return matches[0] if matches else None
 
-    def _on_pick_source(self) -> None:
-        project = self._state.last_project_dir
-        start = str(Path(project) / "input") if project else ""
-        path, _selected_filter = QFileDialog.getOpenFileName(
-            self,
-            "Pick NIfTI scan",
-            start,
-            "NIfTI scans (*.nii.gz *.nii);;All files (*)",
-        )
-        if path:
-            self.set_source(Path(path))
-
     def set_source(self, path: str | Path) -> None:
         """Use *path* as the generation source and prefill the voxel size."""
         target = Path(path)
@@ -307,7 +295,9 @@ class BaseGenerationTab(QWidget):
         if self._source_path is None:
             source = self._project_scan()
             if source is None:
-                QMessageBox.warning(self, "Generate base mesh", "Pick a brain scan (NIfTI) first.")
+                QMessageBox.warning(
+                    self, "Generate base mesh", "Import a brain scan (NIfTI) first."
+                )
                 return
             self.set_source(source)
         if self._derived_artifacts_exist() and not self._confirm_overwrite():
@@ -478,10 +468,10 @@ class BaseGenerationTab(QWidget):
         self._spacing = None
         self._base_mesh = None
         self._base_actor = None
-        self._source_label.setText("No scan selected")
+        self._source_label.setText("No scan in project")
         self._detected_label.setText("Detected voxel size: --")
         self._real_label.setText("Real voxel size: -- (marching cube step = --)")
-        self._status_label.setText("Pick a brain scan and generate the base mesh.")
+        self._status_label.setText("Import a brain scan, then generate the base mesh.")
         self._update_buttons()
 
     def shutdown(self) -> None:
