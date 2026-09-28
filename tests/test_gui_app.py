@@ -2150,3 +2150,20 @@ def test_cleared_scene_ignores_live_points_offscreen() -> None:
         viewer.shutdown()
         viewer.close()
         app.quit()
+
+
+def test_ese_offset_allows_zero_offscreen() -> None:
+    """The ESE offset spin accepts 0 mm (sensor surface on the scalp)."""
+    from virda_gui.state import AppState
+    from virda_gui.tabs.ese_tab import EseTab
+
+    app = _offscreen_app()
+    tab = EseTab(AppState(), base_provider=lambda: None)
+    try:
+        assert tab._ese_offset_spin.minimum() == 0.0
+        tab._ese_offset_spin.setValue(0.0)
+        assert tab._ese_options().ese_offset_mm == 0.0
+    finally:
+        tab.shutdown()
+        tab.close()
+        app.quit()
