@@ -702,7 +702,8 @@ class IdeWindow(QMainWindow):
             return
         self._invalidate_derived_meshes(delete_base=True)
         self._show_base_tab()
-        self._base_tab.autostart_base_from_nifti(target)
+        self._base_tab.set_source(target)
+        self._status("Scan imported. Press Generate base mesh when ready.", 5000)
 
     def _warn_identical_scan(self) -> None:
         """Tell the user the scan is already in the project (modal + status)."""

@@ -281,14 +281,6 @@ class BaseGenerationTab(QWidget):
             return True
         return any((root / "ese").glob("*"))
 
-    def autostart_base_from_nifti(self, path: str | Path) -> None:
-        """Import-flow helper: start generation unless derived meshes exist."""
-        self.set_source(path)
-        if self._derived_artifacts_exist():
-            self.status.emit("Derived meshes exist; press Generate to rebuild the base mesh.")
-            return
-        self._on_generate()
-
     def _on_generate(self) -> None:
         if self._generation_busy:
             return
