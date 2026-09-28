@@ -106,7 +106,9 @@ class BruteForceLocalizer(ElectrodeLocalizer):
     When ``calibrate_ese_offset`` is enabled, a global shift of the ESE cloud
     along the scalp normals is estimated before localization so that systematic
     reference mismatches (e.g. measurements taken on the scalp while the ESE
-    models electrode body centers) do not degrade every electrode.
+    models electrode body centers) do not degrade every electrode.  The
+    reported ``ese_coords`` lie on the calibrated (shifted) cloud, so the
+    shift moves the localized positions instead of being silently dropped.
 
     After the discrete argmin, the electrode position is refined by Gauss-Newton
     least squares on the sphere equations and snapped back to the nearest
@@ -149,7 +151,6 @@ class BruteForceLocalizer(ElectrodeLocalizer):
                 self._localize_one(
                     electrode,
                     fiducials,
-                    vertices,
                     scalp_vertices,
                     quality,
                     fiducial_coords,
@@ -185,7 +186,6 @@ class BruteForceLocalizer(ElectrodeLocalizer):
         self,
         electrode: Electrode,
         fiducials: Fiducials,
-        vertices: np.ndarray,
         scalp_vertices: np.ndarray,
         quality: np.ndarray,
         fiducial_coords: np.ndarray,
@@ -236,7 +236,10 @@ class BruteForceLocalizer(ElectrodeLocalizer):
 
         return replace(
             electrode,
-            ese_coords=np.asarray(vertices)[best_index],
+            # Report the position on the calibrated search cloud: when offset
+            # calibration found a nonzero shift, the unshifted ESE vertex would
+            # carry a systematic error equal to that shift along the normal.
+            ese_coords=np.asarray(search_vertices)[best_index],
             scalp_coords=np.asarray(scalp_vertices)[best_index],
             residual_error=residual_error,
             confidence=float(quality[best_index]),
