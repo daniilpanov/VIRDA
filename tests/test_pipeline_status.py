@@ -165,3 +165,49 @@ def test_hole_forces_linear_prefix_without_ok() -> None:
         ("points", False),
     ]
     assert steps[0].state == "done"  # the only [ok] chip
+
+
+def test_hole_marks_orphaned_steps_for_report() -> None:
+    from virda_gui.pipeline_status import describe_hole
+
+    steps = _base(
+        nifti_saved=True,
+        mesh_saved=True,
+        ese_saved=True,
+        fiducials_filled=3,
+        measurement_rows=1,
+    )
+    assert [step.key for step in steps if step.orphaned] == ["mesh", "ese"]
+    assert "data loss" in steps[2].detail
+    report = describe_hole(steps)
+    assert report is not None
+    assert report.redo_key == "base"
+    assert "Base mesh" in report.redo_title
+    assert "Brain scan" in report.last_valid_title
+    assert report.orphaned_titles == ["3. Skin surface (mesh)", "4. Sensor surface (ESE)"]
+
+
+def test_hole_redo_starts_after_last_valid_step() -> None:
+    from virda_gui.pipeline_status import describe_hole
+
+    steps = _base(nifti_saved=True, base_saved=True, ese_saved=True)
+    report = describe_hole(steps)
+    assert report is not None
+    assert report.redo_key == "mesh"
+    assert "Base mesh" in report.last_valid_title
+    assert report.orphaned_titles == ["4. Sensor surface (ESE)"]
+
+
+def test_no_hole_no_report() -> None:
+    from virda_gui.pipeline_status import describe_hole
+
+    assert describe_hole(_base()) is None
+    full = _base(
+        nifti_saved=True,
+        base_saved=True,
+        mesh_saved=True,
+        ese_saved=True,
+        fiducials_filled=3,
+        measurement_rows=1,
+    )
+    assert describe_hole(full) is None
