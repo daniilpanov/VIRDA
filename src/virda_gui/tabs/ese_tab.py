@@ -40,6 +40,7 @@ from virda.models.ese_mesh import ESEMesh
 from virda.models.scalp_mesh import ScalpMesh
 from virda.ops.atoms import generate_ese
 from virda.ops.options import EseOptions
+from virda_gui.export.mesh_ply import export_mesh_ply
 from virda_gui.state import AppState
 from virda_gui.workers import BackgroundWorker
 
@@ -68,6 +69,7 @@ class EseTab(QWidget):
         self._generate_btn: QPushButton | None = None
         self._vertices_export_button: QPushButton | None = None
         self._faces_export_button: QPushButton | None = None
+        self._mesh_export_button: QPushButton | None = None
         self._generation_thread: QThread | None = None
         self._generation_worker: BackgroundWorker | None = None
         self._generation_seq = 0
@@ -183,6 +185,9 @@ class EseTab(QWidget):
         self._faces_export_button = QPushButton(box)
         self._faces_export_button.clicked.connect(self._on_export_faces)
         layout.addWidget(self._faces_export_button)
+        self._mesh_export_button = QPushButton(box)
+        self._mesh_export_button.clicked.connect(self._on_export_mesh_file)
+        layout.addWidget(self._mesh_export_button)
         return box
 
     # ---- preview pane ----
@@ -343,6 +348,9 @@ class EseTab(QWidget):
         if self._faces_export_button is not None:
             self._faces_export_button.setEnabled(ese is not None)
             self._faces_export_button.setText("Export ESE faces (NPY)...")
+        if self._mesh_export_button is not None:
+            self._mesh_export_button.setEnabled(ese is not None)
+            self._mesh_export_button.setText("Export ESE mesh (PLY)...")
 
     def _export_start_path(self, array_kind: str) -> str:
         filename = f"ese_{array_kind}.npy"
@@ -384,6 +392,30 @@ class EseTab(QWidget):
 
     def _on_export_faces(self) -> None:
         self._export_array("faces")
+
+    def _on_export_mesh_file(self) -> None:
+        ese = self._ese_mesh
+        if ese is None:
+            return
+        project = self._state.last_project_dir
+        start = str(Path(project) / "ese" / "ese_mesh.ply") if project else "ese_mesh.ply"
+        path, _selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Export ESE mesh",
+            start,
+            "PLY (*.ply);;All files (*)",
+        )
+        if not path:
+            return
+        try:
+            target = export_mesh_ply(path, ese.vertices, ese.faces)
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "Export ESE mesh", f"Could not export ESE mesh:\n{exc}")
+            return
+        except Exception as exc:  # noqa: BLE001 - surfaced to the user
+            QMessageBox.critical(self, "Export ESE mesh", f"Could not export ESE mesh:\n{exc}")
+            return
+        self.status.emit(f"Exported ESE mesh to {target} in world coordinates")
 
     # ---- project lifecycle ----
 
