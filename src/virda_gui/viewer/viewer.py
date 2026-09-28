@@ -144,6 +144,7 @@ class ViewerWidget(QWidget):
         self._normals_visible = True
         self._fiducial_labels_visible = True
         self._electrode_labels_visible = True
+        self._live_electrodes_visible = True
         self._mesh_opacity = 0.6
         self._hi_clim: tuple[float, float] | None = None
         self._contrast_boost = False
@@ -243,6 +244,7 @@ class ViewerWidget(QWidget):
             "normals": self._normals_visible,
             "fiducial_labels": self._fiducial_labels_visible,
             "electrode_labels": self._electrode_labels_visible,
+            "live_electrodes": self._live_electrodes_visible,
             "groups": list(self._group_states),
             "frame": self._current_frame,
             "position": tuple(camera.position),
@@ -383,6 +385,7 @@ class ViewerWidget(QWidget):
         self._normals_visible = True
         self._fiducial_labels_visible = True
         self._electrode_labels_visible = True
+        self._live_electrodes_visible = True
         snap = self._view_snapshot
         if snap is not None:
             self._mri_visible = snap["mri"]
@@ -391,6 +394,7 @@ class ViewerWidget(QWidget):
             self._normals_visible = snap["normals"]
             self._fiducial_labels_visible = snap.get("fiducial_labels", snap.get("labels", True))
             self._electrode_labels_visible = snap.get("electrode_labels", snap.get("labels", True))
+            self._live_electrodes_visible = snap.get("live_electrodes", True)
             if len(snap["groups"]) == len(scene.electrode_groups):
                 self._group_states = list(snap["groups"])
         self._current_frame = natural_frame(scene.mm_scene)
@@ -647,6 +651,7 @@ class ViewerWidget(QWidget):
                 poly, color="royalblue", opacity=0.55, name="extra_mesh"
             )
             self._point_actors.append(self._extra_mesh_actor)
+        self._apply_live_electrodes_visibility()
 
     def _apply_visibility_states(self) -> None:
         """Restore the layer visibility after a frame-switch actor rebuild."""
@@ -659,6 +664,7 @@ class ViewerWidget(QWidget):
         self._apply_labels_visibility()
         for gi in range(len(self._group_states)):
             self._apply_group_visibility(gi)
+        self._apply_live_electrodes_visibility()
 
     def _volume_frame_aligned(self) -> bool:
         """Whether the static volume actor lines up with the selected frame."""
@@ -942,6 +948,12 @@ class ViewerWidget(QWidget):
                 self._electrode_labels_visible,
                 self._set_electrode_labels_visibility,
             )
+        self._add_layer_check(
+            "Show localized electrodes",
+            self._live_electrodes_visible,
+            self._set_live_electrodes_visibility,
+            "Localized electrodes from the live run; uncheck to show file groups only.",
+        )
         for gi, group in enumerate(scene.electrode_groups):
             all_actors = (
                 self._electrode_actors_per_group[gi]
@@ -1026,6 +1038,23 @@ class ViewerWidget(QWidget):
     def _set_electrode_labels_visibility(self, flag: bool) -> None:
         self._electrode_labels_visible = bool(flag)
         self._apply_labels_visibility()
+        self._apply_live_electrodes_visibility()
+
+    def _set_live_electrodes_visibility(self, flag: bool) -> None:
+        self._live_electrodes_visible = bool(flag)
+        self._apply_live_electrodes_visibility()
+
+    def _apply_live_electrodes_visibility(self) -> None:
+        """Show or hide the live localized-electrode actors and their labels."""
+        visible = self._live_electrodes_visible
+        if self._live_electrode_actor is not None:
+            self._live_electrode_actor.SetVisibility(visible)
+        if self._flagged_actor is not None:
+            self._flagged_actor.SetVisibility(visible)
+        if self._live_electrode_label_actor is not None:
+            self._live_electrode_label_actor.SetVisibility(
+                visible and self._electrode_labels_visible
+            )
 
     def _set_group_visibility(self, gi: int, flag: bool) -> None:
         self._group_states[gi] = bool(flag)

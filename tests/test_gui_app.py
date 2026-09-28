@@ -438,9 +438,13 @@ def test_live_overlay_rebuild_purges_stale_actors_offscreen(
                 self.removed: list[object] = []
                 self.created = 0
 
+            class _Actor:
+                def SetVisibility(self, flag: bool) -> None:  # noqa: N802 - mimics VTK
+                    return None
+
             def _actor(self) -> object:
                 self.created += 1
-                return object()
+                return _Plotter._Actor()
 
             def add_points(self, *args: object, **kwargs: object) -> object:
                 return self._actor()
@@ -2199,4 +2203,81 @@ def test_group_color_picker_uses_dialog_offscreen(monkeypatch: pytest.MonkeyPatc
         assert row.get_color() == "#ff0000"
     finally:
         row.close()
+        app.quit()
+
+
+def test_live_electrodes_visibility_offscreen(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Label and master toggles hide live electrodes without touching groups."""
+    from types import SimpleNamespace
+
+    import numpy as np
+    from PySide6.QtWidgets import QCheckBox
+
+    from virda_gui.viewer.viewer import ViewerWidget
+
+    app = _offscreen_app()
+    viewer = ViewerWidget()
+    try:
+
+        class _Actor:
+            def __init__(self) -> None:
+                self.visible = True
+
+            def SetVisibility(self, flag: bool) -> None:  # noqa: N802 - mimics VTK
+                self.visible = bool(flag)
+
+        class _Plotter:
+            def __init__(self) -> None:
+                self.made: list[_Actor] = []
+
+            def _actor(self) -> _Actor:
+                actor = _Actor()
+                self.made.append(actor)
+                return actor
+
+            def add_points(self, *args: object, **kwargs: object) -> _Actor:
+                return self._actor()
+
+            def add_point_labels(self, *args: object, **kwargs: object) -> _Actor:
+                return self._actor()
+
+            def add_mesh(self, *args: object, **kwargs: object) -> _Actor:
+                return self._actor()
+
+            def remove_actor(self, actor: object) -> None:
+                return None
+
+            def close(self) -> None:
+                return None
+
+        monkeypatch.setattr(viewer, "_plotter", _Plotter())
+        viewer.set_live_electrodes(["E1"], np.array([[1.0, 0.0, 0.0]]), np.array([False]))
+        viewer._rebuild_live_overlay(np.eye(4))
+        assert viewer._live_electrode_actor.visible is True
+        assert viewer._live_electrode_label_actor.visible is True
+
+        viewer._set_electrode_labels_visibility(False)
+        assert viewer._live_electrode_actor.visible is True
+        assert viewer._live_electrode_label_actor.visible is False
+
+        viewer._set_live_electrodes_visibility(False)
+        assert viewer._live_electrode_actor.visible is False
+        assert viewer._live_electrode_label_actor.visible is False
+
+        viewer._set_live_electrodes_visibility(True)
+        assert viewer._live_electrode_actor.visible is True
+        assert viewer._live_electrode_label_actor.visible is False
+
+        viewer._build_layers(SimpleNamespace(electrode_groups=[]))
+        box = next(
+            child
+            for child in viewer._layers_panel.findChildren(QCheckBox)
+            if child.text() == "Show localized electrodes"
+        )
+        assert box.isChecked()
+        box.setChecked(False)
+        assert viewer._live_electrodes_visible is False
+    finally:
+        viewer.shutdown()
+        viewer.close()
         app.quit()
