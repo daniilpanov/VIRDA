@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QColorDialog,
     QComboBox,
+    QDialog,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -321,8 +322,14 @@ class ElectrodeGroupRow(QFrame):
         self._swatch.setStyleSheet(f"background-color: {color.name()};")
 
     def _pick_color(self) -> None:
+        # A non-native dialog: the native backend hangs without opening
+        # a window on some Linux compositors.
         initial = QColor(self._color)
-        color = QColorDialog.getColor(initial, self, "Pick electrode group color")
+        dialog = QColorDialog(initial, self)
+        dialog.setOption(QColorDialog.ColorDialogOption.DontUseNativeDialog, True)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        color = dialog.selectedColor()
         if color.isValid():
             self.set_color(color.name())
 
