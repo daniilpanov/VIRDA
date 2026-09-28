@@ -22,6 +22,7 @@ class PipelineStep:
     title: str
     detail: str
     state: StepState
+    enabled: bool
 
 
 def pipeline_steps(
@@ -38,8 +39,12 @@ def pipeline_steps(
 
     Saved files win over memory: a step is ``done`` when its artifact is on
     disk, ``unsaved`` when it exists only in memory, ``active`` when it is
-    the next actionable step, and ``waiting`` otherwise.
+    the next actionable step, and ``waiting`` otherwise.  A step is
+    ``enabled`` only when its prerequisites are ready, enforcing the
+    1 -> 2 -> 3 -> 4 order: scan first, then mesh, then ESE, then points.
     """
+    mesh_ready = mesh_saved or mesh_in_memory
+    ese_ready = ese_saved or ese_in_memory
     if mesh_saved:
         mesh_state: StepState = "done"
         mesh_detail = "Skin surface saved."
@@ -61,10 +66,10 @@ def pipeline_steps(
         ese_state = "unsaved"
         ese_detail = "Save the sensor surface to continue."
     else:
-        ese_state = "active" if mesh_saved or mesh_in_memory else "waiting"
+        ese_state = "active" if mesh_ready else "waiting"
         ese_detail = (
             "Set the offset and generate the sensor surface."
-            if mesh_saved or mesh_in_memory
+            if mesh_ready
             else "Needs the skin surface first."
         )
 
@@ -73,7 +78,7 @@ def pipeline_steps(
         points_state: StepState = "done"
         points_detail = "Points and measures ready."
     else:
-        points_state = "active" if ese_saved or ese_in_memory else "waiting"
+        points_state = "active" if ese_ready else "waiting"
         missing = []
         if fiducials_filled < 3:
             missing.append("fill NAS, LPA and RPA")
@@ -87,20 +92,27 @@ def pipeline_steps(
             title="1. Brain scan",
             detail=("Scan imported." if nifti_saved else "Import a brain scan (NIfTI)."),
             state="done" if nifti_saved else "active",
+            enabled=True,
         ),
         PipelineStep(
-            key="mesh", title="2. Skin surface (mesh)", detail=mesh_detail, state=mesh_state
+            key="mesh",
+            title="2. Skin surface (mesh)",
+            detail=mesh_detail,
+            state=mesh_state,
+            enabled=nifti_saved,
         ),
         PipelineStep(
             key="ese",
             title="3. Sensor surface (ESE)",
             detail=ese_detail,
             state=ese_state,
+            enabled=mesh_ready,
         ),
         PipelineStep(
             key="points",
             title="4. Points and measures",
             detail=points_detail,
             state=points_state,
+            enabled=ese_ready,
         ),
     ]
