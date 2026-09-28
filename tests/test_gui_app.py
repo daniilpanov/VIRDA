@@ -722,6 +722,32 @@ def test_prefill_ignores_final_mesh_as_base_offscreen(
         app.quit()
 
 
+def test_load_base_recomputes_preview_offscreen(tmp_path: Path) -> None:
+    """Loading a base mesh rebuilds the postprocessed preview, not just base."""
+    app = _offscreen_app()
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
+    try:
+        project = tmp_path / "preview-project"
+        (project / "mesh").mkdir(parents=True)
+        base_path = project / "mesh" / "base_mesh.ply"
+        _write_triangle_ply(base_path)
+        window.open_project(project)
+
+        mesh_tab = window._mesh_processing_tab
+        mesh_tab._smoother_combo.setCurrentIndex(1)  # laplacian
+        emitted: list[object] = []
+        mesh_tab.previewMesh.connect(emitted.append)
+        assert mesh_tab.load_base(base_path)
+
+        assert mesh_tab._preview_mesh is not None
+        assert emitted and emitted[-1] is mesh_tab._preview_mesh
+        assert mesh_tab._preview_label.text().startswith("Preview:")
+    finally:
+        window._on_close()
+        app.quit()
+
+
 def test_perform_import_copies_into_project_and_refreshes_sidebar(
     tmp_path: Path,
 ) -> None:
