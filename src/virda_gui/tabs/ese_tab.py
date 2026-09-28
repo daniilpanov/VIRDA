@@ -118,7 +118,7 @@ class EseTab(QWidget):
         offset_row = QHBoxLayout()
         offset_row.addWidget(QLabel("Offset (mm):", box))
         self._ese_offset_spin = QDoubleSpinBox(box)
-        self._ese_offset_spin.setRange(0.1, 50.0)
+        self._ese_offset_spin.setRange(0.0, 50.0)
         self._ese_offset_spin.setSingleStep(0.5)
         self._ese_offset_spin.setValue(2.0)
         self._ese_offset_spin.setToolTip(
