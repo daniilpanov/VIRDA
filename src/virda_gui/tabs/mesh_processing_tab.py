@@ -107,7 +107,6 @@ class MeshProcessingTab(QWidget):
     saved = Signal()  # noqa: N815 - fired after Save wrote the mesh to disk
     status = Signal(str)  # noqa: N815 - non-blocking log lines
     baseMeshChanged = Signal(object)  # noqa: N815 - the new base mesh path (Path | None)
-    continueRequested = Signal()  # noqa: N815 - jump to live editing
     eseRequested = Signal()  # noqa: N815 - jump to the ESE Surface tab
     newProjectRequested = Signal()  # noqa: N815 - create a project for generation
 
@@ -154,10 +153,6 @@ class MeshProcessingTab(QWidget):
         self._pipeline_label = QLabel(panel)
         self._pipeline_label.setWordWrap(True)
         pipeline_row.addWidget(self._pipeline_label, 1)
-        continue_btn = QPushButton("Continue in Live Editing", panel)
-        continue_btn.setToolTip("Open live editing with the current meshes.")
-        continue_btn.clicked.connect(self.continueRequested.emit)
-        pipeline_row.addWidget(continue_btn)
         panel_layout.addLayout(pipeline_row)
 
         panel_layout.addWidget(self._build_source_box())

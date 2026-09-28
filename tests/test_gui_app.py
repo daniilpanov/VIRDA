@@ -1007,6 +1007,32 @@ def test_ese_display_checkboxes_toggle_layers_offscreen(tmp_path: Path) -> None:
         app.quit()
 
 
+def test_ese_continue_reaches_live_editing_offscreen(tmp_path: Path) -> None:
+    """The live-editing handoff lives in the ESE tab, not in mesh processing."""
+    from PySide6.QtWidgets import QPushButton
+
+    app = _offscreen_app()
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
+    try:
+        mesh_buttons = [
+            button.text() for button in window._mesh_processing_tab.findChildren(QPushButton)
+        ]
+        assert not any("Live Editing" in text for text in mesh_buttons)
+
+        window._show_ese_tab()
+        continue_btn = next(
+            button
+            for button in window._ese_tab.findChildren(QPushButton)
+            if "Live Editing" in button.text()
+        )
+        continue_btn.click()
+        assert window._tabs.currentWidget() is window._editors_tab
+    finally:
+        window.close()
+        app.quit()
+
+
 def test_localization_blocked_until_ese_mesh_offscreen(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

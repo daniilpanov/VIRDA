@@ -123,7 +123,6 @@ class IdeWindow(QMainWindow):
         self._mesh_processing_tab = MeshProcessingTab(self._state)
         self._mesh_processing_tab.previewMesh.connect(self._on_mesh_preview)
         self._mesh_processing_tab.saved.connect(self._on_mesh_saved)
-        self._mesh_processing_tab.continueRequested.connect(self._show_editors_tab)
         self._mesh_processing_tab.eseRequested.connect(self._show_ese_tab)
         self._mesh_processing_tab.newProjectRequested.connect(self._on_new_project_for_generation)
         self._mesh_processing_tab.status.connect(self._status)
@@ -139,9 +138,9 @@ class IdeWindow(QMainWindow):
         )
         self._mesh_processing_tab.previewMesh.connect(self._ese_tab.show_preview)
         self._ese_tab.eseMesh.connect(self._on_ese_mesh)
-        self._ese_tab.eseMesh.connect(self._on_ese_mesh)
         self._ese_tab.eseMesh.connect(lambda _m: self._refresh_pipeline())
         self._ese_tab.saved.connect(self._on_ese_saved)
+        self._ese_tab.continueRequested.connect(self._show_editors_tab)
         self._ese_tab.status.connect(self._status)
         self._ese_tab.busyChanged.connect(self._mesh_processing_tab.set_locked)
 
