@@ -1142,12 +1142,11 @@ class IdeWindow(QMainWindow):
 
     def _sync_electrode_groups(self) -> None:
         """Persist the current overlay rows into the state record."""
-        if self._electrode_group_widgets:
-            self._state.electrode_rows = [
-                (widget.get().strip(), widget.get_color())
-                for widget in self._electrode_group_widgets
-                if widget.get().strip()
-            ]
+        self._state.electrode_rows = [
+            (widget.get().strip(), widget.get_color())
+            for widget in self._electrode_group_widgets
+            if widget.get().strip()
+        ]
 
     def _on_show_advanced_settings(self) -> None:
         dialog = AdvancedSettingsDialog(self, self._state.advanced)
@@ -1223,7 +1222,22 @@ class IdeWindow(QMainWindow):
         return outer
 
     def _on_add_electrode_group(self) -> None:
+        """Append an empty row; it joins the scene once a valid path is typed."""
         self._add_electrode_group_row()
+
+    def _on_electrode_group_path_changed(self, row: ElectrodeGroupRow) -> None:
+        """Sync and reload on a valid path; warn and drop the row otherwise."""
+        if row not in self._electrode_group_widgets:
+            return
+        path = row.get().strip()
+        if path and not Path(path).is_file():
+            QMessageBox.warning(self, "Electrode group", f"Group file not found:\n{path}")
+            self._drop_electrode_group_row(row)
+            return
+        if not path:
+            self._drop_electrode_group_row(row)
+            self._reload_viewer_if_open()
+            return
         self._sync_electrode_groups()
         self._reload_viewer_if_open()
 
@@ -1237,15 +1251,22 @@ class IdeWindow(QMainWindow):
         )
         if path:
             row.set(path)
+        row.pathChanged.connect(
+            lambda _text, target=row: self._on_electrode_group_path_changed(target)
+        )
         self._electrode_groups_layout.addWidget(row)
         self._electrode_group_widgets.append(row)
 
-    def _on_remove_electrode_group(self, row: ElectrodeGroupRow) -> None:
+    def _drop_electrode_group_row(self, row: ElectrodeGroupRow) -> None:
+        """Remove the row without touching the viewer scene."""
         if row in self._electrode_group_widgets:
             self._electrode_group_widgets.remove(row)
             self._electrode_groups_layout.removeWidget(row)
         row.deleteLater()
         self._sync_electrode_groups()
+
+    def _on_remove_electrode_group(self, row: ElectrodeGroupRow) -> None:
+        self._drop_electrode_group_row(row)
         self._reload_viewer_if_open()
 
     def _on_electrodes_cras_toggled(self, checked: bool) -> None:

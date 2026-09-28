@@ -2057,11 +2057,18 @@ def test_invalidate_records_and_reopens_file_tabs_offscreen(
 def test_electrode_group_edits_sync_and_reload_offscreen(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Adding a group persists its row and reloads the viewer at once."""
+    """A group joins the scene after a valid path; a bad path warns and drops it."""
     from PySide6.QtWidgets import QMessageBox
 
     app = _offscreen_app()
     monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.No)
+    warnings: list[str] = []
+
+    def _warn(*args: object, **_kwargs: object) -> object:
+        warnings.append(str(args[2]))
+        return QMessageBox.StandardButton.Ok
+
+    monkeypatch.setattr(QMessageBox, "warning", _warn)
     prefs = _make_prefs(tmp_path)
     window = IdeWindow(prefs=prefs)
     try:
@@ -2071,17 +2078,25 @@ def test_electrode_group_edits_sync_and_reload_offscreen(
         window.open_project(project)
         window._build_viewer_widget()
 
-        window._add_electrode_group_row(path="group.tsv", color="red")
-        window._sync_electrode_groups()
-        assert ("group.tsv", "red") in window._state.electrode_rows
-
         reloaded: list[str] = []
         import unittest.mock as mock
 
         with mock.patch.object(window, "_open_viewer", lambda p: reloaded.append(str(p))):
-            window._on_add_electrode_group()
-            window._on_remove_electrode_group(window._electrode_group_widgets[-1])
-        assert reloaded == [str(project), str(project)]
+            window._on_add_electrode_group()  # empty row: nothing synced, no reload
+            assert reloaded == []
+            assert window._state.electrode_rows == []
+
+            group_file = tmp_path / "group.tsv"
+            group_file.write_text("id\tx\ty\tz\n", encoding="utf-8")
+            window._electrode_group_widgets[-1].set(str(group_file))
+            assert (str(group_file), "yellow") in window._state.electrode_rows
+            assert reloaded == [str(project)]
+
+            window._electrode_group_widgets[-1].set(str(tmp_path / "missing.tsv"))
+            assert warnings and "not found" in warnings[-1]
+            assert window._electrode_group_widgets == []
+            assert window._state.electrode_rows == []
+            assert reloaded == [str(project)]  # invalid path: no reload
     finally:
         window._viewer_widget = None
         window._viewer_tab_widget = None
