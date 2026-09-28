@@ -647,15 +647,10 @@ class MeshProcessingTab(QWidget):
             return False
         self._base_mesh = mesh
         self._set_base_path(path)
-        self._preview_mesh = None
-        self._final_mesh = None
+        self._final_mesh = None  # stale until the preview below auto-saves
         self._result_hidden = False
         self._base_label.setText(str(path))
-        self._preview_label.setText(f"Base mesh: {self._describe_mesh(mesh)}")
-        self._render_scene()
-        self._update_generation_buttons()
-        self._update_export_controls()
-        self.previewMesh.emit(mesh)
+        self._recompute_preview()
         return True
 
     def _start_generation(
