@@ -188,6 +188,10 @@ class TestOffsetCalibration:
             # The measurement point lies on the calibrated search cloud and
             # maps back to the same scalp vertex.
             assert np.linalg.norm(electrode.scalp_coords - points[i]) < 1e-6
+            # The reported ESE position must include the calibrated shift
+            # instead of pointing at the unshifted ESE vertex.
+            assert electrode.ese_coords is not None
+            assert np.linalg.norm(electrode.ese_coords - points[i]) < 1e-6
             assert electrode.flagged is False
 
     def test_disabled_when_flag_off(self):

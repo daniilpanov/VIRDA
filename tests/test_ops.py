@@ -198,3 +198,7 @@ class TestLocalize:
         )
 
         assert result.calibrated_offset_shift_mm == pytest.approx(-2.0, abs=1e-9)
+        for i, electrode in enumerate(result.items):
+            assert electrode.is_localized
+            assert electrode.ese_coords is not None
+            assert np.linalg.norm(electrode.ese_coords - points[i]) < 1e-6
