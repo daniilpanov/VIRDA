@@ -41,6 +41,7 @@ from virda.models.fiducial import Fiducial, Fiducials
 from virda_gui.constants import DEFAULT_FIDUCIALS_FILENAME, DEFAULT_MEASUREMENTS_FILENAME
 from virda_gui.state import AppState
 from virda_gui.viewer.frames import (
+    FRAME_FIDUCIAL,
     FRAME_HEAD,
     FRAME_SCANNER,
     FRAME_VOXEL,
@@ -64,25 +65,26 @@ EDITOR_FRAME_IDS: tuple[str, str, str] = (FRAME_SCANNER, FRAME_HEAD, FRAME_VOXEL
 CANONICAL_FIDUCIALS: tuple[str, str, str] = ("LPA", "RPA", "NAS")
 MEASUREMENT_HEADERS = ["Electrode", *CANONICAL_FIDUCIALS]
 
-#: Read-only preview table columns for the live localization output.  The X/Y/Z
-#: columns show the localized coordinates in the frame picked with the
-#: coordinate-system combo above the table.
+#: Read-only preview table columns for the live localization output.  The
+#: coordinate block shows the localized position in the frame picked with
+#: the coordinate-system combo above the table: cartesian X/Y/Z for the
+#: geometric frames, measured NAS/LPA/RPA distances for the fiducial frame.
 LOCALIZATION_HEADERS = [
     "Name",
     "X",
     "Y",
     "Z",
-    "LPA",
-    "RPA",
-    "NAS",
     "Residual (mm)",
     "Flagged",
 ]
+#: Display order of the fiducial axes (differs from CANONICAL_FIDUCIALS).
+FIDUCIAL_DISPLAY_ORDER: tuple[str, str, str] = ("NAS", "LPA", "RPA")
 LOC_COL_NAME = 0
-LOC_COL_COORDS = 1
-LOC_COL_DISTANCES = 4
-LOC_COL_RESIDUAL = 7
-LOC_COL_FLAGGED = 8
+LOC_COL_C0 = 1
+LOC_COL_C1 = 2
+LOC_COL_C2 = 3
+LOC_COL_RESIDUAL = 4
+LOC_COL_FLAGGED = 5
 
 
 def canonical_fiducial_id(fiducial_id: str) -> str:
@@ -986,9 +988,10 @@ class MeasurementsEditor(QWidget):
 class LocalizationPreview(QWidget):
     """Read-only preview of the live localization results.
 
-    Shows each electrode's localized coordinates in the selected frame side by
-    side with the measured fiducial distances, plus the residual error and
-    flag.  The backing CSV export is Qt-free.  Double-clicking a row emits
+    Shows each electrode's localized position in the frame picked above the
+    table: cartesian coordinates for the geometric frames, measured
+    NAS/LPA/RPA distances for the fiducial frame.  The backing CSV export
+    always carries world coordinates.  Double-clicking a row emits
     :attr:`electrodeActivated` so the host can focus the 3D view on it.
     """
 
@@ -1023,7 +1026,7 @@ class LocalizationPreview(QWidget):
         self._frame_layout.setSpacing(6)
         self._frame_layout.addWidget(QLabel("Coordinates:", self))
         self._frame_combo = QComboBox(self._frame_row)
-        for frame_id in (FRAME_SCANNER, FRAME_HEAD, FRAME_VOXEL):
+        for frame_id in (FRAME_SCANNER, FRAME_HEAD, FRAME_VOXEL, FRAME_FIDUCIAL):
             self._frame_combo.addItem(frame_label(frame_id), frame_id)
         self._frame_combo.currentIndexChanged.connect(self._on_frame_selected)
         self._frame_layout.addWidget(self._frame_combo)
@@ -1127,6 +1130,12 @@ class LocalizationPreview(QWidget):
         points = transform_points(np.asarray([world_coords], dtype=np.float64), matrix)
         return np.asarray(points[0], dtype=np.float64)
 
+    def _coord_headers(self) -> list[str]:
+        """Column titles for the coordinate block in the selected frame."""
+        if self._coord_frame == FRAME_FIDUCIAL:
+            return ["Name", *FIDUCIAL_DISPLAY_ORDER, "Residual (mm)", "Flagged"]
+        return list(LOCALIZATION_HEADERS)
+
     def _render(self) -> None:
         """Repopulate the table from the cached result in the selected frame."""
         electrodes = self._electrodes
@@ -1145,15 +1154,19 @@ class LocalizationPreview(QWidget):
             return
         self._hint.setVisible(False)
         self._export_btn.setEnabled(True)
+        self._table.setHorizontalHeaderLabels(self._coord_headers())
         self._table.setRowCount(len(items))
+        fiducial = self._coord_frame == FRAME_FIDUCIAL
         for index, electrode in enumerate(items):
             self._set_item(index, LOC_COL_NAME, electrode.electrode_id or "")
-            self._set_coordinate_row(
-                index, LOC_COL_COORDS, self._frame_coords(electrode.ese_coords)
-            )
-            for col, fiducial_id in enumerate(CANONICAL_FIDUCIALS, start=LOC_COL_DISTANCES):
-                distance = self._distance(electrode.measured_distances, fiducial_id)
-                self._set_item(index, col, f"{distance}" if distance is not None else "")
+            if fiducial:
+                for col, fiducial_id in enumerate(FIDUCIAL_DISPLAY_ORDER, start=LOC_COL_C0):
+                    distance = self._distance(electrode.measured_distances, fiducial_id)
+                    self._set_item(index, col, f"{distance:.3f}" if distance is not None else "")
+            else:
+                self._set_coordinate_row(
+                    index, LOC_COL_C0, self._frame_coords(electrode.ese_coords)
+                )
             self._set_item(
                 index,
                 LOC_COL_RESIDUAL,
