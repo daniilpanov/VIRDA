@@ -69,8 +69,6 @@ class AdvancedSettingsDialog(QDialog):
     def _build_mesh_generation_section(self, parent: QWidget, outer: QVBoxLayout) -> None:
         box = QGroupBox("Mesh generation", parent)
         layout = QVBoxLayout(box)
-        self._add_field(box, layout, "seal_enabled", "Seal mask gaps", "check")
-        self._add_field(box, layout, "seal_radius", "Seal radius", "entry")
         self._add_field(box, layout, "cleaner_min_vertices", "Min component vertices", "entry")
         self._add_field(box, layout, "cleaner_merge_digits", "Merge digits", "entry")
         outer.addWidget(box)

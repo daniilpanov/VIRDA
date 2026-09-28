@@ -330,7 +330,7 @@ def test_frame_to_frame_matrix_requires_loaded_params() -> None:
 
 
 def test_generate_and_clean_scalp_mesh_from_mini_nifti(tmp_path: Path) -> None:
-    from virda_gui.tabs.mesh_processing_tab import generate_mesh_from_nifti
+    from virda_gui.tabs.base_generation_tab import generate_mesh_from_nifti
 
     mesh = generate_mesh_from_nifti(
         _write_mini_nifti(tmp_path / "mini.nii.gz"),
@@ -359,8 +359,6 @@ def _offscreen_app():
 
 
 def test_advanced_defaults_cover_generation_and_localization() -> None:
-    assert ADVANCED_FIELD_DEFAULTS["seal_enabled"] == "true"
-    assert ADVANCED_FIELD_DEFAULTS["seal_radius"] == "4"
     assert ADVANCED_FIELD_DEFAULTS["cleaner_min_vertices"] == "100"
     assert ADVANCED_FIELD_DEFAULTS["cleaner_merge_digits"] == "7"
     assert ADVANCED_FIELD_DEFAULTS["residual_threshold_mm"] == "10.0"
@@ -485,8 +483,6 @@ def test_advanced_dialog_exposes_only_gui_keys_offscreen() -> None:
     dialog = AdvancedSettingsDialog(None, dict(ADVANCED_FIELD_DEFAULTS))
     try:
         assert set(dialog._fields) == {
-            "seal_enabled",
-            "seal_radius",
             "cleaner_min_vertices",
             "cleaner_merge_digits",
             "residual_threshold_mm",
@@ -1413,6 +1409,95 @@ def test_autosave_skips_invalid_tables_offscreen(
         before = (project / "input" / "fiducials.json").read_bytes()
         tab._autosave_tables()  # must not raise, warn, or clobber
         assert (project / "input" / "fiducials.json").read_bytes() == before
+    finally:
+        window.close()
+        app.quit()
+
+
+def test_base_tab_step_labels_follow_voxel_spin_offscreen(tmp_path: Path) -> None:
+    """Editing voxel size recomputes only the step/real-voxel labels."""
+    from virda_gui.state import AppState
+    from virda_gui.tabs.base_generation_tab import BaseGenerationTab
+
+    app = _offscreen_app()
+    tab = BaseGenerationTab(AppState())
+    try:
+        assert "marching cube step = --" in tab._real_label.text()
+        tab.set_source(_write_mini_nifti(tmp_path / "mini.nii.gz"))
+        assert tab._voxel_spin.value() == 1.0
+        assert "marching cube step = 1" in tab._real_label.text()
+
+        tab._voxel_spin.setValue(2.5)
+        assert "marching cube step = 2" in tab._real_label.text()
+        assert "2 x 2 x 2" in tab._real_label.text()
+    finally:
+        tab.shutdown()
+        tab.close()
+        app.quit()
+
+
+def test_base_tab_store_result_writes_meshes_and_sidecar_offscreen(
+    tmp_path: Path,
+) -> None:
+    """Storing a generated mesh writes base, final and the source sidecar."""
+    from virda.ops.options import CleanOptions, SealingOptions
+    from virda_gui.scan_hash import read_source_hash, sha256_file
+    from virda_gui.state import AppState
+    from virda_gui.tabs.base_generation_tab import generate_mesh_from_nifti
+
+    app = _offscreen_app()
+    state = AppState()
+    tab = None
+    try:
+        from virda_gui.tabs.base_generation_tab import BaseGenerationTab
+
+        project = tmp_path / "gen-project"
+        (project / "input").mkdir(parents=True)
+        source = _write_mini_nifti(project / "input" / "head.nii.gz")
+        state.last_project_dir = str(project)
+
+        mesh = generate_mesh_from_nifti(
+            source,
+            SealingOptions(seal_enabled=True, seal_radius=1),
+            CleanOptions(min_component_vertices=1, merge_digits=7),
+            voxel_size_mm=2.0,
+        )
+        tab = BaseGenerationTab(state)
+        fired: list[str] = []
+        tab.baseMesh.connect(lambda _m: fired.append("base"))
+        tab.saved.connect(lambda: fired.append("saved"))
+        tab._store_result(mesh, source)
+
+        assert (project / "mesh" / "base_mesh.ply").is_file()
+        assert (project / "mesh" / "final_mesh.ply").is_file()
+        assert read_source_hash(project / "mesh") == sha256_file(source)
+        assert tab.current_base_mesh() is mesh
+        assert fired == ["base", "saved"]
+    finally:
+        if tab is not None:
+            tab.shutdown()
+            tab.close()
+        app.quit()
+
+
+def test_base_mesh_handoff_buttons_switch_tabs_offscreen(tmp_path: Path) -> None:
+    """Regenerate-base and open-in-mesh buttons navigate between the tabs."""
+    from PySide6.QtWidgets import QPushButton, QWidget
+
+    def _click(widget: QWidget, text: str) -> None:
+        button = next(child for child in widget.findChildren(QPushButton) if text in child.text())
+        button.click()
+
+    app = _offscreen_app()
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
+    try:
+        window._show_mesh_processing_tab()
+        _click(window._mesh_processing_tab, "Regenerate base")
+        assert window._tabs.currentWidget() is window._base_tab
+
+        _click(window._base_tab, "Open in Mesh Processing")
+        assert window._tabs.currentWidget() is window._mesh_processing_tab
     finally:
         window.close()
         app.quit()
