@@ -85,6 +85,7 @@ class EseTab(QWidget):
 
         panel_layout.addWidget(self._build_parameters_box())
         panel_layout.addWidget(self._build_actions_box())
+        panel_layout.addWidget(self._build_display_box())
         panel_layout.addWidget(self._build_export_box())
         panel_layout.addStretch(1)
 
@@ -172,6 +173,26 @@ class EseTab(QWidget):
         row.addWidget(self._generate_btn)
         return box
 
+    def _build_display_box(self) -> QGroupBox:
+        box = QGroupBox("Display", self)
+        row = QHBoxLayout(box)
+        row.setContentsMargins(4, 4, 4, 4)
+        row.setSpacing(6)
+        self._show_final_chk = QCheckBox("Show final mesh", box)
+        self._show_ese_chk = QCheckBox("Show ESE surface", box)
+        self._show_edges_chk = QCheckBox("Show mesh edges", box)
+        self._show_final_chk.setChecked(True)
+        self._show_ese_chk.setChecked(True)
+        self._show_edges_chk.setChecked(False)
+        self._show_final_chk.toggled.connect(self._on_display_toggled)
+        self._show_ese_chk.toggled.connect(self._on_display_toggled)
+        self._show_edges_chk.toggled.connect(self._on_display_toggled)
+        row.addWidget(self._show_final_chk)
+        row.addWidget(self._show_ese_chk)
+        row.addWidget(self._show_edges_chk)
+        row.addStretch(1)
+        return box
+
     def _build_export_box(self) -> QGroupBox:
         box = QGroupBox("Export ESE arrays", self)
         layout = QVBoxLayout(box)
@@ -199,21 +220,31 @@ class EseTab(QWidget):
         ).ravel()
         return pv.PolyData(np.asarray(mesh.vertices, dtype=np.float64), faces)
 
+    def _on_display_toggled(self, *_args: Any) -> None:
+        self._render_scene()
+
     def _render_scene(self) -> None:
         """Draw the final mesh with the ESE surface overlaid."""
         if self._interactor is None:
             return
+        edges = self._show_edges_chk.isChecked()
         was_empty = self._final_actor is None and self._ese_actor is None
         self._interactor.clear()
         self._final_actor = None
         self._ese_actor = None
-        if self._final_mesh is not None:
+        if self._show_final_chk.isChecked() and self._final_mesh is not None:
             self._final_actor = self._interactor.add_mesh(
-                self._mesh_to_polydata(self._final_mesh), color="salmon", opacity=0.9
+                self._mesh_to_polydata(self._final_mesh),
+                color="salmon",
+                opacity=0.9,
+                show_edges=edges,
             )
-        if self._ese_mesh is not None:
+        if self._show_ese_chk.isChecked() and self._ese_mesh is not None:
             self._ese_actor = self._interactor.add_mesh(
-                self._mesh_to_polydata(self._ese_mesh), color="royalblue", opacity=0.7
+                self._mesh_to_polydata(self._ese_mesh),
+                color="royalblue",
+                opacity=0.7,
+                show_edges=edges,
             )
         self._interactor.add_axes(interactive=False)  # type: ignore[call-arg]
         if was_empty:

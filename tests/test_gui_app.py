@@ -947,6 +947,66 @@ def test_ese_ply_export_writes_sensor_surface_offscreen(
         app.quit()
 
 
+def test_ese_display_checkboxes_toggle_layers_offscreen(tmp_path: Path) -> None:
+    """The ESE tab display checkboxes show and hide the preview layers."""
+    import numpy as np
+
+    app = _offscreen_app()
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
+    try:
+        project = tmp_path / "ese-display-project"
+        (project / "mesh").mkdir(parents=True)
+        _write_triangle_ply(project / "mesh" / "base_mesh.ply")
+
+        vertices = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
+        ese_dir = project / "ese"
+        ese_dir.mkdir()
+        np.save(ese_dir / "ese_vertices.npy", np.array(vertices))
+        np.save(ese_dir / "ese_faces.npy", np.array([[0, 1, 2]]))
+        np.save(ese_dir / "normals.npy", np.array([[0.0, 0.0, 1.0]] * 3))
+        np.save(ese_dir / "quality.npy", np.array([1.0, 1.0, 1.0]))
+        (ese_dir / "point_pairs.json").write_text(
+            json.dumps(
+                {
+                    "n_points": 3,
+                    "scalp_vertices": vertices,
+                    "ese_vertices": vertices,
+                    "normals": [[0.0, 0.0, 1.0]] * 3,
+                    "quality": [1.0, 1.0, 1.0],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (ese_dir / "mesh.ply").write_text("placeholder", encoding="utf-8")
+        window.open_project(project)
+
+        ese_tab = window._ese_tab
+        assert ese_tab.current_ese_mesh() is not None
+        # The ESE backdrop arrives over the preview signal; replay it after
+        # prefill cleared the tab state.
+        working = window._mesh_processing_tab.current_scalp_mesh()
+        assert working is not None
+        ese_tab.show_preview(working)
+        assert ese_tab._final_actor is not None
+        assert ese_tab._ese_actor is not None
+
+        ese_tab._show_ese_chk.setChecked(False)
+        assert ese_tab._ese_actor is None
+        assert ese_tab._final_actor is not None
+
+        ese_tab._show_final_chk.setChecked(False)
+        assert ese_tab._final_actor is None
+
+        ese_tab._show_final_chk.setChecked(True)
+        ese_tab._show_ese_chk.setChecked(True)
+        assert ese_tab._final_actor is not None
+        assert ese_tab._ese_actor is not None
+    finally:
+        window.close()
+        app.quit()
+
+
 def test_localization_blocked_until_ese_mesh_offscreen(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
