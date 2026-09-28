@@ -14,6 +14,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 from PySide6.QtCore import QSettings
+from PySide6.QtWidgets import QWidget
 
 from virda.ops.options import CleanOptions, SealingOptions
 from virda_gui.constants import ADVANCED_FIELD_DEFAULTS
@@ -1547,7 +1548,7 @@ def test_source_paths_are_read_only_offscreen(tmp_path: Path) -> None:
 
 def test_base_mesh_handoff_buttons_switch_tabs_offscreen(tmp_path: Path) -> None:
     """Regenerate-base and open-in-mesh buttons navigate between the tabs."""
-    from PySide6.QtWidgets import QPushButton, QWidget
+    from PySide6.QtWidgets import QPushButton
 
     def _click(widget: QWidget, text: str) -> None:
         button = next(child for child in widget.findChildren(QPushButton) if text in child.text())
@@ -1960,4 +1961,132 @@ def test_hole_dialog_decline_stays_put_offscreen(
         assert (project / "input" / "fiducials.json").is_file()
     finally:
         window.close()
+        app.quit()
+
+
+class _ReloadViewerStub(QWidget):
+    """Stand-in viewer recording scene reloads without threads."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.loads: list[dict[str, str]] = []
+        self.dirs: list[str] = []
+
+    def set_project_dir(self, project: object) -> None:
+        self.dirs.append(str(project))
+
+    def load(self, **kwargs: str) -> None:
+        self.loads.append(dict(kwargs))
+
+    def shutdown(self) -> None:
+        return None
+
+
+def test_reload_viewer_if_open_reloads_scene_offscreen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regenerated data reopens the 3D viewer scene instead of going stale."""
+    from PySide6.QtWidgets import QMessageBox
+
+    app = _offscreen_app()
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.No)
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
+    try:
+        project = tmp_path / "reload-project"
+        (project / "mesh").mkdir(parents=True)
+        _write_triangle_ply(project / "mesh" / "final_mesh.ply")
+        window.open_project(project)
+
+        window._reload_viewer_if_open()  # no viewer yet: no-op, no crash
+        assert window._viewer_widget is None
+
+        stub = _ReloadViewerStub()
+        window._viewer_widget = stub  # type: ignore[assignment]
+        window._viewer_tab_widget = stub
+        window._reload_viewer_if_open()
+        assert len(stub.loads) == 1
+        assert stub.loads[0]["mesh_path"] == str(project / "mesh" / "final_mesh.ply")
+
+        window._state.viewer_loading = True
+        window._reload_viewer_if_open()  # loading: skipped, no second load
+        assert len(stub.loads) == 1
+        window._state.viewer_loading = False
+    finally:
+        window._viewer_widget = None
+        window._viewer_tab_widget = None
+        window._on_close()
+        app.quit()
+
+
+def test_invalidate_records_and_reopens_file_tabs_offscreen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """File tabs closed by invalidation come back once the meshes are back."""
+    from PySide6.QtWidgets import QMessageBox
+
+    app = _offscreen_app()
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.No)
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
+    try:
+        project = tmp_path / "tabs-project"
+        (project / "mesh").mkdir(parents=True)
+        _write_triangle_ply(project / "mesh" / "final_mesh.ply")
+        ese_file = project / "ese" / "normals.npy"
+        ese_file.parent.mkdir(parents=True)
+        import numpy as np
+
+        np.save(ese_file, np.ones((2, 3)))
+        window.open_project(project)
+
+        window._file_tabs[str(ese_file)] = QWidget()
+        window._invalidate_derived_meshes(delete_base=False)
+        assert not ese_file.exists()
+        assert window._invalidated_file_tabs == [str(ese_file)]
+
+        opened: list[str] = []
+        import unittest.mock as mock
+
+        with mock.patch.object(window, "_open_file_tab", lambda p: opened.append(str(p))):
+            window._reopen_invalidated_file_tabs()
+        assert opened == [str(ese_file)]
+        assert window._invalidated_file_tabs == []
+    finally:
+        window._on_close()
+        app.quit()
+
+
+def test_electrode_group_edits_sync_and_reload_offscreen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Adding a group persists its row and reloads the viewer at once."""
+    from PySide6.QtWidgets import QMessageBox
+
+    app = _offscreen_app()
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.No)
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
+    try:
+        project = tmp_path / "groups-project"
+        (project / "mesh").mkdir(parents=True)
+        _write_triangle_ply(project / "mesh" / "final_mesh.ply")
+        window.open_project(project)
+        window._build_viewer_widget()
+
+        window._add_electrode_group_row(path="group.tsv", color="red")
+        window._sync_electrode_groups()
+        assert ("group.tsv", "red") in window._state.electrode_rows
+
+        reloaded: list[str] = []
+        import unittest.mock as mock
+
+        with mock.patch.object(window, "_open_viewer", lambda p: reloaded.append(str(p))):
+            window._on_add_electrode_group()
+            window._on_remove_electrode_group(window._electrode_group_widgets[-1])
+        assert reloaded == [str(project), str(project)]
+    finally:
+        window._viewer_widget = None
+        window._viewer_tab_widget = None
+        window._on_close()
         app.quit()
