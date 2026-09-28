@@ -40,11 +40,16 @@ FRAME_CRAS = "cras"
 FRAME_HEAD = "head"
 FRAME_IDS: tuple[str, ...] = (FRAME_SCANNER, FRAME_VOXEL, FRAME_CRAS, FRAME_HEAD)
 
+#: Pseudo-frame for tables: electrode positions as NAS/LPA/RPA distances.
+#: Not a geometric frame (no transform exists), so it stays out of FRAME_IDS.
+FRAME_FIDUCIAL = "fiducial"
+
 _FRAME_LABELS: dict[str, str] = {
     FRAME_SCANNER: "Scanner RAS (world mm)",
     FRAME_VOXEL: "Voxel indices",
     FRAME_CRAS: "FreeSurfer cRAS",
     FRAME_HEAD: "Head (centred mm)",
+    FRAME_FIDUCIAL: "Fiducials (NAS/LPA/RPA)",
 }
 
 

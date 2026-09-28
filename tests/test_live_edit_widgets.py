@@ -264,7 +264,7 @@ def test_localization_preview_frame_selector_offscreen() -> None:
             return item.text()
 
         preview.set_result(electrodes, np.array([1.0, 0.0, 0.0]), np.eye(4))
-        assert preview._table.columnCount() == 9
+        assert preview._table.columnCount() == 6
         assert _cell(0, 1) == "11.000"  # world X
 
         preview._frame_combo.setCurrentIndex(1)  # Head
@@ -272,6 +272,20 @@ def test_localization_preview_frame_selector_offscreen() -> None:
 
         preview._frame_combo.setCurrentIndex(2)  # Voxel
         assert _cell(0, 1) == "11.000"
+
+        preview._frame_combo.setCurrentIndex(3)  # Fiducial distances
+
+        def _header(col: int) -> str:
+            item = preview._table.horizontalHeaderItem(col)
+            assert item is not None
+            return item.text()
+
+        assert _header(1) == "NAS"
+        assert _header(2) == "LPA"
+        assert _header(3) == "RPA"
+        assert _cell(0, 1) == "10.000"
+        assert _cell(0, 2) == ""
+        assert _cell(0, 3) == ""
 
         preview.set_result(electrodes, np.array([1.0, 0.0, 0.0]), None)
         preview._frame_combo.setCurrentIndex(2)  # Voxel unavailable: no coords
