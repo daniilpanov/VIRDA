@@ -1696,6 +1696,41 @@ def test_import_identical_scan_skips_with_warning_offscreen(
         app.quit()
 
 
+def test_import_same_name_scan_skips_without_sidecar_offscreen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Re-importing the same file warns even when no sidecar was recorded."""
+    app = _offscreen_app()
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
+    try:
+        project = tmp_path / "scan-project"
+        (project / "input").mkdir(parents=True)
+        scan = _write_mini_nifti(project / "input" / "head.nii.gz")
+        window.open_project(project)
+
+        confirms: list[str] = []
+
+        def _no_confirm() -> bool:
+            confirms.append("asked")
+            return True
+
+        monkeypatch.setattr(window, "_confirm_nifti_replace", _no_confirm)
+        autostarted: list[str] = []
+        monkeypatch.setattr(
+            window._base_tab, "autostart_base_from_nifti", lambda p: autostarted.append(str(p))
+        )
+        role = next(r for r in ROLE_REGISTRY if r.key == "nifti")
+        window._import_nifti_scan(role, scan)
+
+        assert confirms == []
+        assert autostarted == []
+        assert "identical" in window.statusBar().currentMessage()
+    finally:
+        window.close()
+        app.quit()
+
+
 def test_base_generated_drops_ese_but_keeps_tables_offscreen(tmp_path: Path) -> None:
     """A fresh base invalidates the ESE step while tables and base survive."""
     app = _offscreen_app()
