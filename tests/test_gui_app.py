@@ -691,6 +691,28 @@ def test_ide_window_prefills_editors_from_project_offscreen(tmp_path: Path) -> N
         app.quit()
 
 
+def test_prefill_ignores_final_mesh_as_base_offscreen(tmp_path: Path) -> None:
+    """A final mesh on disk never becomes the base mesh on project open."""
+    app = _offscreen_app()
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
+    try:
+        project = tmp_path / "final-only-project"
+        (project / "mesh").mkdir(parents=True)
+        _write_triangle_ply(project / "mesh" / "final_mesh.ply")
+
+        window.open_project(project)
+
+        mesh_tab = window._mesh_processing_tab
+        assert mesh_tab._base_mesh is None
+        assert mesh_tab._base_path is None
+        assert mesh_tab._base_label.text() == "No base mesh loaded"
+        assert mesh_tab._final_mesh is not None  # final still loads as final
+    finally:
+        window._on_close()
+        app.quit()
+
+
 def test_perform_import_copies_into_project_and_refreshes_sidebar(
     tmp_path: Path,
 ) -> None:
@@ -925,6 +947,7 @@ def test_viewer_open_restores_ese_overlay_offscreen(
     try:
         project = tmp_path / "sample-project"
         (project / "mesh").mkdir(parents=True)
+        _write_triangle_ply(project / "mesh" / "base_mesh.ply")
         _write_triangle_ply(project / "mesh" / "final_mesh.ply")
 
         vertices = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
