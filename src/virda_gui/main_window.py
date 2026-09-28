@@ -686,7 +686,16 @@ class IdeWindow(QMainWindow):
             return
         stored = read_source_hash(self._project / "mesh")
         has_scan = any(self._project.glob("input/*.nii*"))
-        if stored is not None and stored == incoming and has_scan:
+        same_name = self._project / "input" / source.name
+        if same_name.is_file():
+            try:
+                same_content = sha256_file(same_name) == incoming
+            except OSError:
+                same_content = False
+            if same_content:
+                self._status("Existing NIfTI is identical to the imported one.", 5000)
+                return
+        elif stored is not None and stored == incoming and has_scan:
             self._status("Existing NIfTI is identical to the imported one.", 5000)
             return
         if not self._confirm_nifti_replace():
