@@ -1062,15 +1062,19 @@ class MeshProcessingTab(QWidget):
     # ---- project lifecycle ----
 
     def prefill_from_project(self, project: str | Path) -> None:
-        """Load the project's base and final scalp meshes, if any."""
+        """Load the project's base and final scalp meshes, if any.
+
+        The base mesh comes only from ``base_mesh.ply``: a final mesh on
+        disk is never used as the base, so the base path label cannot point
+        at the final file.  Without a base the tab stays empty until the
+        user loads or generates one.
+        """
         self.clear()
         root = Path(project)
         base_candidate = root / "mesh" / _BASE_MESH_FILENAME
         final_candidate = root / "mesh" / _FINAL_MESH_FILENAME
         if base_candidate.is_file():
             self.load_base(base_candidate)
-        elif final_candidate.is_file():
-            self.load_base(final_candidate)
         if final_candidate.is_file():
             try:
                 self._final_mesh = import_scalp_mesh(final_candidate)
