@@ -446,6 +446,9 @@ class IdeWindow(QMainWindow):
             assert self._viewer_widget is not None
             self._sync_electrode_groups()
             self._viewer_widget.shutdown()
+            # The live editors tab is embedded in the viewer HUD: reparent it
+            # back first, otherwise closing the viewer deletes it as a child.
+            self._editors_tab.setParent(None)
             self._viewer_widget = None
             self._viewer_tab_widget = None
             self._viewer_hud_panel = None

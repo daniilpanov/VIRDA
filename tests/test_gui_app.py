@@ -2017,8 +2017,8 @@ def test_reload_viewer_if_open_reloads_scene_offscreen(
         assert len(stub.loads) == 1
         window._state.viewer_loading = False
     finally:
-        window._viewer_widget = None
-        window._viewer_tab_widget = None
+        if window._viewer_tab_widget is not None:
+            window._discard_tab_widget(window._viewer_tab_widget)
         window._on_close()
         app.quit()
 
@@ -2105,8 +2105,8 @@ def test_electrode_group_edits_sync_and_reload_offscreen(
             assert window._state.electrode_rows == []
             assert reloaded == [str(project)]  # invalid path: no reload
     finally:
-        window._viewer_widget = None
-        window._viewer_tab_widget = None
+        if window._viewer_tab_widget is not None:
+            window._discard_tab_widget(window._viewer_tab_widget)
         window._on_close()
         app.quit()
 
@@ -2129,8 +2129,8 @@ def test_no_surface_picking_controls_offscreen(tmp_path: Path) -> None:
         assert not hasattr(window, "_on_surface_picked")
         assert not hasattr(window, "_next_fiducial_id")
     finally:
-        window._viewer_widget = None
-        window._viewer_tab_widget = None
+        if window._viewer_tab_widget is not None:
+            window._discard_tab_widget(window._viewer_tab_widget)
         window._on_close()
         app.quit()
 
