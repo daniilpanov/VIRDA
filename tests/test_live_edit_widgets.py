@@ -358,6 +358,33 @@ def test_measurements_editor_load_invalid_schema_returns_false(tmp_path: Path) -
         app.quit()
 
 
+def test_measurements_editor_load_empty_file_warns_offscreen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A measurements file without rows warns instead of loading silence."""
+    from PySide6.QtWidgets import QMessageBox
+
+    app = _qt_app()
+    editor = MeasurementsEditor()
+    try:
+        shown: list[str] = []
+
+        def _info(*args: object, **_kwargs: object) -> object:
+            shown.append(str(args[2]))
+            return QMessageBox.StandardButton.Ok
+
+        monkeypatch.setattr(QMessageBox, "information", _info)
+        empty = tmp_path / "empty.json"
+        empty.write_text(json.dumps({"electrodes": []}), encoding="utf-8")
+        assert editor.load(empty) is False
+        assert len(shown) == 1
+        assert "No electrode rows" in shown[0]
+        assert editor.measurement_rows() == []
+    finally:
+        editor.close()
+        app.quit()
+
+
 def test_editors_clear_resets_rows_and_path_offscreen(tmp_path: Path) -> None:
     app = _qt_app()
     fiducials_editor = FiducialsEditor()

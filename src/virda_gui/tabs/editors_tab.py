@@ -917,6 +917,12 @@ class MeasurementsEditor(QWidget):
                     self, "Load measurements", f"Could not load measurements:\n{exc}"
                 )
             return False
+        if not rows:
+            if interactive:
+                QMessageBox.information(
+                    self, "Load measurements", f"No electrode rows found in:\n{path}"
+                )
+            return False
         self._path = path
         self.set_measurement_rows(rows)
         self._dirty = False
