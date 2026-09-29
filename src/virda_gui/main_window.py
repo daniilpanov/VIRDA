@@ -1476,6 +1476,9 @@ class IdeWindow(QMainWindow):
         self._prefs.save_main_splitter(self._splitter.saveState())
         self._prefs.save_mesh_splitter(self._mesh_processing_tab.splitter_state())
         self._localize_poll.stop()
+        self._fiducial_overlay_timer.stop()
+        self._localize_timer.stop()
+        self._editors_tab.shutdown()
         for widget in self._file_tabs.values():
             if isinstance(widget, (PreviewTab, ViewerWidget)):
                 widget.shutdown()

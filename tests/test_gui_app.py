@@ -2346,3 +2346,24 @@ def test_all_flagged_electrodes_skip_empty_cloud_offscreen(
         app.quit()
 
 
+def test_close_stops_all_timers_offscreen(tmp_path: Path) -> None:
+    """Closing the window leaves no armed timer behind to fire on dead widgets."""
+    app = _offscreen_app()
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
+    try:
+        window._fiducial_overlay_timer.start()
+        window._localize_timer.start()
+        window._editors_tab._save_timer.start()
+        window._mesh_processing_tab._preview_timer.start()
+        window._mesh_processing_tab._save_timer.start()
+        window._on_close()
+
+        assert not window._localize_poll.isActive()
+        assert not window._fiducial_overlay_timer.isActive()
+        assert not window._localize_timer.isActive()
+        assert not window._editors_tab._save_timer.isActive()
+        assert not window._mesh_processing_tab._preview_timer.isActive()
+        assert not window._mesh_processing_tab._save_timer.isActive()
+    finally:
+        app.quit()

@@ -787,6 +787,7 @@ class MeshProcessingTab(QWidget):
         """
         if self._interactor is not None:
             self._interactor.close()
+        self._preview_timer.stop()
         self._save_timer.stop()
         self._cancel_running_generation()
 

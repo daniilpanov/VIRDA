@@ -1410,6 +1410,10 @@ class EditorsTab(QWidget):
         self._fiducials.seed_canonical_rows()
         self._localization.set_result(None, None)
 
+    def shutdown(self) -> None:
+        """Stop the autosave timer so it cannot fire during teardown."""
+        self._save_timer.stop()
+
     def is_dirty(self) -> bool:
         """Whether either table holds edits not yet written to disk."""
         return self._fiducials.is_dirty() or self._measurements.is_dirty()
