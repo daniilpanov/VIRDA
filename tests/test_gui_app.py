@@ -467,12 +467,12 @@ def test_live_overlay_rebuild_purges_stale_actors_offscreen(
 
         viewer._rebuild_live_overlay(np.eye(4))
         first_point_actors = list(viewer._point_actors)
-        assert len(first_point_actors) == 3  # lime, flagged red, labels
+        assert len(first_point_actors) == 2  # flagged red, labels (no healthy cloud)
         assert plotter.removed == []
 
         viewer._rebuild_live_overlay(np.eye(4))
-        assert len(viewer._point_actors) == 3  # no accumulation
-        assert len(plotter.removed) == 3  # lime, flagged red, labels
+        assert len(viewer._point_actors) == 2  # no accumulation
+        assert len(plotter.removed) == 2  # flagged red, labels
         assert all(actor not in viewer._point_actors for actor in plotter.removed)
     finally:
         viewer.shutdown()
@@ -2281,3 +2281,68 @@ def test_live_electrodes_visibility_offscreen(monkeypatch: pytest.MonkeyPatch) -
         viewer.shutdown()
         viewer.close()
         app.quit()
+
+
+def test_all_flagged_electrodes_skip_empty_cloud_offscreen(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An all-flagged result draws red points and labels without crashing."""
+    import numpy as np
+
+    from virda_gui.viewer.viewer import ViewerWidget
+
+    app = _offscreen_app()
+    viewer = ViewerWidget()
+    try:
+
+        class _Actor:
+            def __init__(self) -> None:
+                self.visible = True
+
+            def SetVisibility(self, flag: bool) -> None:  # noqa: N802 - mimics VTK
+                self.visible = bool(flag)
+
+        class _Plotter:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, tuple[int, ...]]] = []
+
+            def _actor(self, name: str, points: object) -> _Actor:
+                shape = tuple(np.asarray(points).shape)
+                self.calls.append((name, shape))
+                if shape == (0, 3):
+                    raise ValueError("Empty meshes cannot be plotted.")
+                return _Actor()
+
+            def add_points(self, points: object, *args: object, **kwargs: object) -> _Actor:
+                return self._actor("points", points)
+
+            def add_point_labels(self, points: object, *args: object, **kwargs: object) -> _Actor:
+                self._actor("labels", points)
+                return _Actor()
+
+            def add_mesh(self, *args: object, **kwargs: object) -> _Actor:
+                return _Actor()
+
+            def remove_actor(self, actor: object) -> None:
+                return None
+
+            def close(self) -> None:
+                return None
+
+        monkeypatch.setattr(viewer, "_plotter", _Plotter())
+        viewer.set_live_electrodes(
+            ["E1", "E2"],
+            np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
+            np.array([True, True]),
+        )
+        viewer._rebuild_live_overlay(np.eye(4))  # must not raise
+
+        assert viewer._live_electrode_actor is None
+        assert viewer._flagged_actor is not None
+        assert viewer._live_electrode_label_actor is not None
+    finally:
+        viewer.shutdown()
+        viewer.close()
+        app.quit()
+
+

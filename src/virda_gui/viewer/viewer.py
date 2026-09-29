@@ -618,13 +618,14 @@ class ViewerWidget(QWidget):
             if flags is None or len(flags) != len(pts):
                 flags = np.zeros(len(pts), dtype=bool)
             healthy = ~flags
-            self._live_electrode_actor = self._plotter.add_points(
-                pts[healthy],
-                color="lime",
-                point_size=12,
-                render_points_as_spheres=True,
-            )
-            self._point_actors.append(self._live_electrode_actor)
+            if healthy.any():
+                self._live_electrode_actor = self._plotter.add_points(
+                    pts[healthy],
+                    color="lime",
+                    point_size=12,
+                    render_points_as_spheres=True,
+                )
+                self._point_actors.append(self._live_electrode_actor)
             if (~healthy).any():
                 self._flagged_actor = self._plotter.add_points(
                     pts[~healthy], color="red", point_size=17, render_points_as_spheres=True
