@@ -180,9 +180,9 @@ def _build_config(tmp_path: Path, k_neighbors: int | None, **overrides: Any) -> 
 @pytest.mark.parametrize("k_neighbors", K_NEIGHBORS_MODES)
 def test_stage3_full_pipeline_with_mne_sample(tmp_path: Path, k_neighbors: int | None) -> None:
     from virda.config import load_config_file
-    from virda.main import run, run_stage3
     from virda.models.coordsystem import Coordsystem
     from virda.models.ese_mesh import ESEMesh
+    from virda.run import run, run_stage3
 
     coordsystem_data = load_config_file(MNE_DIR / "coordsystem.json")
     coordsystem: Coordsystem = coordsystem_data["coordsystem"]
@@ -268,9 +268,9 @@ def test_stage3_offset_calibration_with_scalp_level_measurements(
     import json
 
     from virda.config import load_config_file
-    from virda.main import run, run_stage3
     from virda.models.coordsystem import Coordsystem
     from virda.models.ese_mesh import ESEMesh
+    from virda.run import run, run_stage3
 
     coordsystem_data = load_config_file(MNE_DIR / "coordsystem.json")
     coordsystem: Coordsystem = coordsystem_data["coordsystem"]
@@ -344,8 +344,8 @@ def test_stage3_committed_measurements_per_electrode_trace(
     each electrode ID must land within a few mm of its true position.
     This guards against cloud-level metrics hiding individual bad pairs.
     """
-    from virda.main import run, run_stage3
     from virda.models.ese_mesh import ESEMesh
+    from virda.run import run, run_stage3
 
     electrode_positions = _load_electrode_positions()
 

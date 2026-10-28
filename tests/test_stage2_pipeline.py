@@ -133,7 +133,7 @@ class TestMainRunIntegration:
             k_neighbors=10,
         )
 
-        from virda.main import run
+        from virda.run import run
 
         stage1_result, ese_mesh, electrodes = run(config)
 
@@ -155,7 +155,7 @@ class TestMainRunIntegration:
             seal_enabled=False,
         )
 
-        from virda.main import run
+        from virda.run import run
 
         stage1_result, ese_mesh, electrodes = run(config)
 
