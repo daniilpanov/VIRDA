@@ -1,4 +1,2 @@
-from virda.main import main
-
 if __name__ == "__main__":
-    main()
+    raise SystemExit("CLI has been removed")

@@ -16,8 +16,8 @@ from virda.segmentation.head_segmenter import OtsuScope
 class VirdaSettings(BaseSettings):
     """Base settings loaded from the environment and the ``.env`` dotenv file.
 
-    This is the lowest-priority settings source: input config files and CLI
-    arguments override it (see :func:`build_config`).
+    This is the lowest-priority settings source: input config files and
+    caller-provided overrides override it (see :func:`build_config`).
     """
 
     nifti_path: str | None = None
@@ -56,14 +56,14 @@ class VirdaSettings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env")
 
 
-def resolve_config_files(cli_files: list[str] | None = None) -> list[Path]:
+def resolve_config_files(extra_files: list[str] | None = None) -> list[Path]:
     """Collect the input config files in priority order (last one wins).
 
     Sources, from lowest to highest priority:
 
     1. ``VIRDA_CONFIG_FILE`` — legacy single dataset config (e.g. ``.env.json``);
     2. ``VIRDA_CONFIG_FILES`` — :data:`os.pathsep`-separated list of config files;
-    3. ``--config-file`` CLI arguments, in the order given on the command line.
+    3. ``extra_files`` — explicit paths passed by the caller, in the given order.
     """
     paths: list[str] = []
     legacy = os.getenv("VIRDA_CONFIG_FILE")
@@ -72,8 +72,8 @@ def resolve_config_files(cli_files: list[str] | None = None) -> list[Path]:
     env_files = os.getenv("VIRDA_CONFIG_FILES")
     if env_files:
         paths.extend(path for path in env_files.split(os.pathsep) if path)
-    if cli_files:
-        paths.extend(cli_files)
+    if extra_files:
+        paths.extend(extra_files)
     return [Path(path) for path in paths]
 
 
@@ -105,7 +105,7 @@ def build_config(
     """Merge the settings sources into the final :class:`Config`.
 
     Priority (lowest to highest): ``settings``, then each config file in order,
-    then ``overrides`` (CLI arguments).
+    then ``overrides`` (caller-provided).
     """
     data: dict[str, Any] = settings.model_dump()
     for config_file in config_files or []:

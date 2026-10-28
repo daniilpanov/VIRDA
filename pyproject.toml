@@ -37,9 +37,6 @@ research = [
     "pyvista>=0.44",
 ]
 
-[project.scripts]
-virda = "virda.main:main"
-
 [tool.hatch.build.targets.wheel]
 packages = ["src/virda"]
 
