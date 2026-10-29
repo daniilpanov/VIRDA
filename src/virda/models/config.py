@@ -12,8 +12,8 @@ class Config(BaseModel):
     """Merged settings for the whole VIRDA pipeline.
 
     Built from ``VirdaSettings`` (env/dotenv), the input config files
-    (e.g. ``coordsystem.json``) and the CLI arguments, in that order of
-    priority. Stored in the pipeline context so every step can read it.
+    (e.g. ``coordsystem.json``) and caller-provided overrides, in that order
+    of priority. Stored in the pipeline context so every step can read it.
     """
 
     nifti_path: str | None = None

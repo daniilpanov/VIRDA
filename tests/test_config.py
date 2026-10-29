@@ -62,7 +62,7 @@ class TestResolveConfigFiles:
 
         assert resolve_config_files() == [config_path]
 
-    def test_env_list_and_cli_files_keep_order(
+    def test_env_list_and_extra_files_keep_order(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path
     ) -> None:
         first = tmp_path / "a.json"

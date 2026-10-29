@@ -1,6 +1,6 @@
 """Background pipeline execution and log forwarding.
 
-The GUI never runs the heavy :mod:`virda.main.run` work on its own thread;
+The GUI never runs the heavy :mod:`virda.run.run` work on its own thread;
 :class:`PipelineRunner` spawns a daemon thread, streams human-readable
 progress plus sentinel markers over the shared :class:`queue.Queue`, and the
 main thread turns those sentinels into Qt signals via :meth:`PipelineRunner.poll`.
@@ -15,8 +15,8 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal
 
-from virda.main import run
 from virda.models.config import Config
+from virda.run import run
 from virda_gui.state import AppState
 
 _DONE_SENTINEL = "__DONE__"
