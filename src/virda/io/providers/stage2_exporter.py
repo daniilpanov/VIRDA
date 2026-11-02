@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 
 import numpy as np
@@ -27,17 +26,3 @@ class Stage2Exporter(Provider[ESEMesh]):
         np.save(str(ese_dir / "ese_vertices.npy"), result.vertices)
         np.save(str(ese_dir / "ese_faces.npy"), result.faces)
         np.save(str(ese_dir / "normals.npy"), result.normals)
-        np.save(str(ese_dir / "quality.npy"), result.quality)
-
-        (ese_dir / "point_pairs.json").write_text(
-            json.dumps(
-                {
-                    "n_points": int(result.vertices.shape[0]),
-                    "scalp_vertices": result.scalp_vertices.tolist(),
-                    "ese_vertices": result.vertices.tolist(),
-                    "normals": result.normals.tolist(),
-                    "quality": result.quality.tolist(),
-                },
-                indent=2,
-            )
-        )

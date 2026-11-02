@@ -7,7 +7,6 @@ from virda.io.loader.manual_fiducials_loader import ManualFiducialsLoader
 from virda.io.loader.measurements_loader import MeasurementsLoaderFromJson
 from virda.io.loader.nifti_loader import NiftiLoader
 from virda.io.providers.logging_provider import StoreLoggingProvider
-from virda.io.providers.mesh_versioning_provider import ScalpMeshVersioningProvider
 from virda.io.providers.stage1_exporter import Stage1Exporter
 from virda.io.providers.stage2_exporter import Stage2Exporter
 from virda.io.providers.stage3_exporter import Stage3Exporter
@@ -172,11 +171,6 @@ def run_stage1(config: Config) -> Stage1Result:
                 nifti_path=nifti_path,
             ),
             Stage1Result,
-        )
-
-        stage1_controller.register_provider(
-            ScalpMeshVersioningProvider(project_dir / "mesh" / "versions"),
-            on_store=ScalpMesh,
         )
 
     return stage1_controller.run().get_store_notnull(Stage1Result)
