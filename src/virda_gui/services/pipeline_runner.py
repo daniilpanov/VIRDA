@@ -21,8 +21,6 @@ from virda_gui.state import AppState
 
 _DONE_SENTINEL = "__DONE__"
 _ERROR_SENTINEL = "__ERROR__"
-_EXPORT_DONE_SENTINEL = "__EXPORT_DONE__"
-_EXPORT_ERROR_SENTINEL = "__EXPORT_ERROR__"
 
 
 class _QueueLogHandler(logging.Handler):
@@ -56,15 +54,12 @@ class PipelineRunner(QObject):
 
     finished = Signal()
     failed = Signal()
-    exportDone = Signal()  # noqa: N815
-    exportFailed = Signal()  # noqa: N815
 
     def __init__(self, state: AppState) -> None:
         super().__init__()
         self._state = state
         self.log_handler = _QueueLogHandler(state.log_queue)
         self._pipeline_thread: threading.Thread | None = None
-        self._export_threads: list[threading.Thread] = []
         self._closed = False
 
     def submit(self, config: Config, measurements_path: str | None) -> None:
@@ -75,41 +70,21 @@ class PipelineRunner(QObject):
         self._pipeline_thread = thread
         thread.start()
 
-    def start_html_export(self, project: Path, output: Path) -> None:
-        """Export the HTML viewer for ``project`` on a background thread."""
-        if self._closed:
-            return
-
-        def _export() -> None:
-            try:
-                from virda_gui.export.html_export import export_project
-
-                export_project(str(project), output)
-                self._state.log_queue.put(f"HTML exported: {output}")
-                self._state.log_queue.put(_EXPORT_DONE_SENTINEL)
-            except Exception as exc:
-                self._state.log_queue.put(f"HTML export failed: {exc}")
-                self._state.log_queue.put(_EXPORT_ERROR_SENTINEL)
-
-        thread = threading.Thread(target=_export, daemon=True)
-        self._export_threads.append(thread)
-        thread.start()
-
     def shutdown(self, timeout: float = 3.0) -> None:
-        """Give background threads a bounded chance to finish at teardown.
+        """Give the background thread a bounded chance to finish at teardown.
 
-        The pipeline and HTML export threads are daemons, so the process can
-        exit without them; joining for a bounded time handles the common cases
-        (a finished or nearly finished thread) instead of tearing the app down
-        while a worker still writes into the log queue.
+        The pipeline thread is a daemon, so the process can exit without it;
+        joining for a bounded time handles the common cases (a finished or
+        nearly finished thread) instead of tearing the app down while the
+        worker still writes into the log queue.
         """
         deadline = time.monotonic() + timeout
-        for thread in [self._pipeline_thread, *self._export_threads]:
-            if thread is None or not thread.is_alive():
-                continue
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                break
+        thread = self._pipeline_thread
+        if thread is None or not thread.is_alive():
+            self._closed = True
+            return
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
             thread.join(remaining)
         self._closed = True
 
@@ -157,9 +132,7 @@ class PipelineRunner(QObject):
         """Main thread: drain the log queue and turn sentinels into signals.
 
         Plain log lines are handed to ``append``, which writes them to the
-        visible log widget.  The whole queue is drained per call so a sentinel
-        from one producer (e.g. HTML export finishing while the pipeline still
-        runs) no longer cuts off the other producer's lines for this tick.
+        visible log widget.
         """
         try:
             while True:
@@ -168,10 +141,6 @@ class PipelineRunner(QObject):
                     self.finished.emit()
                 elif msg == _ERROR_SENTINEL:
                     self.failed.emit()
-                elif msg == _EXPORT_DONE_SENTINEL:
-                    self.exportDone.emit()
-                elif msg == _EXPORT_ERROR_SENTINEL:
-                    self.exportFailed.emit()
                 else:
                     append(msg)
         except queue.Empty:

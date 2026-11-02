@@ -2,7 +2,7 @@
 
 The tab builds a :class:`Config` from the visible fields on demand, streams
 progress into its own :class:`LogViewer`, and asks the host application to
-act through the ``runRequested``/``openViewer``/``exportHtml`` signals.
+act through the ``runRequested``/``openViewer`` signals.
 """
 
 from pathlib import Path
@@ -45,7 +45,6 @@ class ConfigTab(QWidget):
 
     runRequested = Signal()  # noqa: N815
     openViewer = Signal()  # noqa: N815
-    exportHtml = Signal()  # noqa: N815
 
     def __init__(self, state: AppState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -82,8 +81,6 @@ class ConfigTab(QWidget):
         self.run_btn = QPushButton("Run Pipeline")
         self.viewer_btn = QPushButton("Open 3D Viewer")
         self.viewer_btn.setEnabled(False)
-        self.export_btn = QPushButton("Export HTML")
-        self.export_btn.setEnabled(False)
 
         self.electrodes_cras_check = QCheckBox("Force cRAS conversion")
 
@@ -98,7 +95,6 @@ class ConfigTab(QWidget):
         self._fiducials.textChanged.connect(self._on_fiducials_path_changed)
         self.run_btn.clicked.connect(self.runRequested)
         self.viewer_btn.clicked.connect(self.openViewer)
-        self.export_btn.clicked.connect(self.exportHtml)
 
     # ---- UI construction ----
 
@@ -152,8 +148,6 @@ class ConfigTab(QWidget):
 
         btn_layout.addWidget(self.viewer_btn)
         btn_layout.addSpacing(8)
-
-        btn_layout.addWidget(self.export_btn)
 
         btn_layout.addStretch(1)
         outer.addWidget(btn_frame)

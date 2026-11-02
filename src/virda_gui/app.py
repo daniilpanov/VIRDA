@@ -3,7 +3,7 @@
 Launches a Qt GUI for configuring and running the VIRDA electrode
 localisation pipeline (Stage 1 segmentation/mesh, Stage 2 ESE and Stage 3
 localization).  After a successful run the 3D viewer opens in its own tab
-(with electrode overlays) and an HTML viewer can be exported.
+(with electrode overlays).
 
 The startup window is a project picker — open, create or pick a recent
 project — and only afterwards the IDE-style main window is shown.

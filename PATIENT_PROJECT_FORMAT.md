@@ -16,8 +16,6 @@ any stage can be reproduced exactly from the project alone:
 ├── ese/                # Stage 2 output: electrode-skin-entrance surface
 ├── localization/       # Stage 3 output: localized electrodes
 └── logs/               # pipeline log
-
-viewer.html             # optional: self-contained HTML viewer exported by virda-gui
 ```
 
 ## `input/`

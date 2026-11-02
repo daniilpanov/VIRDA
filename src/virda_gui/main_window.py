@@ -59,17 +59,10 @@ class IdeWindow(QMainWindow):
         add_log_handler(self._pipe_runner.log_handler)
         self._pipe_runner.finished.connect(self._on_pipeline_done)
         self._pipe_runner.failed.connect(self._on_pipeline_error)
-        self._pipe_runner.exportDone.connect(
-            lambda: self._config_tab.log_viewer.append("HTML export completed.")
-        )
-        self._pipe_runner.exportFailed.connect(
-            lambda: self._config_tab.log_viewer.append("HTML export failed — see log above.")
-        )
 
         self._config_tab = ConfigTab(self._state)
         self._config_tab.runRequested.connect(self._on_run)
         self._config_tab.openViewer.connect(self._on_open_viewer)
-        self._config_tab.exportHtml.connect(self._on_export_html)
 
         self._sidebar = ProjectSidebar(self)
         self._sidebar.openViewerRequested.connect(self._on_open_viewer)
@@ -315,7 +308,6 @@ class IdeWindow(QMainWindow):
 
         self._config_tab.run_btn.setEnabled(False)
         self._config_tab.viewer_btn.setEnabled(False)
-        self._config_tab.export_btn.setEnabled(False)
         self._config_tab.log_viewer.clear()
         self._state.log_queue.put("Starting pipeline...")
         self._state.last_project_dir = config.project_dir
@@ -330,7 +322,6 @@ class IdeWindow(QMainWindow):
             )
             self._config_tab.run_btn.setEnabled(True)
             self._config_tab.viewer_btn.setEnabled(True)
-            self._config_tab.export_btn.setEnabled(True)
             return
 
         self._pipe_runner.submit(config, measurements_path)
@@ -348,7 +339,6 @@ class IdeWindow(QMainWindow):
             self._config_tab.log_viewer.append(f"Electrode group added: {added}")
         self._config_tab.run_btn.setEnabled(True)
         self._config_tab.viewer_btn.setEnabled(True)
-        self._config_tab.export_btn.setEnabled(True)
         if self._state.last_project_dir:
             self._sidebar.set_project(Path(self._state.last_project_dir))
         self._update_results_info(success=True)
@@ -356,7 +346,6 @@ class IdeWindow(QMainWindow):
     def _on_pipeline_error(self) -> None:
         self._config_tab.run_btn.setEnabled(True)
         self._config_tab.viewer_btn.setEnabled(True)
-        self._config_tab.export_btn.setEnabled(True)
         self._update_results_info(success=False)
 
     def _update_results_info(self, *, success: bool) -> None:
@@ -463,26 +452,6 @@ class IdeWindow(QMainWindow):
         self._state.viewer_loading = False
         self._config_tab.viewer_btn.setEnabled(True)
         self._config_tab.log_viewer.append(f"3D viewer failed: {message}")
-
-    # ------------------------------------------------------------------
-    # Actions
-    # ------------------------------------------------------------------
-
-    def _on_export_html(self) -> None:
-        resolved = self._state.last_project_dir or self._project
-        if not resolved:
-            QMessageBox.warning(
-                self,
-                "No project directory",
-                "No project directory selected. Run the pipeline or pick a Project dir.",
-            )
-            return
-        self._export_html(Path(resolved))
-
-    def _export_html(self, project: Path) -> None:
-        output = project / "viewer.html"
-        self._config_tab.log_viewer.append(f"Exporting HTML viewer to {output}...")
-        self._pipe_runner.start_html_export(project, output)
 
     # ------------------------------------------------------------------
     # Lifecycle
