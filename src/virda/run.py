@@ -4,6 +4,7 @@ from virda.config import resolve_stage3_config
 from virda.models.config import Config
 from virda.models.electrode import Electrodes
 from virda.models.ese_mesh import ESEMesh
+from virda.models.scalp_mesh import ScalpMesh
 from virda.models.stage1_result import Stage1Result
 from virda.pipelines.stage1 import Stage1PipelineBuilder
 from virda.pipelines.stage2 import Stage2PipelineBuilder
@@ -17,24 +18,33 @@ def run(
     Returns the Stage 1 result, the ESE surface when ESE is configured,
     and the localized electrodes when both ESE and measurements are available.
     """
-    stage1_result = (
+    stage1_result = run_stage1(config)
+
+    if config.to_ese_config() is None:
+        return stage1_result, None, None
+
+    ese_mesh = run_stage2(config, stage1_result.mesh)
+    electrodes = run_stage3(config, stage1_result, ese_mesh, measurements_path)
+
+    return stage1_result, ese_mesh, electrodes
+
+
+def run_stage1(config: Config) -> Stage1Result:
+    return (
         Stage1PipelineBuilder.from_config(config=config)
         .build()
         .run()
         .get_store_notnull(Stage1Result)
     )
 
-    if config.to_ese_config() is None:
-        return stage1_result, None, None
 
-    ese_mesh = (
-        Stage2PipelineBuilder.from_config(config=config, scalp_mesh=stage1_result.mesh)
+def run_stage2(config: Config, scalp_mesh: ScalpMesh) -> ESEMesh:
+    return (
+        Stage2PipelineBuilder.from_config(config=config, scalp_mesh=scalp_mesh)
         .build()
         .run()
         .get_store_notnull(ESEMesh)
     )
-    electrodes = run_stage3(config, stage1_result, ese_mesh, measurements_path)
-    return stage1_result, ese_mesh, electrodes
 
 
 def run_stage3(
