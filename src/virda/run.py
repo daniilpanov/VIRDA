@@ -2,7 +2,6 @@ from pathlib import Path
 
 from virda.config import resolve_stage3_config
 from virda.ese.pca_ese_builder import PCAESEBuilder
-from virda.fiducials import AutoFiducialsDetector
 from virda.io.loader.manual_fiducials_loader import ManualFiducialsLoader
 from virda.io.loader.measurements_loader import MeasurementsLoaderFromJson
 from virda.io.providers.logging_provider import StoreLoggingProvider
@@ -20,6 +19,7 @@ from virda.models.path import FiducialsPath, MeasurementsPath
 from virda.models.scalp_mesh import ScalpMesh
 from virda.models.segmentation_mask import SegmentationMask
 from virda.models.stage1_result import Stage1Result
+from virda.ops.auto_detect_fiducials import auto_detect_fiducials
 from virda.ops.clean_mesh import clean_mesh
 from virda.ops.extract_mesh import extract_mesh
 from virda.ops.load_nifti import load_nifti
@@ -193,7 +193,7 @@ def run_stage1(config: Config) -> Stage1Result:
         _run_step(context, ManualFiducialsLoader())
 
     if config.auto_detect_fiducials:
-        _run_step(context, AutoFiducialsDetector())
+        _put_store(context, auto_detect_fiducials(mesh))
 
     _run_step(context, FiducialsRegistrationStep())
     _run_step(context, OutputGenerator(), log_provider, stage1_exporter)
