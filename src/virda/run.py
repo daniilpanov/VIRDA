@@ -231,19 +231,14 @@ def run_stage3(
         stage1_result.fiducials,
     )
 
-    context = PipelineContext({})
-    context.logger = get_stage_logger(project, "stage_3")
-    context.stores[ESEMesh] = ese_mesh
-    context.stores[Fiducials] = fiducials
-
+    logger = get_stage_logger(project, "stage_3")
     electrodes = localize_electrodes(
         ese_mesh,
         fiducials,
         electrodes,
         config=stage3_config,
-        logger=context.logger,
+        logger=logger,
     )
-    _put_store(context, electrodes)
-    log_store(context.get_logger(), electrodes)
+    log_store(logger, electrodes)
     export_localization(electrodes, project)
-    return context.get_store_notnull(Electrodes)
+    return electrodes
