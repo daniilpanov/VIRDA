@@ -26,10 +26,10 @@ from virda.models.scalp_mesh import ScalpMesh
 from virda.models.segmentation_mask import SegmentationMask
 from virda.models.stage1_result import Stage1Result
 from virda.ops.load_nifti import load_nifti
+from virda.ops.seal_mask import seal_mask
 from virda.ops.segment_head import segment_head
 from virda.pipeline import Provider, Step
 from virda.pipeline_context import PipelineContext
-from virda.segmentation.seal import MaskSealer
 
 
 def _run_step(
@@ -145,8 +145,9 @@ def run_stage1(config: Config) -> Stage1Result:
             lamb=config.smoother_lamb,
         )
 
+    logger = get_stage_logger(project_dir, "stage_1")
     context = PipelineContext({})
-    context.logger = get_stage_logger(project_dir, "stage_1")
+    context.logger = logger
 
     # -- Stores --
     nifti_path = Path(resolved_nifti_path)
@@ -167,19 +168,18 @@ def run_stage1(config: Config) -> Stage1Result:
     # -- Steps --
     volume = load_nifti(nifti_path)
     _put_store(context, volume, log_provider)
-    _put_store(
-        context,
-        segment_head(
-            volume,
-            closing_radius=config.closing_radius,
-            otsu_scope=config.otsu_scope,
-            threshold_scale=config.otsu_threshold_scale,
-        ),
-        log_provider,
+
+    mask = segment_head(
+        volume,
+        closing_radius=config.closing_radius,
+        otsu_scope=config.otsu_scope,
+        threshold_scale=config.otsu_threshold_scale,
     )
+    _put_store(context, mask, log_provider)
 
     if config.seal_enabled:
-        _run_step(context, MaskSealer(radius=config.seal_radius), log_provider)
+        mask = seal_mask(mask, radius=config.seal_radius, logger=logger)
+        _put_store(context, mask, log_provider)
 
     _run_step(context, MarchingCubesExtractor(), log_provider)
 

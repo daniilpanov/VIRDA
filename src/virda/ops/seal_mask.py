@@ -1,4 +1,4 @@
-"""Post-segmentation sealing of the head mask.
+"""Step: post-segmentation sealing of the head mask.
 
 MRI bias-field inhomogeneity can push parts of the scalp (top of the head,
 cheeks) below a global intensity threshold, fragmenting the mask and leaving
@@ -23,7 +23,6 @@ from scipy import ndimage as ndi
 from skimage.morphology import ball, closing
 
 from virda.models.segmentation_mask import SegmentationMask
-from virda.segmentation.contracts import SegmentationMaskPostprocessor
 
 
 def _keep_largest_component(
@@ -50,40 +49,44 @@ def _keep_largest_component(
     return cast(np.ndarray, labels == largest_label)
 
 
-class MaskSealer(SegmentationMaskPostprocessor):
-    def __init__(
-        self,
-        radius: int = 4,
-        keep_largest: bool = True,
-    ) -> None:
-        if radius < 0:
-            raise ValueError(f"radius must be non-negative, got {radius}")
+def seal(
+    mask: np.ndarray,
+    *,
+    radius: int = 4,
+    keep_largest: bool = True,
+    logger: Logger | None = None,
+) -> np.ndarray:
+    """Return a solid version of ``mask`` with surface openings bridged.
 
-        self._radius = radius
-        self._keep_largest = keep_largest
-        super().__init__()
+    ``radius`` (in voxels) is the closing ball radius; it must be large enough
+    to bridge the narrowest channels that lead from interior cavities to the
+    exterior (nostrils, ear canals), yet small enough not to erode thin scalp
+    features. For ~1 mm isotropic data ``radius=4`` works.
 
-    def _process(self, mask: SegmentationMask) -> SegmentationMask:
-        return SegmentationMask(mask=self._seal_mask(mask.mask))
+    When ``keep_largest`` is set, only the most voluminous connected component
+    of the sealed mask is returned; every other fragment is dropped from the
+    output.
+    """
+    if radius < 0:
+        raise ValueError(f"radius must be non-negative, got {radius}")
 
-    def _seal_mask(self, mask: np.ndarray) -> np.ndarray:
-        """Return a solid version of ``mask`` with surface openings bridged.
+    sealed = mask.astype(bool, copy=True) if radius < 1 else closing(mask, ball(radius))
+    sealed = ndi.binary_fill_holes(sealed)
 
-        ``radius`` (in voxels) is the closing ball radius; it must be large enough
-        to bridge the narrowest channels that lead from interior cavities to the
-        exterior (nostrils, ear canals), yet small enough not to erode thin scalp
-        features. For ~1 mm isotropic data ``radius=4`` works.
+    if keep_largest:
+        sealed = _keep_largest_component(sealed, logger)
 
-        When ``keep_largest`` is set, only the most voluminous connected component
-        of the sealed mask is returned; every other fragment is dropped from the
-        output.
-        """
-        sealed = (
-            mask.astype(bool, copy=True) if self._radius < 1 else closing(mask, ball(self._radius))
-        )
-        sealed = ndi.binary_fill_holes(sealed)
+    return cast(np.ndarray, sealed)
 
-        if self._keep_largest:
-            sealed = _keep_largest_component(sealed, self._logger)
 
-        return cast(np.ndarray, sealed)
+def seal_mask(
+    mask: SegmentationMask,
+    *,
+    radius: int = 4,
+    keep_largest: bool = True,
+    logger: Logger | None = None,
+) -> SegmentationMask:
+    """Seal a :class:`SegmentationMask` for the pipeline."""
+    return SegmentationMask(
+        mask=seal(mask.mask, radius=radius, keep_largest=keep_largest, logger=logger)
+    )
