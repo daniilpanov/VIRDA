@@ -1,8 +1,8 @@
 from pathlib import Path
 
 from virda.config import resolve_stage3_config
+from virda.io.exporters.ese import export_ese
 from virda.io.exporters.stage1 import export_stage1
-from virda.io.providers.stage2_exporter import Stage2Exporter
 from virda.io.providers.stage3_exporter import Stage3Exporter
 from virda.logging_setup import get_stage_logger
 from virda.models.config import Config
@@ -194,7 +194,7 @@ def run_stage2(config: Config, scalp_mesh: ScalpMesh) -> ESEMesh:
     )
     _put_store(context, ese_mesh)
     log_store(logger, ese_mesh)
-    Stage2Exporter(project_dir=Path(config.project_dir)).provide(ese_mesh, context)
+    export_ese(ese_mesh, Path(config.project_dir))
     return context.get_store_notnull(ESEMesh)
 
 
