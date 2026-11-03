@@ -5,7 +5,6 @@ from virda.io.providers.logging_provider import StoreLoggingProvider
 from virda.io.providers.stage1_exporter import Stage1Exporter
 from virda.io.providers.stage2_exporter import Stage2Exporter
 from virda.io.providers.stage3_exporter import Stage3Exporter
-from virda.localization.brute_force_localizer import BruteForceLocalizer
 from virda.logging_setup import get_stage_logger
 from virda.models.config import Config
 from virda.models.electrode import Electrodes
@@ -22,6 +21,7 @@ from virda.ops.extract_mesh import extract_mesh
 from virda.ops.load_manual_fiducials import load_manual_fiducials
 from virda.ops.load_measurements import load_measurements
 from virda.ops.load_nifti import load_nifti
+from virda.ops.localize_electrodes import localize_electrodes
 from virda.ops.resolve_fiducials import resolve_fiducials
 from virda.ops.seal_mask import seal_mask
 from virda.ops.segment_head import segment_head
@@ -238,9 +238,17 @@ def run_stage3(
     context.logger = get_stage_logger(project, "stage_3")
     context.stores[ESEMesh] = ese_mesh
     context.stores[Fiducials] = fiducials
-    _run_step(
+
+    electrodes = localize_electrodes(
+        ese_mesh,
+        fiducials,
+        electrodes,
+        config=stage3_config,
+        logger=context.logger,
+    )
+    _put_store(
         context,
-        BruteForceLocalizer(stage3_config),
+        electrodes,
         StoreLoggingProvider(),
         Stage3Exporter(
             project_dir=project,
