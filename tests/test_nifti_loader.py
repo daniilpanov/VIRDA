@@ -5,8 +5,8 @@ import nibabel as nib
 import numpy as np
 import pytest
 
+from virda.io.importers.nifti import load_nifti
 from virda.models.mri_volume import MRIVolume
-from virda.ops.load_nifti import load_nifti
 
 
 class TestNiftiLoader:

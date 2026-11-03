@@ -1,4 +1,4 @@
-"""Step: load an MRI NIfTI volume from disk."""
+"""Import an MRI NIfTI volume from disk into an :class:`MRIVolume` model."""
 
 from pathlib import Path
 
