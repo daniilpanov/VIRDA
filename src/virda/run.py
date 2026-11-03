@@ -27,25 +27,8 @@ from virda.ops.seal_mask import seal_mask
 from virda.ops.segment_head import segment_head
 from virda.ops.smooth_mesh import smooth_mesh
 from virda.ops.stage1_result import build_stage1_result
-from virda.pipeline import Provider, Step
+from virda.pipeline import Provider
 from virda.pipeline_context import PipelineContext
-
-
-def _run_step(
-        context: PipelineContext,
-        step: Step,
-        *providers: Provider,
-) -> None:
-    """Run one step, put its returned store into the context, fire providers.
-
-    This replaces the ``PipelineController`` bookkeeping: a step's return
-    value is stored under its runtime type, and every provider bound to it
-    (logging, export) runs right after the store is updated.
-    """
-    new_store = step.run(context)
-    context.stores[type(new_store)] = new_store
-    for provider in providers:
-        provider.provide(new_store, context)
 
 
 def _put_store(
@@ -55,7 +38,9 @@ def _put_store(
 ) -> None:
     """Put a function result into the context stores and fire providers.
 
-    Same contract as :func:`_run_step` for steps migrated to plain functions.
+    ``(store, providers)`` is the same bookkeeping the old step/provider
+    machinery performed: the value is stored under its runtime type and every
+    provider bound to it (logging, export) runs right after the write.
     """
     context.stores[type(store)] = store
     for provider in providers:

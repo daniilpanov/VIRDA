@@ -1,22 +1,21 @@
-"""Protocols shared by pipeline steps and providers.
+"""The provider protocol: a side-effect hook bound to one store type.
 
-Steps read their inputs from and write their results into a
-:class:`~virda.pipeline_context.PipelineContext`; providers are side-effect
-hooks (logging, export) bound to one store type each.  The orchestration
-itself lives in :mod:`virda.run`.
+Providers (logging, export) run right after a store value is written by
+:mod:`virda.run`.  Pipeline steps are plain functions in :mod:`virda.ops`
+and share no protocol.
 """
 
-from typing import Any, Protocol, TypeVar
+from typing import TYPE_CHECKING, Protocol, TypeVar
 
-from virda.pipeline_context import PipelineContext
+if TYPE_CHECKING:
+    from virda.pipeline_context import PipelineContext
 
-StepOutputStore = TypeVar("StepOutputStore", covariant=True)
 StoreOfProvider = TypeVar("StoreOfProvider", contravariant=True)
 
 
-class Step(Protocol[StepOutputStore]):
-    def run(self, context: PipelineContext) -> StepOutputStore: ...
-
-
 class Provider(Protocol[StoreOfProvider]):
-    def provide(self, store: StoreOfProvider | None, context: PipelineContext) -> None: ...
+    def provide(
+        self,
+        store: StoreOfProvider | None,
+        context: "PipelineContext",
+    ) -> None: ...

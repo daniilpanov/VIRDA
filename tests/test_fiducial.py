@@ -6,7 +6,7 @@ from typing import cast
 import numpy as np
 import pytest
 
-from tests.helpers.pipelines import make_fiducials
+from tests.helpers.fiducials import make_fiducials
 from virda.io.fiducial_helpers import load_fiducials, save_fiducials
 from virda.models.coordsystem import Coordsystem
 from virda.models.fiducial import (
