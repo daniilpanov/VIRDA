@@ -1,8 +1,8 @@
 import numpy as np
 from scipy import ndimage as ndi
 
-from virda.ops.seal_mask import seal, seal_mask
 from virda.models.segmentation_mask import SegmentationMask
+from virda.ops.seal_mask import seal, seal_mask
 
 
 def _enclosed_air_voxels(mask: np.ndarray) -> int:

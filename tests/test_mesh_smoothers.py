@@ -41,11 +41,9 @@ def sphere_mesh(sphere_volume: MRIVolume) -> ScalpMesh:
     squared_distance = np.sum((grid - center.reshape(-1, 1, 1, 1)) ** 2, axis=0)
     mask = SegmentationMask(mask=squared_distance <= 8**2)
 
-    from virda.mesh.mesh_extractor import MarchingCubesExtractor
+    from virda.ops.extract_mesh import extract_mesh
 
-    return MarchingCubesExtractor().run(
-        build_context(SegmentationMask=mask, MRIVolume=sphere_volume)
-    )
+    return extract_mesh(mask, sphere_volume)
 
 
 class TestLaplacianSmoother:
