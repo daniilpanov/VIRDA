@@ -26,9 +26,9 @@ from virda.models.scalp_mesh import ScalpMesh
 from virda.models.segmentation_mask import SegmentationMask
 from virda.models.stage1_result import Stage1Result
 from virda.ops.load_nifti import load_nifti
+from virda.ops.segment_head import segment_head
 from virda.pipeline import Provider, Step
 from virda.pipeline_context import PipelineContext
-from virda.segmentation.head_segmenter import OtsuHeadSegmenter
 from virda.segmentation.seal import MaskSealer
 
 
@@ -165,12 +165,18 @@ def run_stage1(config: Config) -> Stage1Result:
     )
 
     # -- Steps --
-    _put_store(context, load_nifti(nifti_path), log_provider)
-    _run_step(context, OtsuHeadSegmenter(
-        closing_radius=config.closing_radius,
-        otsu_scope=config.otsu_scope,
-        threshold_scale=config.otsu_threshold_scale,
-    ), log_provider)
+    volume = load_nifti(nifti_path)
+    _put_store(context, volume, log_provider)
+    _put_store(
+        context,
+        segment_head(
+            volume,
+            closing_radius=config.closing_radius,
+            otsu_scope=config.otsu_scope,
+            threshold_scale=config.otsu_threshold_scale,
+        ),
+        log_provider,
+    )
 
     if config.seal_enabled:
         _run_step(context, MaskSealer(radius=config.seal_radius), log_provider)

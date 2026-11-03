@@ -1,3 +1,3 @@
-from virda.segmentation.contracts import HeadSegmenter, SegmentationMaskPostprocessor
+from virda.segmentation.contracts import SegmentationMaskPostprocessor
 
-__all__ = ["HeadSegmenter", "SegmentationMaskPostprocessor"]
+__all__ = ["SegmentationMaskPostprocessor"]

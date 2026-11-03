@@ -10,7 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from virda.models.config import Config
 from virda.models.coordsystem import Coordsystem
 from virda.models.stage3_config import Stage3Config
-from virda.segmentation.head_segmenter import OtsuScope
+from virda.ops.segment_head import OtsuScope
 
 
 class VirdaSettings(BaseSettings):
