@@ -26,10 +26,27 @@ from virda.models.path import FiducialsPath, MeasurementsPath, NiftiPath
 from virda.models.scalp_mesh import ScalpMesh
 from virda.models.segmentation_mask import SegmentationMask
 from virda.models.stage1_result import Stage1Result
-from virda.pipeline import PipelineController
+from virda.pipeline import Provider, Step
 from virda.pipeline_context import PipelineContext
 from virda.segmentation.head_segmenter import OtsuHeadSegmenter
 from virda.segmentation.seal import MaskSealer
+
+
+def _run_step(
+        context: PipelineContext,
+        step: Step,
+        *providers: Provider,
+) -> None:
+    """Run one step, put its returned store into the context, fire providers.
+
+    This replaces the ``PipelineController`` bookkeeping: a step's return
+    value is stored under its runtime type, and every provider bound to it
+    (logging, export) runs right after the store is updated.
+    """
+    new_store = step.run(context)
+    context.stores[type(new_store)] = new_store
+    for provider in providers:
+        provider.provide(new_store, context)
 
 
 class FiducialsRegistrationStep:
@@ -114,88 +131,74 @@ def run_stage1(config: Config) -> Stage1Result:
             lamb=config.smoother_lamb,
         )
 
-    stage1_controller = PipelineController(logger=get_stage_logger(project_dir, "stage_1"))
-
-    # -- Steps --
-    stage1_controller.register_step(NiftiLoader())
-    stage1_controller.register_step(OtsuHeadSegmenter(
-        closing_radius=config.closing_radius,
-        otsu_scope=config.otsu_scope,
-        threshold_scale=config.otsu_threshold_scale,
-    ))
-
-    if config.seal_enabled:
-        stage1_controller.register_step(MaskSealer(radius=config.seal_radius))
-
-    stage1_controller.register_step(MarchingCubesExtractor())
-
-    stage1_controller.register_step(TrimeshCleaner(
-        min_component_vertices=config.cleaner_min_vertices,
-        merge_digits=config.cleaner_merge_digits,
-    ))
-    stage1_controller.register_step(smoother)
-
-    if resolved_fiducials_path:
-        fiducials_path = Path(resolved_fiducials_path)
-        stage1_controller.register_store(FiducialsPath, FiducialsPath(fiducials_path))
-        stage1_controller.register_step(ManualFiducialsLoader())
-
-    if config.auto_detect_fiducials:
-        stage1_controller.register_step(AutoFiducialsDetector())
-
-    stage1_controller.register_step(FiducialsRegistrationStep())
-    stage1_controller.register_step(OutputGenerator())
+    context = PipelineContext({})
+    context.logger = get_stage_logger(project_dir, "stage_1")
 
     # -- Stores --
     nifti_path = Path(resolved_nifti_path)
-    stage1_controller.register_store(NiftiPath, NiftiPath(nifti_path))
-    stage1_controller.register_store(MRIVolume)
-    stage1_controller.register_store(SegmentationMask)
-    stage1_controller.register_store(ScalpMesh)
-    stage1_controller.register_store(Fiducials)
-    stage1_controller.register_store(Config, config)
+    context.stores[NiftiPath] = NiftiPath(nifti_path)
+    context.stores[Config] = config
+    for store_type in (MRIVolume, SegmentationMask, ScalpMesh, Fiducials):
+        context.stores[store_type] = None
 
     # -- Providers --
     log_provider = StoreLoggingProvider()
-    for store_type in (MRIVolume, SegmentationMask, ScalpMesh, Stage1Result):
-        stage1_controller.register_provider(log_provider, on_store=store_type)
-
     ese_config = config.to_ese_config()
+    stage1_exporter = Stage1Exporter(
+        project_dir=project_dir,
+        ese_config=ese_config,
+        config=config,
+        nifti_path=nifti_path,
+    )
 
-    if project_dir:
-        stage1_controller.register_provider(
-            Stage1Exporter(
-                project_dir=project_dir,
-                ese_config=ese_config,
-                config=config,
-                nifti_path=nifti_path,
-            ),
-            Stage1Result,
-        )
+    # -- Steps --
+    _run_step(context, NiftiLoader(), log_provider)
+    _run_step(context, OtsuHeadSegmenter(
+        closing_radius=config.closing_radius,
+        otsu_scope=config.otsu_scope,
+        threshold_scale=config.otsu_threshold_scale,
+    ), log_provider)
 
-    return stage1_controller.run().get_store_notnull(Stage1Result)
+    if config.seal_enabled:
+        _run_step(context, MaskSealer(radius=config.seal_radius), log_provider)
+
+    _run_step(context, MarchingCubesExtractor(), log_provider)
+
+    _run_step(context, TrimeshCleaner(
+        min_component_vertices=config.cleaner_min_vertices,
+        merge_digits=config.cleaner_merge_digits,
+    ), log_provider)
+    _run_step(context, smoother, log_provider)
+
+    if resolved_fiducials_path:
+        fiducials_path = Path(resolved_fiducials_path)
+        context.stores[FiducialsPath] = FiducialsPath(fiducials_path)
+        _run_step(context, ManualFiducialsLoader())
+
+    if config.auto_detect_fiducials:
+        _run_step(context, AutoFiducialsDetector())
+
+    _run_step(context, FiducialsRegistrationStep())
+    _run_step(context, OutputGenerator(), log_provider, stage1_exporter)
+
+    return context.get_store_notnull(Stage1Result)
 
 
 def run_stage2(config: Config, scalp_mesh: ScalpMesh) -> ESEMesh:
-    project_dir = config.project_dir
+    context = PipelineContext({})
+    context.logger = get_stage_logger(Path(config.project_dir), "stage_2")
+    context.stores[ScalpMesh] = scalp_mesh
 
-    stage2_controller = PipelineController(logger=get_stage_logger(Path(project_dir), "stage_2"))
-
-    stage2_controller.register_store(ScalpMesh, scalp_mesh)
-    stage2_controller.register_step(PCAESEBuilder(
-        config=config.to_stage2_config(),
-        ese_offset_mm=config.to_ese_config().ese_offset_mm,
-    ))
-
-    log_provider = StoreLoggingProvider()
-    for store_type in (ScalpMesh, ESEMesh):
-        stage2_controller.register_provider(log_provider, on_store=store_type)
-
-    stage2_controller.register_provider(
-        Stage2Exporter(project_dir=Path(project_dir)),
-        on_store=ESEMesh,
+    _run_step(
+        context,
+        PCAESEBuilder(
+            config=config.to_stage2_config(),
+            ese_offset_mm=config.to_ese_config().ese_offset_mm,
+        ),
+        StoreLoggingProvider(),
+        Stage2Exporter(project_dir=Path(config.project_dir)),
     )
-    return stage2_controller.run().get_store_notnull(ESEMesh)
+    return context.get_store_notnull(ESEMesh)
 
 
 def run_stage3(
@@ -232,24 +235,17 @@ def run_stage3(
     electrodes = MeasurementsLoaderFromJson().run(load_context)
     fiducials = load_context.get_store_notnull(Fiducials)
 
-    stage3_controller = PipelineController(logger=get_stage_logger(project, "stage_3"))
-
-    stage3_controller.register_store(ESEMesh, ese_mesh)
-    stage3_controller.register_store(Electrodes, electrodes)
-    stage3_controller.register_store(Fiducials, fiducials)
-    stage3_controller.register_step(BruteForceLocalizer(stage3_config))
-
-    log_provider = StoreLoggingProvider()
-    for store_type in (ESEMesh, Fiducials, Electrodes):
-        stage3_controller.register_provider(log_provider, on_store=store_type)
-
-    stage3_controller.register_provider(
+    context = PipelineContext({})
+    context.logger = get_stage_logger(project, "stage_3")
+    context.stores[ESEMesh] = ese_mesh
+    context.stores[Fiducials] = fiducials
+    _run_step(
+        context,
+        BruteForceLocalizer(stage3_config),
+        StoreLoggingProvider(),
         Stage3Exporter(
-            project_dir=Path(project_dir),
+            project_dir=project,
             stage3_config=stage3_config,
         ),
-        on_store=Electrodes,
     )
-
-    context = stage3_controller.run()
     return context.get_store_notnull(Electrodes)
