@@ -58,6 +58,10 @@ def export_stage1(
         nifti_path = Path(nifti_path)
         target_path = project / "input" / nifti_path.name
         try:
+            # Remove the old copy
+            if target_path.is_file():
+                target_path.unlink()
+
             shutil.copy2(nifti_path, target_path)
         except OSError:
             if logger is not None:
