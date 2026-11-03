@@ -8,10 +8,7 @@ from virda.logging_setup import get_stage_logger
 from virda.models.config import Config
 from virda.models.electrode import Electrodes
 from virda.models.ese_mesh import ESEMesh
-from virda.models.fiducial import Fiducials, AutoDetectedFiducials, ManualFiducials
-from virda.models.mri_volume import MRIVolume
 from virda.models.scalp_mesh import ScalpMesh
-from virda.models.segmentation_mask import SegmentationMask
 from virda.models.stage1_result import Stage1Result
 from virda.ops.auto_detect_fiducials import auto_detect_fiducials
 from virda.ops.build_ese import build_ese
@@ -26,7 +23,6 @@ from virda.ops.seal_mask import seal_mask
 from virda.ops.segment_head import segment_head
 from virda.ops.smooth_mesh import smooth_mesh
 from virda.ops.stage1_result import build_stage1_result
-from virda.pipeline_context import PipelineContext
 
 
 _STORE_SIZE_ATTRS = ("shape", "vertices", "locations", "items")
@@ -44,21 +40,8 @@ def _store_size_hint(store) -> str:
 
 
 def log_store(logger, store) -> None:
-    """Log a store update in the same format the logging provider used."""
+    """Log an artifact update in the same format the logging provider used."""
     logger.info("Store '%s' updated.%s", type(store).__name__, _store_size_hint(store))
-
-
-def _put_store(
-        context: PipelineContext,
-        store,
-) -> None:
-    """Put a function result into the context stores.
-
-    The value is stored under its runtime type, like the old step/provider
-    machinery did; logging is explicit via :func:`log_store` and export is
-    driven by the exporters passed by the caller.
-    """
-    context.stores[type(store)] = store
 
 
 def run(
@@ -97,20 +80,11 @@ def run_stage1(config: Config) -> Stage1Result:
 
     project_dir = Path(resolved_project_dir)
     resolved_fiducials_path = config.fiducials_path
+    nifti_path = Path(resolved_nifti_path)
 
     logger = get_stage_logger(project_dir, "stage_1")
-    context = PipelineContext({})
-    context.logger = logger
 
-    # -- Stores --
-    nifti_path = Path(resolved_nifti_path)
-    context.stores[Config] = config
-    for store_type in (MRIVolume, SegmentationMask, ScalpMesh, Fiducials):
-        context.stores[store_type] = None
-
-    # -- Steps --
     volume = load_nifti(nifti_path)
-    _put_store(context, volume)
     log_store(logger, volume)
 
     mask = segment_head(
@@ -119,16 +93,13 @@ def run_stage1(config: Config) -> Stage1Result:
         otsu_scope=config.otsu_scope,
         threshold_scale=config.otsu_threshold_scale,
     )
-    _put_store(context, mask)
     log_store(logger, mask)
 
     if config.seal_enabled:
         mask = seal_mask(mask, radius=config.seal_radius, logger=logger)
-        _put_store(context, mask)
         log_store(logger, mask)
 
     mesh = extract_mesh(mask, volume)
-    _put_store(context, mesh)
     log_store(logger, mesh)
 
     mesh = clean_mesh(
@@ -136,7 +107,6 @@ def run_stage1(config: Config) -> Stage1Result:
         min_component_vertices=config.cleaner_min_vertices,
         merge_digits=config.cleaner_merge_digits,
     )
-    _put_store(context, mesh)
     log_store(logger, mesh)
     mesh = smooth_mesh(
         mesh,
@@ -145,29 +115,19 @@ def run_stage1(config: Config) -> Stage1Result:
         lamb=config.smoother_lamb,
         nu=config.smoother_nu,
     )
-    _put_store(context, mesh)
     log_store(logger, mesh)
 
-    if resolved_fiducials_path:
-        _put_store(context, load_manual_fiducials(Path(resolved_fiducials_path)))
+    manual = load_manual_fiducials(Path(resolved_fiducials_path)) if resolved_fiducials_path else None
+    auto = auto_detect_fiducials(mesh) if config.auto_detect_fiducials else None
 
-    if config.auto_detect_fiducials:
-        _put_store(context, auto_detect_fiducials(mesh))
-
-    fiducials = resolve_fiducials(
-        context.get_store(ManualFiducials),
-        context.get_store(AutoDetectedFiducials),
-        config.coordsystem,
-    )
-    _put_store(context, fiducials)
+    fiducials = resolve_fiducials(manual, auto, config.coordsystem)
 
     result = build_stage1_result(
-        mri_volume=context.get_store_notnull(MRIVolume),
-        segmentation_mask=context.get_store_notnull(SegmentationMask),
-        mesh=context.get_store_notnull(ScalpMesh),
+        mri_volume=volume,
+        segmentation_mask=mask,
+        mesh=mesh,
         fiducials=fiducials,
     )
-    _put_store(context, result)
     log_store(logger, result)
     export_stage1(
         result,

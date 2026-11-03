@@ -1,1 +1,1 @@
-"""Pipeline steps as plain typed functions."""
+"""Pipeline stages as plain typed functions."""
