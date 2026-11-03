@@ -1,7 +1,6 @@
 from pathlib import Path
 
 from virda.config import resolve_stage3_config
-from virda.ese.pca_ese_builder import PCAESEBuilder
 from virda.io.loader.measurements_loader import MeasurementsLoaderFromJson
 from virda.io.providers.logging_provider import StoreLoggingProvider
 from virda.io.providers.stage1_exporter import Stage1Exporter
@@ -19,6 +18,7 @@ from virda.models.scalp_mesh import ScalpMesh
 from virda.models.segmentation_mask import SegmentationMask
 from virda.models.stage1_result import Stage1Result
 from virda.ops.auto_detect_fiducials import auto_detect_fiducials
+from virda.ops.build_ese import build_ese
 from virda.ops.clean_mesh import clean_mesh
 from virda.ops.extract_mesh import extract_mesh
 from virda.ops.load_manual_fiducials import load_manual_fiducials
@@ -182,16 +182,20 @@ def run_stage1(config: Config) -> Stage1Result:
 
 
 def run_stage2(config: Config, scalp_mesh: ScalpMesh) -> ESEMesh:
+    logger = get_stage_logger(Path(config.project_dir), "stage_2")
     context = PipelineContext({})
-    context.logger = get_stage_logger(Path(config.project_dir), "stage_2")
+    context.logger = logger
     context.stores[ScalpMesh] = scalp_mesh
 
-    _run_step(
+    ese_mesh = build_ese(
+        scalp_mesh,
+        config=config.to_stage2_config(),
+        ese_offset_mm=config.to_ese_config().ese_offset_mm,
+        logger=logger,
+    )
+    _put_store(
         context,
-        PCAESEBuilder(
-            config=config.to_stage2_config(),
-            ese_offset_mm=config.to_ese_config().ese_offset_mm,
-        ),
+        ese_mesh,
         StoreLoggingProvider(),
         Stage2Exporter(project_dir=Path(config.project_dir)),
     )

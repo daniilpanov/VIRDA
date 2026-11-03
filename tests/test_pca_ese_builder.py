@@ -2,21 +2,19 @@ import numpy as np
 import pytest
 
 from tests.helpers.meshes import make_plane, make_sphere
-from tests.helpers.pipelines import build_context
-from virda.ese.pca_ese_builder import PCAESEBuilder
 from virda.models.ese_mesh import ESEMesh
 from virda.models.scalp_mesh import ScalpMesh
 from virda.models.stage2_config import Stage2Config
+from virda.ops.build_ese import build_ese
 
 ESE_OFFSET_MM = 1.0
 
 
 def run_builder(config: Stage2Config, mesh: ScalpMesh) -> ESEMesh:
-    builder = PCAESEBuilder(config=config, ese_offset_mm=ESE_OFFSET_MM)
-    return builder.run(build_context(mesh=mesh))
+    return build_ese(mesh, config=config, ese_offset_mm=ESE_OFFSET_MM)
 
 
-class TestPCAESEBuilder:
+class TestBuildEse:
     def test_flat_plane_normals_along_z(self) -> None:
         config = Stage2Config(k_neighbors=20)
         result = run_builder(config, make_plane())
