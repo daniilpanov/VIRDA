@@ -2,8 +2,8 @@ from pathlib import Path
 
 from virda.config import resolve_stage3_config
 from virda.io.exporters.ese import export_ese
+from virda.io.exporters.localization import export_localization
 from virda.io.exporters.stage1 import export_stage1
-from virda.io.providers.stage3_exporter import Stage3Exporter
 from virda.logging_setup import get_stage_logger
 from virda.models.config import Config
 from virda.models.electrode import Electrodes
@@ -245,5 +245,5 @@ def run_stage3(
     )
     _put_store(context, electrodes)
     log_store(context.get_logger(), electrodes)
-    Stage3Exporter(project_dir=project, stage3_config=stage3_config).provide(electrodes, context)
+    export_localization(electrodes, project)
     return context.get_store_notnull(Electrodes)
