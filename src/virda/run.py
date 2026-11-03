@@ -182,9 +182,6 @@ def run_stage1(config: Config) -> Stage1Result:
 
 def run_stage2(config: Config, scalp_mesh: ScalpMesh) -> ESEMesh:
     logger = get_stage_logger(Path(config.project_dir), "stage_2")
-    context = PipelineContext({})
-    context.logger = logger
-    context.stores[ScalpMesh] = scalp_mesh
 
     ese_mesh = build_ese(
         scalp_mesh,
@@ -192,10 +189,9 @@ def run_stage2(config: Config, scalp_mesh: ScalpMesh) -> ESEMesh:
         ese_offset_mm=config.to_ese_config().ese_offset_mm,
         logger=logger,
     )
-    _put_store(context, ese_mesh)
     log_store(logger, ese_mesh)
     export_ese(ese_mesh, Path(config.project_dir))
-    return context.get_store_notnull(ESEMesh)
+    return ese_mesh
 
 
 def run_stage3(
