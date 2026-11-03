@@ -2,7 +2,7 @@
 
 The tab builds a :class:`Config` from the visible fields on demand, streams
 progress into its own :class:`LogViewer`, and asks the host application to
-act through the ``runRequested``/``openViewer``/``exportHtml`` signals.
+act through the ``runRequested``/``openViewer`` signals.
 """
 
 from pathlib import Path
@@ -40,12 +40,17 @@ from virda_gui.widgets import (
 )
 
 
+def _strip_null(value: str) -> str:
+    """Normalize human-entered ``None``/``null`` sentinels to an empty string."""
+    stripped = value.strip()
+    return "" if stripped.lower() in ("none", "null") else stripped
+
+
 class ConfigTab(QWidget):
     """The "Configuration" tab of the main window."""
 
     runRequested = Signal()  # noqa: N815
     openViewer = Signal()  # noqa: N815
-    exportHtml = Signal()  # noqa: N815
 
     def __init__(self, state: AppState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -82,8 +87,6 @@ class ConfigTab(QWidget):
         self.run_btn = QPushButton("Run Pipeline")
         self.viewer_btn = QPushButton("Open 3D Viewer")
         self.viewer_btn.setEnabled(False)
-        self.export_btn = QPushButton("Export HTML")
-        self.export_btn.setEnabled(False)
 
         self.electrodes_cras_check = QCheckBox("Force cRAS conversion")
 
@@ -98,7 +101,6 @@ class ConfigTab(QWidget):
         self._fiducials.textChanged.connect(self._on_fiducials_path_changed)
         self.run_btn.clicked.connect(self.runRequested)
         self.viewer_btn.clicked.connect(self.openViewer)
-        self.export_btn.clicked.connect(self.exportHtml)
 
     # ---- UI construction ----
 
@@ -153,8 +155,6 @@ class ConfigTab(QWidget):
         btn_layout.addWidget(self.viewer_btn)
         btn_layout.addSpacing(8)
 
-        btn_layout.addWidget(self.export_btn)
-
         btn_layout.addStretch(1)
         outer.addWidget(btn_frame)
 
@@ -177,7 +177,7 @@ class ConfigTab(QWidget):
 
     def _populate_from_config(self, data: dict[str, Any]) -> None:
         for config_key, attr_name in CONFIG_KEY_TO_INPUT.items():
-            if config_key in data:
+            if config_key in data and data[config_key] is not None:
                 widget = getattr(self, f"_{attr_name}", None)
                 if widget is not None and not widget.get():
                     widget.set(str(data[config_key]))
@@ -186,7 +186,11 @@ class ConfigTab(QWidget):
             self.measurements.set(str(data["measurements_path"]))
 
         for config_key, adv_key in CONFIG_KEY_TO_ADVANCED.items():
-            if config_key in data and not self._state.advanced.get(adv_key):
+            if (
+                config_key in data
+                and data[config_key] is not None
+                and not self._state.advanced.get(adv_key)
+            ):
                 self._state.advanced[adv_key] = str(data[config_key])
 
         # Keep the parsed MNE coordsystem (its fiducials feed Stage 1).
@@ -331,7 +335,7 @@ class ConfigTab(QWidget):
         adv = self._state.advanced
 
         def _int(val: str, default: int | None = None, *, key: str = "value") -> int | None:
-            val = val.strip()
+            val = _strip_null(val)
             if not val:
                 return default
             try:
@@ -340,7 +344,7 @@ class ConfigTab(QWidget):
                 raise ValueError(f"{key}: expected an integer, got {val!r}") from None
 
         def _float(val: str, default: float | None = None, *, key: str = "value") -> float | None:
-            val = val.strip()
+            val = _strip_null(val)
             if not val:
                 return default
             try:

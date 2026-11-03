@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 from virda.models.coordsystem import Coordsystem
 from virda.models.ese_config import ESEConfig
 from virda.models.stage2_config import Stage2Config
-from virda.segmentation.head_segmenter import OtsuScope
+from virda.ops.segment_head import OtsuScope
 
 
 class Config(BaseModel):

@@ -5,13 +5,12 @@ from typing import Any
 import numpy as np
 
 from tests.helpers.meshes import make_sphere
-from tests.helpers.pipelines import build_context
-from virda.ese.pca_ese_builder import PCAESEBuilder
 from virda.models.electrode import Electrode, Electrodes
 from virda.models.ese_mesh import ESEMesh
 from virda.models.fiducial import Fiducial, Fiducials
 from virda.models.scalp_mesh import ScalpMesh
 from virda.models.stage2_config import Stage2Config
+from virda.ops.build_ese import build_ese
 
 
 def make_fiducials() -> Fiducials:
@@ -41,8 +40,7 @@ def make_fiducials() -> Fiducials:
 
 def make_ese(scalp_mesh: ScalpMesh | None = None, ese_offset_mm: float = 2.0) -> ESEMesh:
     mesh = scalp_mesh or make_sphere()
-    builder = PCAESEBuilder(config=Stage2Config(k_neighbors=20), ese_offset_mm=ese_offset_mm)
-    return builder.run(build_context(scalp_mesh=mesh))
+    return build_ese(mesh, config=Stage2Config(k_neighbors=20), ese_offset_mm=ese_offset_mm)
 
 
 def make_electrodes(points: np.ndarray, fiducials: Fiducials) -> Electrodes:

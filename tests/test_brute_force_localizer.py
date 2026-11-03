@@ -4,11 +4,10 @@ import numpy as np
 import pytest
 
 from tests.helpers.measurements import make_electrodes, make_ese, make_fiducials
-from tests.helpers.pipelines import build_context
-from virda.localization.brute_force_localizer import BruteForceLocalizer
 from virda.models.electrode import Electrode, Electrodes
 from virda.models.fiducial import Fiducials
 from virda.models.stage3_config import Stage3Config
+from virda.ops.localize_electrodes import localize_electrodes
 
 
 def _closest_vertex_index(ese, point) -> int:
@@ -34,13 +33,15 @@ def _reweighted(fiducials: Fiducials, weights: dict[str, float]) -> Fiducials:
 def _localize(electrodes: Electrodes, threshold_mm: float = 10.0) -> Electrodes:
     ese = make_ese()
     fiducials = make_fiducials()
-    localizer = BruteForceLocalizer(
-        Stage3Config(residual_threshold_mm=threshold_mm, calibrate_ese_offset=False)
+    return localize_electrodes(
+        ese,
+        fiducials,
+        electrodes,
+        config=Stage3Config(residual_threshold_mm=threshold_mm, calibrate_ese_offset=False),
     )
-    return localizer.run(build_context(ese=ese, fiducials=fiducials, electrodes=electrodes))
 
 
-class TestBruteForceLocalizer:
+class TestLocalizeElectrodes:
     def test_exact_recovery_on_sphere(self):
         ese = make_ese()
         fiducials = make_fiducials()
@@ -71,8 +72,11 @@ class TestBruteForceLocalizer:
 
         weighted = _reweighted(fiducials, weights={"NAS": 1e9, "LPA": 0.01, "RPA": 1.0})
         config = Stage3Config(calibrate_ese_offset=False)
-        weighted_result = BruteForceLocalizer(config).run(
-            build_context(ese=ese, fiducials=weighted, electrodes=electrodes)
+        weighted_result = localize_electrodes(
+            ese,
+            weighted,
+            electrodes,
+            config=config,
         )
         unweighted_result = _localize(electrodes)
 
@@ -134,7 +138,7 @@ class TestBruteForceLocalizer:
         """Electrode on positive side of fiducial plane must not snap to the
         mirror vertex on the negative side, even though both have nearly
         identical distance profiles."""
-        from virda.localization.brute_force_localizer import _mirror_plane_mask
+        from virda.ops.localize_electrodes import _mirror_plane_mask
 
         ese = make_ese()
         fiducials = make_fiducials()
@@ -182,8 +186,11 @@ class TestOffsetCalibration:
         # Measurements taken at the scalp surface while the ESE sits 2 mm out.
         electrodes, points = self._shifted_electrodes(ese, indices, shift_mm=-2.0)
         config = Stage3Config(calibrate_ese_offset=True)
-        result = BruteForceLocalizer(config).run(
-            build_context(ese=ese, fiducials=make_fiducials(), electrodes=electrodes)
+        result = localize_electrodes(
+            ese,
+            make_fiducials(),
+            electrodes,
+            config=config,
         )
 
         assert result.calibrated_offset_shift_mm == pytest.approx(-2.0, abs=1e-9)
@@ -199,8 +206,11 @@ class TestOffsetCalibration:
     def test_disabled_when_flag_off(self):
         ese = make_ese()
         electrodes, _ = self._shifted_electrodes(ese, [0], shift_mm=-2.0)
-        result = BruteForceLocalizer(Stage3Config(calibrate_ese_offset=False)).run(
-            build_context(ese=ese, fiducials=make_fiducials(), electrodes=electrodes)
+        result = localize_electrodes(
+            ese,
+            make_fiducials(),
+            electrodes,
+            config=Stage3Config(calibrate_ese_offset=False),
         )
 
         assert result.calibrated_offset_shift_mm is None
@@ -223,8 +233,11 @@ class TestOffsetCalibration:
 
         electrodes = make_electrodes(vertices[indices], fiducials)
         config = Stage3Config(calibrate_ese_offset=True)
-        result = BruteForceLocalizer(config).run(
-            build_context(ese=ese, fiducials=fiducials, electrodes=electrodes)
+        result = localize_electrodes(
+            ese,
+            fiducials,
+            electrodes,
+            config=config,
         )
 
         assert result.calibrated_offset_shift_mm == pytest.approx(0.0, abs=1e-9)

@@ -1,3 +1,1 @@
-from virda.mesh.contracts import MeshExtractor, MeshPostprocessor
-
-__all__ = ["MeshExtractor", "MeshPostprocessor"]
+"""Mesh domain utilities (adjacency, palette helpers)."""

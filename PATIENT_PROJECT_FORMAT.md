@@ -12,12 +12,10 @@ any stage can be reproduced exactly from the project alone:
 <project_dir>/
 ├── input/              # canonical input copies: MRI, config, measurements, fiducials
 ├── segmentation/       # head segmentation mask
-├── mesh/               # final scalp mesh, arrays and per-step versions
+├── mesh/               # final scalp mesh and arrays
 ├── ese/                # Stage 2 output: electrode-skin-entrance surface
 ├── localization/       # Stage 3 output: localized electrodes
 └── logs/               # pipeline log
-
-viewer.html             # optional: self-contained HTML viewer exported by virda-gui
 ```
 
 ## `input/`
@@ -124,8 +122,6 @@ Example `measurements.json` (the Stage 3 input):
 | `scalp_vertices.npy` | `(N, 3)` `float64` array of vertex coordinates in world millimeters. |
 | `scalp_faces.npy` | `(M, 3)` `int64` array of triangular faces referencing vertices. |
 | `scalp_face_adjacency.npy` | `(E, 2)` `int64` array of face-index pairs sharing an edge. |
-| `versions/mesh-<n>.ply` | One PLY per `ScalpMesh` update produced during the pipeline (extraction, cleaning, smoothing, ...); `n` counts from 1. |
-
 
 ## `ese/`
 
@@ -138,23 +134,8 @@ along local normals); written only when Stage 2 runs.
 | `ese_vertices.npy` | `(N, 3)` `float64` array of ESE vertex coordinates (world mm). |
 | `ese_faces.npy` | `(M, 3)` `int64` triangular faces of the ESE mesh. |
 | `normals.npy` | `(N, 3)` unit normal at each scalp vertex used for the offset. |
-| `quality.npy` | `(N,)` normal-estimation quality score per vertex. |
-| `point_pairs.json` | Scalp↔ESE correspondence dump (see below). |
 
-`point_pairs.json` maps every scalp vertex to its offset ESE vertex:
-
-```json
-{
-  "n_points": 232205,
-  "scalp_vertices": [[...], ...],
-  "ese_vertices": [[...], ...],
-  "normals": [[...], ...],
-  "quality": [...]
-}
-```
-
-The arrays are row-aligned: `ese_vertices[i]`, `normals[i]` and `quality[i]`
-belong to `scalp_vertices[i]`.
+The arrays are row-aligned: `ese_vertices[i]` and `normals[i]` belong to `scalp_vertices[i]`.
 
 ## `localization/`
 
@@ -193,32 +174,6 @@ available.
 
 `calibrated_ese_offset_shift_mm` is present only when
 `calibrate_ese_offset` was enabled (`null` otherwise).
-
-- `status` is one of `ok`, `warn`, `fail`; checks with status `skip` are ignored
-  when aggregating the overall status (`fail` > `warn` > `ok`).
-- Each check entry is `{name, status, message, ...details}`.
-- `fiducials.checks` lists the per-fiducial distance to the nearest mesh vertex
-  for every fiducial.
-
-### Checks
-
-| Check (`name`) | Spec | Status |
-|---|---|---|
-| `mri_metadata` | §13.1 "MRI affine is present and valid"; §16 "report missing or inconsistent MRI spatial metadata" | **fail** if the affine is not 4×4, its bottom row is not `[0,0,0,1]`, the spacing is not 3 positive values, or the orientation lacks 3 axis codes (`R`/`L`/`A`/`P`/`S`/`I`). |
-| `coordinates_mm` | §13.1 "mesh coordinates are in millimeters"; §16 "do not silently continue if the transform is invalid" | **fail** if the mesh bounding box falls outside the MRI world bounding box (margin = 2×spacing) — a sign of non-millimeter units or a broken transform. |
-| `mesh` | §13.1 "mesh contains vertices and triangles"; §16 "warn if the mesh is empty, non-manifold or extremely sparse" | **fail** if there are no vertices/faces or face indices reference missing vertices; **warn** if fewer than 100 vertices. |
-| `components` | §16 "warn if segmentation produces multiple large components" | **fail** if the segmentation is empty; **warn** if more than one component of ≥ 100 voxels. |
-| `holes_over_scalp` | §13.1 "no major holes over the electrode-bearing scalp" | **warn** if a boundary loop other than the largest (assumed neck opening) exceeds 15 mm in diameter. |
-| `fiducials_on_surface` | §13.1 / §16 "fiducial lies far from the head surface" | **warn** if a fiducial is farther than 3 mm from the nearest mesh vertex; **warn** if no fiducials are present. |
-| `ese_offset` | §13.1 "ESE offset is positive and recorded" | **fail** if the ESE offset is not positive; **skip** when no ESE config is supplied. |
-| `nifti_mask` | §14 mask export | **fail** if the mask file is missing, is not a NIfTI image, or its shape/affine/voxel count differ from the in-memory segmentation. |
-
-### Known gaps
-
-- **Non-manifold detection is not implemented.** Spec §16 requires a warning
-  when "the mesh is empty, non-manifold or extremely sparse". `check_mesh`
-  covers emptiness and sparsity but does **not** detect non-manifold edges
-  (edges shared by more than two faces).
 
 ## `logs/`
 

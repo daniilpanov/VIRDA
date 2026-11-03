@@ -1,6 +1,5 @@
-"""Fiducial auto-detection and pipeline steps."""
+"""Fiducial auto-detection helpers."""
 
 from virda.fiducials.detect import find_fiducials, to_fiducials
-from virda.fiducials.detector import AutoFiducialsDetector
 
-__all__ = ["AutoFiducialsDetector", "find_fiducials", "to_fiducials"]
+__all__ = ["find_fiducials", "to_fiducials"]
