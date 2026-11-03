@@ -40,6 +40,12 @@ from virda_gui.widgets import (
 )
 
 
+def _strip_null(value: str) -> str:
+    """Normalize human-entered ``None``/``null`` sentinels to an empty string."""
+    stripped = value.strip()
+    return "" if stripped.lower() in ("none", "null") else stripped
+
+
 class ConfigTab(QWidget):
     """The "Configuration" tab of the main window."""
 
@@ -329,7 +335,7 @@ class ConfigTab(QWidget):
         adv = self._state.advanced
 
         def _int(val: str, default: int | None = None, *, key: str = "value") -> int | None:
-            val = val.strip()
+            val = _strip_null(val)
             if not val:
                 return default
             try:
@@ -338,7 +344,7 @@ class ConfigTab(QWidget):
                 raise ValueError(f"{key}: expected an integer, got {val!r}") from None
 
         def _float(val: str, default: float | None = None, *, key: str = "value") -> float | None:
-            val = val.strip()
+            val = _strip_null(val)
             if not val:
                 return default
             try:
