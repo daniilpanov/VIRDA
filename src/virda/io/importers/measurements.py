@@ -1,4 +1,4 @@
-"""Step: load Stage 3 measurements from a JSON file."""
+"""Import a Stage 3 measurements JSON into an :class:`Electrodes` model."""
 
 import json
 from dataclasses import replace

@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from tests.helpers.measurements import make_fiducials, make_measurements_file
-from virda.ops.load_measurements import load_measurements
+from virda.io.importers.measurements import load_measurements
 
 
 class TestMeasurementsLoader:
