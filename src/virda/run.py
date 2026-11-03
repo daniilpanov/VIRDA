@@ -1,7 +1,6 @@
 from pathlib import Path
 
 from virda.config import resolve_stage3_config
-from virda.io.providers.logging_provider import StoreLoggingProvider
 from virda.io.providers.stage1_exporter import Stage1Exporter
 from virda.io.providers.stage2_exporter import Stage2Exporter
 from virda.io.providers.stage3_exporter import Stage3Exporter
@@ -27,24 +26,39 @@ from virda.ops.seal_mask import seal_mask
 from virda.ops.segment_head import segment_head
 from virda.ops.smooth_mesh import smooth_mesh
 from virda.ops.stage1_result import build_stage1_result
-from virda.pipeline import Provider
 from virda.pipeline_context import PipelineContext
+
+
+_STORE_SIZE_ATTRS = ("shape", "vertices", "locations", "items")
+
+
+def _store_size_hint(store) -> str:
+    for attr in _STORE_SIZE_ATTRS:
+        value = getattr(store, attr, None)
+        if value is not None:
+            try:
+                return f" {attr}={len(value)}"
+            except TypeError:
+                return f" {attr}={value}"
+    return ""
+
+
+def log_store(logger, store) -> None:
+    """Log a store update in the same format the logging provider used."""
+    logger.info("Store '%s' updated.%s", type(store).__name__, _store_size_hint(store))
 
 
 def _put_store(
         context: PipelineContext,
         store,
-        *providers: Provider,
 ) -> None:
-    """Put a function result into the context stores and fire providers.
+    """Put a function result into the context stores.
 
-    ``(store, providers)`` is the same bookkeeping the old step/provider
-    machinery performed: the value is stored under its runtime type and every
-    provider bound to it (logging, export) runs right after the write.
+    The value is stored under its runtime type, like the old step/provider
+    machinery did; logging is explicit via :func:`log_store` and export is
+    driven by the exporters passed by the caller.
     """
     context.stores[type(store)] = store
-    for provider in providers:
-        provider.provide(store, context)
 
 
 def run(
@@ -95,7 +109,6 @@ def run_stage1(config: Config) -> Stage1Result:
         context.stores[store_type] = None
 
     # -- Providers --
-    log_provider = StoreLoggingProvider()
     ese_config = config.to_ese_config()
     stage1_exporter = Stage1Exporter(
         project_dir=project_dir,
@@ -106,7 +119,8 @@ def run_stage1(config: Config) -> Stage1Result:
 
     # -- Steps --
     volume = load_nifti(nifti_path)
-    _put_store(context, volume, log_provider)
+    _put_store(context, volume)
+    log_store(logger, volume)
 
     mask = segment_head(
         volume,
@@ -114,32 +128,34 @@ def run_stage1(config: Config) -> Stage1Result:
         otsu_scope=config.otsu_scope,
         threshold_scale=config.otsu_threshold_scale,
     )
-    _put_store(context, mask, log_provider)
+    _put_store(context, mask)
+    log_store(logger, mask)
 
     if config.seal_enabled:
         mask = seal_mask(mask, radius=config.seal_radius, logger=logger)
-        _put_store(context, mask, log_provider)
+        _put_store(context, mask)
+        log_store(logger, mask)
 
     mesh = extract_mesh(mask, volume)
-    _put_store(context, mesh, log_provider)
+    _put_store(context, mesh)
+    log_store(logger, mesh)
 
     mesh = clean_mesh(
         mesh,
         min_component_vertices=config.cleaner_min_vertices,
         merge_digits=config.cleaner_merge_digits,
     )
-    _put_store(context, mesh, log_provider)
-    _put_store(
-        context,
-        smooth_mesh(
-            mesh,
-            smoother_type=config.smoother_type,
-            iterations=config.smoother_iterations,
-            lamb=config.smoother_lamb,
-            nu=config.smoother_nu,
-        ),
-        log_provider,
+    _put_store(context, mesh)
+    log_store(logger, mesh)
+    mesh = smooth_mesh(
+        mesh,
+        smoother_type=config.smoother_type,
+        iterations=config.smoother_iterations,
+        lamb=config.smoother_lamb,
+        nu=config.smoother_nu,
     )
+    _put_store(context, mesh)
+    log_store(logger, mesh)
 
     if resolved_fiducials_path:
         _put_store(context, load_manual_fiducials(Path(resolved_fiducials_path)))
@@ -160,7 +176,9 @@ def run_stage1(config: Config) -> Stage1Result:
         mesh=context.get_store_notnull(ScalpMesh),
         fiducials=fiducials,
     )
-    _put_store(context, result, log_provider, stage1_exporter)
+    _put_store(context, result)
+    log_store(logger, result)
+    stage1_exporter.provide(result, context)
 
     return result
 
@@ -177,12 +195,9 @@ def run_stage2(config: Config, scalp_mesh: ScalpMesh) -> ESEMesh:
         ese_offset_mm=config.to_ese_config().ese_offset_mm,
         logger=logger,
     )
-    _put_store(
-        context,
-        ese_mesh,
-        StoreLoggingProvider(),
-        Stage2Exporter(project_dir=Path(config.project_dir)),
-    )
+    _put_store(context, ese_mesh)
+    log_store(logger, ese_mesh)
+    Stage2Exporter(project_dir=Path(config.project_dir)).provide(ese_mesh, context)
     return context.get_store_notnull(ESEMesh)
 
 
@@ -231,13 +246,7 @@ def run_stage3(
         config=stage3_config,
         logger=context.logger,
     )
-    _put_store(
-        context,
-        electrodes,
-        StoreLoggingProvider(),
-        Stage3Exporter(
-            project_dir=project,
-            stage3_config=stage3_config,
-        ),
-    )
+    _put_store(context, electrodes)
+    log_store(context.get_logger(), electrodes)
+    Stage3Exporter(project_dir=project, stage3_config=stage3_config).provide(electrodes, context)
     return context.get_store_notnull(Electrodes)
