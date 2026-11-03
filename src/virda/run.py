@@ -2,7 +2,6 @@ from pathlib import Path
 
 from virda.config import resolve_stage3_config
 from virda.ese.pca_ese_builder import PCAESEBuilder
-from virda.io.loader.manual_fiducials_loader import ManualFiducialsLoader
 from virda.io.loader.measurements_loader import MeasurementsLoaderFromJson
 from virda.io.providers.logging_provider import StoreLoggingProvider
 from virda.io.providers.stage1_exporter import Stage1Exporter
@@ -15,13 +14,14 @@ from virda.models.electrode import Electrodes
 from virda.models.ese_mesh import ESEMesh
 from virda.models.fiducial import Fiducials, AutoDetectedFiducials, ManualFiducials
 from virda.models.mri_volume import MRIVolume
-from virda.models.path import FiducialsPath, MeasurementsPath
+from virda.models.path import MeasurementsPath
 from virda.models.scalp_mesh import ScalpMesh
 from virda.models.segmentation_mask import SegmentationMask
 from virda.models.stage1_result import Stage1Result
 from virda.ops.auto_detect_fiducials import auto_detect_fiducials
 from virda.ops.clean_mesh import clean_mesh
 from virda.ops.extract_mesh import extract_mesh
+from virda.ops.load_manual_fiducials import load_manual_fiducials
 from virda.ops.load_nifti import load_nifti
 from virda.ops.seal_mask import seal_mask
 from virda.ops.segment_head import segment_head
@@ -188,9 +188,7 @@ def run_stage1(config: Config) -> Stage1Result:
     )
 
     if resolved_fiducials_path:
-        fiducials_path = Path(resolved_fiducials_path)
-        context.stores[FiducialsPath] = FiducialsPath(fiducials_path)
-        _run_step(context, ManualFiducialsLoader())
+        _put_store(context, load_manual_fiducials(Path(resolved_fiducials_path)))
 
     if config.auto_detect_fiducials:
         _put_store(context, auto_detect_fiducials(mesh))

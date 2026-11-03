@@ -8,10 +8,5 @@ class NiftiPath:
 
 
 @dataclass(frozen=True)
-class FiducialsPath:
-    fiducials_path: Path
-
-
-@dataclass(frozen=True)
 class MeasurementsPath:
     measurements_path: Path

@@ -1,3 +1,3 @@
-from virda.io.loader.contracts import FiducialsLoader
+from virda.io.loader.contracts import MeasurementsLoader
 
-__all__ = ["FiducialsLoader"]
+__all__ = ["MeasurementsLoader"]
