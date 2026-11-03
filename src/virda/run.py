@@ -11,9 +11,6 @@ from virda.io.providers.stage2_exporter import Stage2Exporter
 from virda.io.providers.stage3_exporter import Stage3Exporter
 from virda.localization.brute_force_localizer import BruteForceLocalizer
 from virda.logging_setup import get_stage_logger
-from virda.mesh import MeshPostprocessor
-from virda.mesh.laplacian_smoother import LaplacianSmoother
-from virda.mesh.taubin_smoother import TaubinSmoother
 from virda.models.config import Config
 from virda.models.electrode import Electrodes
 from virda.models.ese_mesh import ESEMesh
@@ -28,6 +25,7 @@ from virda.ops.extract_mesh import extract_mesh
 from virda.ops.load_nifti import load_nifti
 from virda.ops.seal_mask import seal_mask
 from virda.ops.segment_head import segment_head
+from virda.ops.smooth_mesh import smooth_mesh
 from virda.pipeline import Provider, Step
 from virda.pipeline_context import PipelineContext
 
@@ -132,19 +130,6 @@ def run_stage1(config: Config) -> Stage1Result:
     project_dir = Path(resolved_project_dir)
     resolved_fiducials_path = config.fiducials_path
 
-    smoother: MeshPostprocessor
-    if config.smoother_type == "taubin":
-        smoother = TaubinSmoother(
-            iterations=config.smoother_iterations,
-            lamb=config.smoother_lamb,
-            nu=config.smoother_nu,
-        )
-    else:
-        smoother = LaplacianSmoother(
-            iterations=config.smoother_iterations,
-            lamb=config.smoother_lamb,
-        )
-
     logger = get_stage_logger(project_dir, "stage_1")
     context = PipelineContext({})
     context.logger = logger
@@ -190,7 +175,17 @@ def run_stage1(config: Config) -> Stage1Result:
         merge_digits=config.cleaner_merge_digits,
     )
     _put_store(context, mesh, log_provider)
-    _run_step(context, smoother, log_provider)
+    _put_store(
+        context,
+        smooth_mesh(
+            mesh,
+            smoother_type=config.smoother_type,
+            iterations=config.smoother_iterations,
+            lamb=config.smoother_lamb,
+            nu=config.smoother_nu,
+        ),
+        log_provider,
+    )
 
     if resolved_fiducials_path:
         fiducials_path = Path(resolved_fiducials_path)

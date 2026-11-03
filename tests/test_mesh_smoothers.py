@@ -1,12 +1,10 @@
 import numpy as np
 import pytest
 
-from tests.helpers.pipelines import build_context
-from virda.mesh.laplacian_smoother import LaplacianSmoother
-from virda.mesh.taubin_smoother import TaubinSmoother
 from virda.models.mri_volume import MRIVolume
 from virda.models.scalp_mesh import ScalpMesh
 from virda.models.segmentation_mask import SegmentationMask
+from virda.ops.smooth_mesh import smooth_mesh
 
 
 @pytest.fixture
@@ -48,8 +46,7 @@ def sphere_mesh(sphere_volume: MRIVolume) -> ScalpMesh:
 
 class TestLaplacianSmoother:
     def test_smooth_preserves_mesh_structure(self, sphere_mesh: ScalpMesh) -> None:
-        smoother = LaplacianSmoother(iterations=3, lamb=0.5)
-        smoothed = smoother.run(build_context(ScalpMesh=sphere_mesh))
+        smoothed = smooth_mesh(sphere_mesh, iterations=3, lamb=0.5)
 
         assert isinstance(smoothed, ScalpMesh)
         assert smoothed.vertices.shape == sphere_mesh.vertices.shape
@@ -57,8 +54,7 @@ class TestLaplacianSmoother:
         assert np.array_equal(smoothed.faces, sphere_mesh.faces)
 
     def test_smooth_moves_vertices(self, sphere_mesh: ScalpMesh) -> None:
-        smoother = LaplacianSmoother(iterations=5, lamb=0.5)
-        smoothed = smoother.run(build_context(ScalpMesh=sphere_mesh))
+        smoothed = smooth_mesh(sphere_mesh, iterations=5, lamb=0.5)
 
         vertex_displacement = np.abs(smoothed.vertices - sphere_mesh.vertices).max()
         assert vertex_displacement > 1e-7
@@ -67,8 +63,9 @@ class TestLaplacianSmoother:
 
 class TestTaubinSmoother:
     def test_smooth_preserves_mesh_structure(self, sphere_mesh: ScalpMesh) -> None:
-        smoother = TaubinSmoother(iterations=3, lamb=0.5, nu=-0.53)
-        smoothed = smoother.run(build_context(ScalpMesh=sphere_mesh))
+        smoothed = smooth_mesh(
+            sphere_mesh, smoother_type="taubin", iterations=3, lamb=0.5, nu=-0.53
+        )
 
         assert isinstance(smoothed, ScalpMesh)
         assert smoothed.vertices.shape == sphere_mesh.vertices.shape
@@ -76,8 +73,9 @@ class TestTaubinSmoother:
         assert np.array_equal(smoothed.faces, sphere_mesh.faces)
 
     def test_smooth_moves_vertices(self, sphere_mesh: ScalpMesh) -> None:
-        smoother = TaubinSmoother(iterations=5, lamb=0.5, nu=-0.53)
-        smoothed = smoother.run(build_context(ScalpMesh=sphere_mesh))
+        smoothed = smooth_mesh(
+            sphere_mesh, smoother_type="taubin", iterations=5, lamb=0.5, nu=-0.53
+        )
 
         vertex_displacement = np.abs(smoothed.vertices - sphere_mesh.vertices).max()
         assert vertex_displacement > 1e-7
