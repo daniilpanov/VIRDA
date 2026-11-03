@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from virda.config import resolve_stage3_config
-from virda.io.providers.stage1_exporter import Stage1Exporter
+from virda.io.exporters.stage1 import export_stage1
 from virda.io.providers.stage2_exporter import Stage2Exporter
 from virda.io.providers.stage3_exporter import Stage3Exporter
 from virda.logging_setup import get_stage_logger
@@ -108,15 +108,6 @@ def run_stage1(config: Config) -> Stage1Result:
     for store_type in (MRIVolume, SegmentationMask, ScalpMesh, Fiducials):
         context.stores[store_type] = None
 
-    # -- Providers --
-    ese_config = config.to_ese_config()
-    stage1_exporter = Stage1Exporter(
-        project_dir=project_dir,
-        ese_config=ese_config,
-        config=config,
-        nifti_path=nifti_path,
-    )
-
     # -- Steps --
     volume = load_nifti(nifti_path)
     _put_store(context, volume)
@@ -178,7 +169,13 @@ def run_stage1(config: Config) -> Stage1Result:
     )
     _put_store(context, result)
     log_store(logger, result)
-    stage1_exporter.provide(result, context)
+    export_stage1(
+        result,
+        project_dir=project_dir,
+        config=config,
+        nifti_path=nifti_path,
+        logger=logger,
+    )
 
     return result
 
