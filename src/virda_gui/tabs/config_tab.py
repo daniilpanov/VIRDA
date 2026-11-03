@@ -171,7 +171,7 @@ class ConfigTab(QWidget):
 
     def _populate_from_config(self, data: dict[str, Any]) -> None:
         for config_key, attr_name in CONFIG_KEY_TO_INPUT.items():
-            if config_key in data:
+            if config_key in data and data[config_key] is not None:
                 widget = getattr(self, f"_{attr_name}", None)
                 if widget is not None and not widget.get():
                     widget.set(str(data[config_key]))
@@ -180,7 +180,11 @@ class ConfigTab(QWidget):
             self.measurements.set(str(data["measurements_path"]))
 
         for config_key, adv_key in CONFIG_KEY_TO_ADVANCED.items():
-            if config_key in data and not self._state.advanced.get(adv_key):
+            if (
+                config_key in data
+                and data[config_key] is not None
+                and not self._state.advanced.get(adv_key)
+            ):
                 self._state.advanced[adv_key] = str(data[config_key])
 
         # Keep the parsed MNE coordsystem (its fiducials feed Stage 1).
