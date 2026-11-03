@@ -27,6 +27,7 @@ from virda.ops.resolve_fiducials import resolve_fiducials
 from virda.ops.seal_mask import seal_mask
 from virda.ops.segment_head import segment_head
 from virda.ops.smooth_mesh import smooth_mesh
+from virda.ops.stage1_result import build_stage1_result
 from virda.pipeline import Provider, Step
 from virda.pipeline_context import PipelineContext
 
@@ -60,16 +61,6 @@ def _put_store(
     context.stores[type(store)] = store
     for provider in providers:
         provider.provide(store, context)
-
-
-class OutputGenerator:
-    def run(self, context: PipelineContext) -> Stage1Result:
-        return Stage1Result(
-            mri_volume=context.get_store_notnull(MRIVolume),
-            segmentation_mask=context.get_store_notnull(SegmentationMask),
-            mesh=context.get_store_notnull(ScalpMesh),
-            fiducials=context.get_store_notnull(Fiducials),
-        )
 
 
 def run(
@@ -179,9 +170,15 @@ def run_stage1(config: Config) -> Stage1Result:
     )
     _put_store(context, fiducials)
 
-    _run_step(context, OutputGenerator(), log_provider, stage1_exporter)
+    result = build_stage1_result(
+        mri_volume=context.get_store_notnull(MRIVolume),
+        segmentation_mask=context.get_store_notnull(SegmentationMask),
+        mesh=context.get_store_notnull(ScalpMesh),
+        fiducials=fiducials,
+    )
+    _put_store(context, result, log_provider, stage1_exporter)
 
-    return context.get_store_notnull(Stage1Result)
+    return result
 
 
 def run_stage2(config: Config, scalp_mesh: ScalpMesh) -> ESEMesh:
