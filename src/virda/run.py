@@ -23,6 +23,7 @@ from virda.ops.clean_mesh import clean_mesh
 from virda.ops.extract_mesh import extract_mesh
 from virda.ops.load_manual_fiducials import load_manual_fiducials
 from virda.ops.load_nifti import load_nifti
+from virda.ops.resolve_fiducials import resolve_fiducials
 from virda.ops.seal_mask import seal_mask
 from virda.ops.segment_head import segment_head
 from virda.ops.smooth_mesh import smooth_mesh
@@ -59,28 +60,6 @@ def _put_store(
     context.stores[type(store)] = store
     for provider in providers:
         provider.provide(store, context)
-
-
-class FiducialsRegistrationStep:
-    def run(self, context: PipelineContext) -> Fiducials:
-        manual = context.get_store(ManualFiducials)
-        if manual is not None:
-            return manual.fiducials
-
-        auto = context.get_store(AutoDetectedFiducials)
-        if auto is not None:
-            return auto.fiducials
-
-        config = context.get_store(Config)
-        if config is not None and config.coordsystem is not None:
-            coordsystem_fiducials = config.coordsystem.to_fiducials()
-            if coordsystem_fiducials.items:
-                return coordsystem_fiducials
-
-        raise ValueError(
-            "No fiducials available: provide a manual fiducials file,"
-            " enable auto_detect_fiducials, or supply a coordsystem.json config file"
-        )
 
 
 class OutputGenerator:
@@ -193,7 +172,13 @@ def run_stage1(config: Config) -> Stage1Result:
     if config.auto_detect_fiducials:
         _put_store(context, auto_detect_fiducials(mesh))
 
-    _run_step(context, FiducialsRegistrationStep())
+    fiducials = resolve_fiducials(
+        context.get_store(ManualFiducials),
+        context.get_store(AutoDetectedFiducials),
+        config.coordsystem,
+    )
+    _put_store(context, fiducials)
+
     _run_step(context, OutputGenerator(), log_provider, stage1_exporter)
 
     return context.get_store_notnull(Stage1Result)
