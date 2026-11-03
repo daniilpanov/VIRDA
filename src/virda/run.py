@@ -13,7 +13,6 @@ from virda.localization.brute_force_localizer import BruteForceLocalizer
 from virda.logging_setup import get_stage_logger
 from virda.mesh import MeshPostprocessor
 from virda.mesh.laplacian_smoother import LaplacianSmoother
-from virda.mesh.mesh_cleaner import TrimeshCleaner
 from virda.mesh.taubin_smoother import TaubinSmoother
 from virda.models.config import Config
 from virda.models.electrode import Electrodes
@@ -24,6 +23,7 @@ from virda.models.path import FiducialsPath, MeasurementsPath
 from virda.models.scalp_mesh import ScalpMesh
 from virda.models.segmentation_mask import SegmentationMask
 from virda.models.stage1_result import Stage1Result
+from virda.ops.clean_mesh import clean_mesh
 from virda.ops.extract_mesh import extract_mesh
 from virda.ops.load_nifti import load_nifti
 from virda.ops.seal_mask import seal_mask
@@ -184,10 +184,12 @@ def run_stage1(config: Config) -> Stage1Result:
     mesh = extract_mesh(mask, volume)
     _put_store(context, mesh, log_provider)
 
-    _run_step(context, TrimeshCleaner(
+    mesh = clean_mesh(
+        mesh,
         min_component_vertices=config.cleaner_min_vertices,
         merge_digits=config.cleaner_merge_digits,
-    ), log_provider)
+    )
+    _put_store(context, mesh, log_provider)
     _run_step(context, smoother, log_provider)
 
     if resolved_fiducials_path:

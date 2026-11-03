@@ -1,12 +1,11 @@
 import numpy as np
 import pytest
 
-from tests.helpers.pipelines import build_context
 from virda.mesh.adjacency import build_scalp_mesh
-from virda.mesh.mesh_cleaner import TrimeshCleaner
 from virda.models.mri_volume import MRIVolume
 from virda.models.scalp_mesh import ScalpMesh
 from virda.models.segmentation_mask import SegmentationMask
+from virda.ops.clean_mesh import clean_mesh
 
 
 @pytest.fixture
@@ -48,8 +47,7 @@ def clean_sphere_mesh(sphere_volume: MRIVolume) -> ScalpMesh:
 
 class TestTrimeshCleaner:
     def test_clean_preserves_valid_mesh(self, clean_sphere_mesh: ScalpMesh) -> None:
-        cleaner = TrimeshCleaner()
-        cleaned = cleaner.run(build_context(ScalpMesh=clean_sphere_mesh))
+        cleaned = clean_mesh(clean_sphere_mesh)
 
         assert isinstance(cleaned, ScalpMesh)
         assert cleaned.vertices.shape[1] == 3
@@ -67,8 +65,7 @@ class TestTrimeshCleaner:
 
         corrupted_mesh = build_scalp_mesh(vertices=combined_vertices, faces=combined_faces)
 
-        cleaner = TrimeshCleaner(min_component_vertices=50)
-        cleaned = cleaner.run(build_context(ScalpMesh=corrupted_mesh))
+        cleaned = clean_mesh(corrupted_mesh, min_component_vertices=50)
 
         original_vertex_count = clean_sphere_mesh.vertices.shape[0]
         assert cleaned.vertices.shape[0] <= original_vertex_count + 3
@@ -87,7 +84,6 @@ class TestTrimeshCleaner:
         faces = np.array([[0, 1, 2], [3, 4, 5]])
         mesh = build_scalp_mesh(vertices=vertices, faces=faces)
 
-        cleaner = TrimeshCleaner()
-        cleaned = cleaner.run(build_context(ScalpMesh=mesh))
+        cleaned = clean_mesh(mesh)
 
         assert cleaned.faces.shape[0] <= 2
