@@ -23,6 +23,7 @@ from virda.config import resolve_stage3_config
 from virda.io.exporters.ese import export_ese
 from virda.io.exporters.localization import export_localization
 from virda.io.exporters.stage1 import export_stage1
+from virda.io.importers.fiducials import load_manual_fiducials
 from virda.io.importers.nifti import load_nifti
 from virda.logging_setup import get_stage_logger
 from virda.models.config import Config
@@ -34,7 +35,6 @@ from virda.ops.auto_detect_fiducials import auto_detect_fiducials
 from virda.ops.build_ese import build_ese
 from virda.ops.clean_mesh import clean_mesh
 from virda.ops.extract_mesh import extract_mesh
-from virda.ops.load_manual_fiducials import load_manual_fiducials
 from virda.ops.load_measurements import load_measurements
 from virda.ops.localize_electrodes import localize_electrodes
 from virda.ops.resolve_fiducials import resolve_fiducials

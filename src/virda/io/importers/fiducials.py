@@ -1,4 +1,4 @@
-"""Step: load manual fiducials from a JSON file."""
+"""Import manual fiducials from a JSON file into a :class:`ManualFiducials` model."""
 
 from logging import Logger
 from pathlib import Path
@@ -8,5 +8,5 @@ from virda.models.fiducial import ManualFiducials
 
 
 def load_manual_fiducials(path: Path, *, logger: Logger | None = None) -> ManualFiducials:
-    """Load a :class:`ManualFiducials` store from a fiducials JSON file."""
+    """Load a :class:`ManualFiducials` from a fiducials JSON file."""
     return ManualFiducials(fiducials=load_fiducials(path, logger))
