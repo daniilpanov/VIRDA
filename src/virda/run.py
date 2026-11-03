@@ -5,7 +5,6 @@ from virda.ese.pca_ese_builder import PCAESEBuilder
 from virda.fiducials import AutoFiducialsDetector
 from virda.io.loader.manual_fiducials_loader import ManualFiducialsLoader
 from virda.io.loader.measurements_loader import MeasurementsLoaderFromJson
-from virda.io.loader.nifti_loader import NiftiLoader
 from virda.io.providers.logging_provider import StoreLoggingProvider
 from virda.io.providers.stage1_exporter import Stage1Exporter
 from virda.io.providers.stage2_exporter import Stage2Exporter
@@ -22,10 +21,11 @@ from virda.models.electrode import Electrodes
 from virda.models.ese_mesh import ESEMesh
 from virda.models.fiducial import Fiducials, AutoDetectedFiducials, ManualFiducials
 from virda.models.mri_volume import MRIVolume
-from virda.models.path import FiducialsPath, MeasurementsPath, NiftiPath
+from virda.models.path import FiducialsPath, MeasurementsPath
 from virda.models.scalp_mesh import ScalpMesh
 from virda.models.segmentation_mask import SegmentationMask
 from virda.models.stage1_result import Stage1Result
+from virda.ops.load_nifti import load_nifti
 from virda.pipeline import Provider, Step
 from virda.pipeline_context import PipelineContext
 from virda.segmentation.head_segmenter import OtsuHeadSegmenter
@@ -47,6 +47,20 @@ def _run_step(
     context.stores[type(new_store)] = new_store
     for provider in providers:
         provider.provide(new_store, context)
+
+
+def _put_store(
+        context: PipelineContext,
+        store,
+        *providers: Provider,
+) -> None:
+    """Put a function result into the context stores and fire providers.
+
+    Same contract as :func:`_run_step` for steps migrated to plain functions.
+    """
+    context.stores[type(store)] = store
+    for provider in providers:
+        provider.provide(store, context)
 
 
 class FiducialsRegistrationStep:
@@ -136,7 +150,6 @@ def run_stage1(config: Config) -> Stage1Result:
 
     # -- Stores --
     nifti_path = Path(resolved_nifti_path)
-    context.stores[NiftiPath] = NiftiPath(nifti_path)
     context.stores[Config] = config
     for store_type in (MRIVolume, SegmentationMask, ScalpMesh, Fiducials):
         context.stores[store_type] = None
@@ -152,7 +165,7 @@ def run_stage1(config: Config) -> Stage1Result:
     )
 
     # -- Steps --
-    _run_step(context, NiftiLoader(), log_provider)
+    _put_store(context, load_nifti(nifti_path), log_provider)
     _run_step(context, OtsuHeadSegmenter(
         closing_radius=config.closing_radius,
         otsu_scope=config.otsu_scope,
