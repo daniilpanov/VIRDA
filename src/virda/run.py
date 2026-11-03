@@ -1,7 +1,6 @@
 from pathlib import Path
 
 from virda.config import resolve_stage3_config
-from virda.io.loader.measurements_loader import MeasurementsLoaderFromJson
 from virda.io.providers.logging_provider import StoreLoggingProvider
 from virda.io.providers.stage1_exporter import Stage1Exporter
 from virda.io.providers.stage2_exporter import Stage2Exporter
@@ -13,7 +12,6 @@ from virda.models.electrode import Electrodes
 from virda.models.ese_mesh import ESEMesh
 from virda.models.fiducial import Fiducials, AutoDetectedFiducials, ManualFiducials
 from virda.models.mri_volume import MRIVolume
-from virda.models.path import MeasurementsPath
 from virda.models.scalp_mesh import ScalpMesh
 from virda.models.segmentation_mask import SegmentationMask
 from virda.models.stage1_result import Stage1Result
@@ -22,6 +20,7 @@ from virda.ops.build_ese import build_ese
 from virda.ops.clean_mesh import clean_mesh
 from virda.ops.extract_mesh import extract_mesh
 from virda.ops.load_manual_fiducials import load_manual_fiducials
+from virda.ops.load_measurements import load_measurements
 from virda.ops.load_nifti import load_nifti
 from virda.ops.resolve_fiducials import resolve_fiducials
 from virda.ops.seal_mask import seal_mask
@@ -230,11 +229,10 @@ def run_stage3(
 
     stage3_config = resolve_stage3_config(config)
 
-    load_context = PipelineContext({})
-    load_context.stores[MeasurementsPath] = MeasurementsPath(Path(resolved_measurements_path))
-    load_context.stores[Fiducials] = stage1_result.fiducials
-    electrodes = MeasurementsLoaderFromJson().run(load_context)
-    fiducials = load_context.get_store_notnull(Fiducials)
+    electrodes, fiducials = load_measurements(
+        Path(resolved_measurements_path),
+        stage1_result.fiducials,
+    )
 
     context = PipelineContext({})
     context.logger = get_stage_logger(project, "stage_3")
