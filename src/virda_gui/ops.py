@@ -47,14 +47,19 @@ class ScalpSurface:
 def generate_scalp_surface(
     mri: MRIVolume,
     sealing: SealingOptions | None = None,
+    voxel_size_mm: float | None = None,
 ) -> ScalpSurface:
-    """Segment the head, optionally seal the mask, and extract the scalp mesh."""
+    """Segment the head, optionally seal the mask, and extract the scalp mesh.
+
+    ``voxel_size_mm`` is the desired effective voxel size of the extracted
+    mesh; ``None`` keeps the native NIfTI resolution (``step_size=1``).
+    """
     mask = segment_head(mri)
 
     if sealing is not None and sealing.seal_enabled:
         mask = seal_mask(mask, radius=sealing.seal_radius)
 
-    return ScalpSurface(mask=mask, mesh=extract_mesh(mask, mri))
+    return ScalpSurface(mask=mask, mesh=extract_mesh(mask, mri, voxel_size_mm=voxel_size_mm))
 
 
 def clean(mesh: ScalpMesh, options: CleanOptions) -> ScalpMesh:

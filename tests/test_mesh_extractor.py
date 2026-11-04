@@ -100,3 +100,44 @@ class TestMeshExtractor:
 
         with pytest.raises(ValueError):
             extract_mesh(empty_mask, empty_volume)
+
+    def test_explicit_voxel_size_one_matches_native(
+        self, sphere_mask: SegmentationMask, sphere_volume: MRIVolume
+    ) -> None:
+        native_mesh = extract_mesh(sphere_mask, sphere_volume)
+        one_mm_mesh = extract_mesh(sphere_mask, sphere_volume, voxel_size_mm=1.0)
+
+        assert np.array_equal(one_mm_mesh.vertices, native_mesh.vertices)
+        assert np.array_equal(one_mm_mesh.faces, native_mesh.faces)
+
+    def test_larger_voxel_size_reduces_density(
+        self, sphere_mask: SegmentationMask, sphere_volume: MRIVolume
+    ) -> None:
+        native_mesh = extract_mesh(sphere_mask, sphere_volume)
+        coarse_mesh = extract_mesh(sphere_mask, sphere_volume, voxel_size_mm=3.0)
+
+        assert coarse_mesh.vertices.shape[0] > 0
+        assert coarse_mesh.vertices.shape[0] < native_mesh.vertices.shape[0]
+        assert coarse_mesh.faces.shape[0] < native_mesh.faces.shape[0]
+
+    def test_voxel_size_affine_transform_still_correct(
+        self, sphere_mask: SegmentationMask, sphere_volume: MRIVolume
+    ) -> None:
+        voxel_to_world = np.array(
+            [
+                [1.5, 0.0, 0.0, 10.0],
+                [0.0, 1.5, 0.0, 20.0],
+                [0.0, 0.0, 2.0, 30.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ]
+        )
+
+        mesh_world = extract_mesh(
+            sphere_mask, replace(sphere_volume, affine=voxel_to_world), voxel_size_mm=3.0
+        )
+        mesh_voxel = extract_mesh(
+            sphere_mask, replace(sphere_volume, affine=np.eye(4)), voxel_size_mm=3.0
+        )
+
+        expected_world = mesh_voxel.vertices @ voxel_to_world[:3, :3].T + voxel_to_world[:3, 3]
+        np.testing.assert_array_almost_equal(mesh_world.vertices, expected_world)
