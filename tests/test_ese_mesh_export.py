@@ -1,10 +1,12 @@
+import json
 from pathlib import Path
 
 import numpy as np
 import trimesh
 
 from tests.helpers.measurements import make_ese
-from virda.io.exporters.ese_mesh import export_ese_mesh
+from virda.io.exporters.ese_mesh import export_ese_companions, export_ese_mesh
+from virda.io.importers.ese_mesh import import_ese_mesh
 from virda.io.importers.scalp_mesh import import_scalp_mesh
 from virda.models.ese_mesh import ESEMesh
 
@@ -52,3 +54,30 @@ class TestExportEseMesh:
         raw = trimesh.load(path)
         assert isinstance(raw, trimesh.Trimesh)
         np.testing.assert_array_almost_equal(raw.vertices, ese.vertices)
+
+
+class TestExportEseCompanions:
+    def test_writes_the_expected_files(self, tmp_path: Path) -> None:
+        ese = make_ese()
+
+        root = export_ese_companions(tmp_path / "ese" / "mesh.ply", ese)
+
+        assert root == tmp_path / "ese"
+        for name in ("ese_vertices.npy", "ese_faces.npy", "normals.npy", "quality.npy"):
+            assert (root / name).is_file()
+        pairs = json.loads((root / "point_pairs.json").read_text(encoding="utf-8"))
+        assert pairs["n_points"] == int(ese.vertices.shape[0])
+        assert len(pairs["scalp_vertices"]) == int(ese.vertices.shape[0])
+
+    def test_full_round_trip_with_importer(self, tmp_path: Path) -> None:
+        ese = make_ese(ese_offset_mm=1.5)
+
+        export_ese_companions(tmp_path / "ese" / "mesh.ply", ese)
+        (tmp_path / "ese" / "mesh.ply").touch()
+        restored = import_ese_mesh(tmp_path / "ese" / "mesh.ply")
+
+        np.testing.assert_array_almost_equal(restored.vertices, ese.vertices)
+        np.testing.assert_array_equal(restored.faces, ese.faces)
+        np.testing.assert_array_almost_equal(restored.scalp_vertices, ese.scalp_vertices)
+        np.testing.assert_array_almost_equal(restored.normals, ese.normals)
+        np.testing.assert_array_almost_equal(restored.quality, ese.quality)
