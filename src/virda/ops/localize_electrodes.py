@@ -201,7 +201,10 @@ def _localize_one(
 
     return replace(
         electrode,
-        ese_coords=np.asarray(ese.vertices)[best_index],
+        # Report the position on the calibrated search cloud: when offset
+        # calibration is enabled, the located vertex lies on the shifted
+        # surface, not on the base ESE mesh.
+        ese_coords=np.asarray(search_vertices)[best_index],
         scalp_coords=np.asarray(ese.scalp_vertices)[best_index],
         residual_error=residual_error,
         confidence=float(ese.quality[best_index]),
