@@ -28,4 +28,6 @@ class AppState:
     palette_index: int = 0
     stage3_summary: dict[str, Any] | None = None
     coordsystem: Coordsystem | None = None
+    electrodes_cras: bool = False
+    fiducial_frame: str = "scanner_ras"
     closed: bool = False
