@@ -9,17 +9,19 @@ from nibabel import aff2axcodes
 from virda.models.mri_volume import MRIVolume
 
 
-def load_nifti(path: Path) -> MRIVolume:
-    """Load a NIfTI file into an :class:`MRIVolume`.
+def import_nifti(path: str | Path) -> MRIVolume:
+    """Read the NIfTI file at *path* into an :class:`MRIVolume`.
 
-    Raises ``FileNotFoundError`` when the file is missing and ``ValueError``
-    when the file cannot be parsed or lacks 3 spatial dimensions.
+    Raises :class:`FileNotFoundError` when the file is missing and
+    :class:`ValueError` when the file cannot be parsed or lacks 3 spatial
+    dimensions.
     """
-    if not path.exists():
-        raise FileNotFoundError(f"NIfTI file not found: {path}")
+    source = Path(path)
+    if not source.exists():
+        raise FileNotFoundError(f"NIfTI file not found: {source}")
 
     try:
-        nifti_image = nib.load(path)
+        nifti_image = nib.load(source)
     except Exception as error:
         raise ValueError(f"Failed to parse NIfTI file: {error}") from error
 
