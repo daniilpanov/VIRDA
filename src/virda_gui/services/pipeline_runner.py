@@ -14,35 +14,64 @@ import queue
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from logging import Logger
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal
 
 from virda.config import resolve_stage3_config
-from virda.io.exporters.ese import export_ese
-from virda.io.exporters.localization import export_localization
-from virda.io.exporters.stage1 import export_stage1
 from virda.io.importers.fiducials import load_manual_fiducials
 from virda.io.importers.measurements import load_measurements
 from virda.io.importers.nifti import load_nifti
 from virda.logging_setup import get_stage_logger
 from virda.models.config import Config
+from virda.models.coordsystem import Coordsystem
 from virda.models.electrode import Electrodes
 from virda.models.ese_mesh import ESEMesh
+from virda.models.fiducial import (
+    AutoDetectedFiducials,
+    Fiducials,
+    ManualFiducials,
+)
 from virda.models.scalp_mesh import ScalpMesh
-from virda.models.stage1_result import Stage1Result
 from virda.ops.auto_detect_fiducials import auto_detect_fiducials
 from virda.ops.build_ese import build_ese
 from virda.ops.clean_mesh import clean_mesh
 from virda.ops.extract_mesh import extract_mesh
 from virda.ops.localize_electrodes import localize_electrodes
-from virda.ops.resolve_fiducials import resolve_fiducials
 from virda.ops.seal_mask import seal_mask
 from virda.ops.segment_head import segment_head
 from virda.ops.smooth_mesh import smooth_mesh
-from virda.ops.stage1_result import build_stage1_result
 from virda_gui.state import AppState
+
+
+@dataclass(frozen=True)
+class _Stage1Result:
+    """GUI-side view of Stage 1: the scalp mesh and the resolved fiducials."""
+
+    mesh: ScalpMesh
+    fiducials: Fiducials
+
+
+def _resolve_stage1_fiducials(
+    manual: ManualFiducials | None,
+    auto: AutoDetectedFiducials | None,
+    coordsystem: Coordsystem | None,
+) -> Fiducials:
+    """Prefer manual fiducials, then auto-detected ones, then coordsystem defaults."""
+    for candidate in (
+        manual.fiducials if manual is not None else None,
+        auto.fiducials if auto is not None else None,
+        coordsystem.to_fiducials() if coordsystem is not None else None,
+    ):
+        if candidate is not None and candidate.items:
+            return candidate
+    raise ValueError(
+        "No fiducials available: provide a manual fiducials file,"
+        " enable auto_detect_fiducials, or supply a coordsystem.json config file"
+    )
+
 
 _DONE_SENTINEL = "__DONE__"
 _ERROR_SENTINEL = "__ERROR__"
@@ -70,7 +99,7 @@ def _log_artifact(logger: Logger | None, artifact) -> None:
 
 def run(
     config: Config, measurements_path: str | Path | None = None
-) -> tuple[Stage1Result, ESEMesh | None, Electrodes | None]:
+) -> tuple[_Stage1Result, ESEMesh | None, Electrodes | None]:
     """Run the VIRDA pipeline: Stage 1 -> 2 -> 3.
 
     Returns the Stage 1 result, the ESE surface when ESE is configured,
@@ -85,7 +114,7 @@ def run(
     return stage1_result, ese_mesh, electrodes
 
 
-def run_stage1(config: Config) -> Stage1Result:
+def run_stage1(config: Config) -> _Stage1Result:
     """Segment the head, build the scalp mesh and resolve fiducials (Stage 1)."""
     resolved_nifti_path = config.nifti_path
     if resolved_nifti_path is None:
@@ -147,22 +176,10 @@ def run_stage1(config: Config) -> Stage1Result:
     )
     auto = auto_detect_fiducials(mesh) if config.auto_detect_fiducials else None
 
-    fiducials = resolve_fiducials(manual, auto, config.coordsystem)
+    fiducials = _resolve_stage1_fiducials(manual, auto, config.coordsystem)
 
-    result = build_stage1_result(
-        mri_volume=volume,
-        segmentation_mask=mask,
-        mesh=mesh,
-        fiducials=fiducials,
-    )
+    result = _Stage1Result(mesh=mesh, fiducials=fiducials)
     _log_artifact(logger, result)
-    export_stage1(
-        result,
-        project_dir=project_dir,
-        config=config,
-        nifti_path=nifti_path,
-        logger=logger,
-    )
 
     return result
 
@@ -178,13 +195,12 @@ def run_stage2(config: Config, scalp_mesh: ScalpMesh) -> ESEMesh:
         logger=logger,
     )
     _log_artifact(logger, ese_mesh)
-    export_ese(ese_mesh, Path(config.project_dir))
     return ese_mesh
 
 
 def run_stage3(
     config: Config,
-    stage1_result: Stage1Result,
+    stage1_result: _Stage1Result,
     ese_mesh: ESEMesh | None,
     measurements_path: str | Path | None = None,
 ) -> Electrodes | None:
@@ -224,7 +240,6 @@ def run_stage3(
         logger=logger,
     )
     _log_artifact(logger, electrodes)
-    export_localization(electrodes, project)
     return electrodes
 
 
