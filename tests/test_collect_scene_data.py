@@ -43,6 +43,24 @@ class TestCollectSceneDataValidation:
             collect_scene_data(mesh_path=str(tmp_path / "missing.ply"), electrodes_cras=True)
 
 
+class TestSceneLoaderProgress:
+    def test_run_relays_logs_through_progress_signal(self, tmp_path: Path) -> None:
+        """The worker relays logs via signal so widget logs stay on the GUI thread."""
+        from virda_gui.viewer.viewer import _SceneLoader
+
+        mesh_path = tmp_path / "mesh.ply"
+        _write_sphere_mesh(mesh_path)
+        loader = _SceneLoader({"mesh_path": str(mesh_path)}, seq=1)
+        messages: list[str] = []
+        scenes: list[object] = []
+        loader.progress.connect(messages.append)
+        loader.loaded.connect(lambda _seq, scene: scenes.append(scene))
+        loader.run()
+        assert messages, "expected QC progress messages"
+        assert all(isinstance(message, str) for message in messages)
+        assert len(scenes) == 1
+
+
 class TestCollectSceneData:
     def test_mesh_only_scene(self, tmp_path: Path) -> None:
         mesh_path = tmp_path / "mesh.ply"

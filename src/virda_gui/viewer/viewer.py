@@ -8,28 +8,66 @@ the normal glyphs and per-electrode labels, and a "Boost contrast" checkbox
 sharpens the MRI and the mesh.  :class:`ViewerWidget` wraps the same scene
 that the standalone ``virda-gui-viewer`` CLI (module ``virda_gui.viewer.viewer_cli``)
 shows in a blocking window; the GUI embeds it on its 3D Viewer tab.
+
+A coordinate-frame selector in the Layers panel re-transforms the mesh,
+fiducials, electrode points, links and normal glyphs into Scanner RAS world
+mm, voxel indices or FreeSurfer cRAS without reloading the NIfTI volume (the
+volume actor only lines up in the scene's native frame, where it stays; it is
+hidden in the other frames).  "Export to coordinate system" buttons write the
+active mesh vertices (NPY) in the selected frame, the frame-independent active
+mesh faces (NPY), and the electrodes/fiducials (TSV) in the selected frame.
+All frame math lives in the Qt-free helper module
+``virda_gui.viewer.frames``.
 """
 
 from collections.abc import Callable
-from typing import Any
+from pathlib import Path
+from typing import Any, Literal
 
+import numpy as np
 import pyvista as pv
-from PySide6.QtCore import QObject, QThread, Signal
+from PySide6.QtCore import QObject, Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
+    QFileDialog,
     QGroupBox,
     QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QScrollArea,
+    QSplitter,
     QVBoxLayout,
     QWidget,
 )
 from pyvistaqt import QtInteractor
 
+from virda.io.exporters.mesh_arrays import export_mesh_faces, export_mesh_vertices
+
+from .frames import (
+    FRAME_IDS,
+    FRAME_SCANNER,
+    collect_electrodes_export,
+    collect_fiducials_export,
+    collect_polydata_mesh_export,
+    frame_available,
+    frame_label,
+    frame_to_scene_points,
+    natural_frame,
+    scene_to_frame_matrix,
+    write_points_tsv,
+)
+from .scene import transform_points
 from .viewer_loaders import (
     SceneData,
     build_electrode_links,
     collect_scene_data,
     intensify_color,
 )
+
+MeshKind = Literal["scalp", "ese"]
+MeshArray = Literal["vertices", "faces"]
 
 
 class _SceneLoader(QObject):
@@ -43,17 +81,15 @@ class _SceneLoader(QObject):
     failed = Signal(int, str)
     progress = Signal(str)
 
-    def __init__(
-        self,
-        kwargs: dict[str, Any],
-        seq: int,
-    ) -> None:
+    def __init__(self, kwargs: dict[str, Any], seq: int) -> None:
         super().__init__()
         self._kwargs = kwargs
         self._seq = seq
 
     def run(self) -> None:
         try:
+            # Progress is relayed via a signal so the widget-level log (e.g. a
+            # status bar with its own timers) runs in the GUI thread, never here.
             scene = collect_scene_data(log=self.progress.emit, **self._kwargs)
         except Exception as exc:
             self.failed.emit(self._seq, str(exc))
@@ -74,6 +110,7 @@ class ViewerWidget(QWidget):
 
     sceneLoaded = Signal(object)  # noqa: N815
     sceneFailed = Signal(str)  # noqa: N815
+    surfacePicked = Signal(object)  # noqa: N815 - picked scene-frame point
 
     def __init__(self, parent: QWidget | None = None, log: Callable[[str], None] = print) -> None:
         super().__init__(parent)
@@ -84,6 +121,13 @@ class ViewerWidget(QWidget):
 
         self._plotter = QtInteractor(parent=self)
         self._volume: pv.ImageData | None = None
+        self._scene: SceneData | None = None
+        self._affine: np.ndarray | None = None
+        self._cras_offset: np.ndarray | None = None
+        self._mm_scene = True
+        self._current_frame = FRAME_SCANNER
+        self._point_actors: list[Any] = []
+        self._frame_combo: QComboBox | None = None
         self._mri_actor: Any = None
         self._mesh_actor: Any = None
         self._fiducial_actor: Any = None
@@ -95,10 +139,36 @@ class ViewerWidget(QWidget):
         self._label_actors_per_group: list[list[Any]] = []
         self._group_states: list[bool] = []
         self._mri_visible = True
+        self._mesh_visible = True
         self._fiducials_visible = True
-        self._labels_visible = True
+        self._normals_visible = True
+        self._fiducial_labels_visible = True
+        self._electrode_labels_visible = True
+        self._live_electrodes_visible = True
         self._mesh_opacity = 0.6
         self._hi_clim: tuple[float, float] | None = None
+        self._contrast_boost = False
+
+        self._live_fiducial_ids: list[str] = []
+        self._live_fiducial_points: np.ndarray | None = None
+        self._view_snapshot: dict[str, Any] | None = None
+        self._live_fiducial_actor: Any = None
+        self._live_fiducial_label_actor: Any = None
+        self._live_electrode_ids: list[str] = []
+        self._live_electrode_points: np.ndarray | None = None
+        self._live_electrode_flags: np.ndarray | None = None
+        self._live_electrode_actor: Any = None
+        self._live_electrode_label_actor: Any = None
+        self._flagged_actor: Any = None
+        self._extra_mesh: pv.PolyData | None = None
+        self._extra_mesh_kind: MeshKind = "scalp"
+        self._extra_mesh_actor: Any = None
+        self._project_dir: Path | None = None
+        self._active_mesh_label: QLabel | None = None
+        self._vertices_export_button: QPushButton | None = None
+        self._faces_export_button: QPushButton | None = None
+        self._electrodes_export_button: QPushButton | None = None
+        self._fiducials_export_button: QPushButton | None = None
 
         self._build_ui()
 
@@ -106,13 +176,30 @@ class ViewerWidget(QWidget):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
-        layout.addWidget(self._plotter, 1)
 
         self._layers_panel = QGroupBox("Layers", self)
-        self._layers_layout = QVBoxLayout(self._layers_panel)
+        panel_layout = QVBoxLayout(self._layers_panel)
+        panel_layout.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea(self._layers_panel)
+        scroll.setWidgetResizable(True)
+        # A scroll area reports a tiny size hint, so without a floor the
+        # panel collapses to a strip next to the 3D view.
+        scroll.setMinimumWidth(240)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        inner = QWidget(scroll)
+        self._layers_layout = QVBoxLayout(inner)
         self._layers_layout.setContentsMargins(4, 4, 4, 4)
         self._layers_layout.setSpacing(4)
-        layout.addWidget(self._layers_panel, 0)
+        scroll.setWidget(inner)
+        panel_layout.addWidget(scroll)
+
+        self._splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        self._splitter.addWidget(self._plotter)
+        self._splitter.addWidget(self._layers_panel)
+        self._splitter.setStretchFactor(0, 1)
+        self._splitter.setStretchFactor(1, 0)
+        self._splitter.setChildrenCollapsible(False)
+        layout.addWidget(self._splitter)
 
     # ---- scene loading (background thread -> GUI thread) ----
 
@@ -130,6 +217,7 @@ class ViewerWidget(QWidget):
 
         self._load_seq += 1
         seq = self._load_seq
+        self._snapshot_view_state()
         self.clear_scene()
         self._log("Loading 3D scene...")
         self._cancel_running_load()
@@ -142,6 +230,45 @@ class ViewerWidget(QWidget):
         self._worker.failed.connect(self._on_scene_failed)
         self._worker.progress.connect(self._on_scene_progress)
         self._thread.start()
+
+    def _snapshot_view_state(self) -> None:
+        """Remember layers, frame and camera so a reload can restore them."""
+        if self._scene is None:
+            self._view_snapshot = None
+            return
+        camera = self._plotter.camera
+        self._view_snapshot = {
+            "mri": self._mri_visible,
+            "mesh": self._mesh_visible,
+            "fiducials": self._fiducials_visible,
+            "normals": self._normals_visible,
+            "fiducial_labels": self._fiducial_labels_visible,
+            "electrode_labels": self._electrode_labels_visible,
+            "live_electrodes": self._live_electrodes_visible,
+            "groups": list(self._group_states),
+            "frame": self._current_frame,
+            "position": tuple(camera.position),
+            "focal": tuple(camera.focal_point),
+        }
+
+    def _restore_view_snapshot(self) -> None:
+        """Re-apply the snapshot taken by :meth:`_snapshot_view_state`."""
+        snap = self._view_snapshot
+        if snap is None:
+            return
+        if self._contrast_boost:
+            self._set_contrast(True)
+        frame = snap["frame"]
+        if frame != self._current_frame and self._frame_combo is not None:
+            try:
+                index = FRAME_IDS.index(frame)
+            except ValueError:
+                index = -1
+            if index >= 0 and self._frame_combo.model().item(index).isEnabled():
+                self._frame_combo.setCurrentIndex(index)
+        camera = self._plotter.camera
+        camera.focal_point = tuple(snap["focal"])
+        camera.position = tuple(snap["position"])
 
     def _on_scene_progress(self, message: str) -> None:
         """Forward worker-thread progress to the widget log in the GUI thread."""
@@ -205,6 +332,30 @@ class ViewerWidget(QWidget):
     def clear_scene(self) -> None:
         self._plotter.clear()
         self._clear_layers()
+        self._scene = None
+        self._point_actors = []
+        self._frame_combo = None
+        self._current_frame = FRAME_SCANNER
+        self._affine = None
+        self._cras_offset = None
+        self._live_fiducial_ids = []
+        self._live_fiducial_points = None
+        self._live_fiducial_actor = None
+        self._live_fiducial_label_actor = None
+        self._live_electrode_ids = []
+        self._live_electrode_points = None
+        self._live_electrode_flags = None
+        self._live_electrode_actor = None
+        self._live_electrode_label_actor = None
+        self._flagged_actor = None
+        self._extra_mesh = None
+        self._extra_mesh_kind = "scalp"
+        self._extra_mesh_actor = None
+        self._active_mesh_label = None
+        self._vertices_export_button = None
+        self._faces_export_button = None
+        self._electrodes_export_button = None
+        self._fiducials_export_button = None
 
     def _clear_layers(self) -> None:
         while self._layers_layout.count():
@@ -219,29 +370,95 @@ class ViewerWidget(QWidget):
         self._plotter.clear()
         self._clear_layers()
 
+        self._scene = scene
         self._volume = scene.volume
+        self._affine = scene.affine
+        self._cras_offset = scene.cras_offset
+        self._mm_scene = scene.mm_scene
         self._mesh_opacity = scene.mesh_opacity
         self._hi_clim = scene.hi_clim
+
+        self._group_states = [True] * len(scene.electrode_groups)
+        self._mri_visible = True
+        self._mesh_visible = True
+        self._fiducials_visible = True
+        self._normals_visible = True
+        self._fiducial_labels_visible = True
+        self._electrode_labels_visible = True
+        self._live_electrodes_visible = True
+        snap = self._view_snapshot
+        if snap is not None:
+            self._mri_visible = snap["mri"]
+            self._mesh_visible = snap["mesh"]
+            self._fiducials_visible = snap["fiducials"]
+            self._normals_visible = snap["normals"]
+            self._fiducial_labels_visible = snap.get("fiducial_labels", snap.get("labels", True))
+            self._electrode_labels_visible = snap.get("electrode_labels", snap.get("labels", True))
+            self._live_electrodes_visible = snap.get("live_electrodes", True)
+            if len(snap["groups"]) == len(scene.electrode_groups):
+                self._group_states = list(snap["groups"])
+        self._current_frame = natural_frame(scene.mm_scene)
+
         self._mri_actor = None
-        self._mesh_actor = None
         if scene.volume is not None:
             self._mri_actor = self._plotter.add_volume(
                 scene.volume, cmap="bone", opacity="sigmoid", mapper="smart"
             )
+
+        # The scene data is already expressed in its natural frame, so the
+        # initial actor pass uses the identity transform.
+        self._rebuild_point_actors(np.eye(4))
+        self._build_layers(scene)
+        self._plotter.add_axes(interactive=False)
+        self._restore_view_snapshot()
+        self._plotter.render()
+
+    def _remove_point_actors(self) -> None:
+        for actor in self._point_actors:
+            self._plotter.remove_actor(actor)
+        self._point_actors = []
+        self._mesh_actor = None
+        self._fiducial_actor = None
+        self._fiducial_label_actor = None
+        self._normals_actor = None
+        self._electrode_actors_per_group = []
+        self._flagged_actors_per_group = []
+        self._link_actors_per_group = []
+        self._label_actors_per_group = []
+
+    def _rebuild_point_actors(self, matrix: np.ndarray) -> None:
+        """(Re)build the point-based actors transformed by 4x4 *matrix*.
+
+        Runs at load time with the identity matrix (the scene data already is
+        in its natural frame) and again whenever the user selects another
+        display frame via the coordinate-frame combo.  The NIfTI volume is
+        never reloaded and every actor is rebuilt from the original scene
+        points, so switching frames does not accumulate floating-point drift.
+        """
+        self._remove_point_actors()
+        scene = self._scene
+        if scene is None:
+            return
+
+        self._mesh_actor = None
         if scene.scene_mesh is not None:
+            poly = scene.scene_mesh.copy()
+            poly.transform(matrix, inplace=True)
             self._mesh_actor = self._plotter.add_mesh(
-                scene.scene_mesh, color="salmon", opacity=self._mesh_opacity
+                poly, color="salmon", opacity=self._mesh_opacity
             )
+            self._point_actors.append(self._mesh_actor)
+            self._apply_mesh_props()
 
         self._fiducial_actor = None
         self._fiducial_label_actor = None
         if scene.fiducial_points is not None and len(scene.fiducial_points) > 0:
-            scene_points = scene.fiducial_points
+            pts = transform_points(scene.fiducial_points, matrix)
             self._fiducial_actor = self._plotter.add_points(
-                scene_points, color="red", point_size=10, render_points_as_spheres=True
+                pts, color="red", point_size=10, render_points_as_spheres=True
             )
             self._fiducial_label_actor = self._plotter.add_point_labels(
-                scene_points,
+                pts,
                 scene.fiducial_labels,
                 font_size=12,
                 text_color="white",
@@ -251,12 +468,23 @@ class ViewerWidget(QWidget):
                 shape_opacity=0.65,
                 always_visible=True,
             )
+            self._point_actors.extend([self._fiducial_actor, self._fiducial_label_actor])
 
         self._normals_actor = None
         if scene.normals_poly is not None:
+            poly = scene.normals_poly.copy()
+            poly.transform(matrix, inplace=True)
             self._normals_actor = self._plotter.add_mesh(
-                scene.normals_poly, color="cyan", opacity=0.8, line_width=2
+                poly, color="cyan", opacity=0.8, line_width=2
             )
+            self._point_actors.append(self._normals_actor)
+
+        # Fiducial anchors used by the electrode links must move with the
+        # same transform as the electrode points they connect to.
+        fiducial_anchor = {
+            key: transform_points(point[np.newaxis, :], matrix)[0]
+            for key, point in scene.fiducial_id_to_point.items()
+        }
 
         self._electrode_actors_per_group = []
         self._flagged_actors_per_group = []
@@ -272,68 +500,461 @@ class ViewerWidget(QWidget):
             l_actors: list[Any] = []
             n_actors: list[Any] = []
             if pts is not None and len(pts) > 0:
+                pts = transform_points(pts, matrix)
                 healthy = ~flg
                 if healthy.any():
-                    e_actors.append(
-                        self._plotter.add_points(
-                            pts[healthy],
-                            color=color,
-                            point_size=12,
-                            render_points_as_spheres=True,
-                        )
+                    actor = self._plotter.add_points(
+                        pts[healthy],
+                        color=color,
+                        point_size=12,
+                        render_points_as_spheres=True,
                     )
+                    e_actors.append(actor)
+                    self._point_actors.append(actor)
                 if (~healthy).any():
-                    f_actors.append(
-                        self._plotter.add_points(
-                            pts[~healthy],
-                            color=intensify_color(color),
-                            point_size=17,
-                            render_points_as_spheres=True,
-                        )
+                    actor = self._plotter.add_points(
+                        pts[~healthy],
+                        color=intensify_color(color),
+                        point_size=17,
+                        render_points_as_spheres=True,
                     )
-                links = build_electrode_links(pts, meas, scene.fiducial_id_to_point)
+                    f_actors.append(actor)
+                    self._point_actors.append(actor)
+                links = build_electrode_links(pts, meas, fiducial_anchor)
                 if len(links) > 0:
-                    flat = links.reshape(-1, 3)
-                    l_actors.append(self._plotter.add_lines(flat, color=color, width=1))
-                n_actors.append(
-                    self._plotter.add_point_labels(
-                        pts,
-                        group["names"],
-                        font_size=12,
-                        text_color="white",
-                        show_points=False,
-                        shape="rounded_rect",
-                        shape_color="black",
-                        shape_opacity=0.65,
-                        always_visible=True,
-                    )
+                    actor = self._plotter.add_lines(links.reshape(-1, 3), color=color, width=1)
+                    l_actors.append(actor)
+                    self._point_actors.append(actor)
+                actor = self._plotter.add_point_labels(
+                    pts,
+                    group["names"],
+                    font_size=12,
+                    text_color="white",
+                    show_points=False,
+                    shape="rounded_rect",
+                    shape_color="black",
+                    shape_opacity=0.65,
+                    always_visible=True,
                 )
+                n_actors.append(actor)
+                self._point_actors.append(actor)
             self._electrode_actors_per_group.append(e_actors)
             self._flagged_actors_per_group.append(f_actors)
             self._link_actors_per_group.append(l_actors)
             self._label_actors_per_group.append(n_actors)
 
-        self._group_states = [True] * len(scene.electrode_groups)
-        self._mri_visible = True
-        self._fiducials_visible = True
-        self._labels_visible = True
-        self._build_layers(scene)
-        self._plotter.add_axes(interactive=False)
+        self._rebuild_live_overlay(matrix)
+
+        self._apply_visibility_states()
+
+    def _rebuild_live_overlay(self, matrix: np.ndarray) -> None:
+        """(Re)render only the live overlay: fiducials, electrodes, extra mesh.
+
+        The scene-data actors are left untouched, so editing the fiducials
+        table does not recreate the scalp mesh on every keystroke.  The live
+        points stay in the scene frame; *matrix* maps them into the selected
+        display frame.
+        """
+        for actor in (
+            self._live_fiducial_actor,
+            self._live_fiducial_label_actor,
+            self._live_electrode_actor,
+            self._live_electrode_label_actor,
+            self._flagged_actor,
+            self._extra_mesh_actor,
+        ):
+            if actor is not None:
+                self._plotter.remove_actor(actor)
+        dead = {
+            id(actor)
+            for actor in (
+                self._live_fiducial_actor,
+                self._live_fiducial_label_actor,
+                self._live_electrode_actor,
+                self._live_electrode_label_actor,
+                self._flagged_actor,
+                self._extra_mesh_actor,
+            )
+            if actor is not None
+        }
+        if dead:
+            self._point_actors = [actor for actor in self._point_actors if id(actor) not in dead]
+        self._live_fiducial_actor = None
+        self._live_fiducial_label_actor = None
+        if self._live_fiducial_points is not None and len(self._live_fiducial_points) > 0:
+            if len(self._live_fiducial_ids) != len(self._live_fiducial_points):
+                raise ValueError(
+                    f"got {len(self._live_fiducial_ids)} fiducial ids for "
+                    f"{len(self._live_fiducial_points)} points"
+                )
+            pts = transform_points(self._live_fiducial_points, matrix)
+            self._live_fiducial_actor = self._plotter.add_points(
+                pts, color="deeppink", point_size=10, render_points_as_spheres=True
+            )
+            self._live_fiducial_label_actor = self._plotter.add_point_labels(
+                pts,
+                self._live_fiducial_ids,
+                font_size=12,
+                text_color="white",
+                show_points=False,
+                shape="rounded_rect",
+                shape_color="black",
+                shape_opacity=0.65,
+                always_visible=True,
+            )
+            self._point_actors.extend([self._live_fiducial_actor, self._live_fiducial_label_actor])
+
+        self._live_electrode_actor = None
+        self._live_electrode_label_actor = None
+        self._flagged_actor = None
+        if self._live_electrode_points is not None and len(self._live_electrode_points) > 0:
+            if len(self._live_electrode_ids) != len(self._live_electrode_points):
+                raise ValueError(
+                    f"got {len(self._live_electrode_ids)} electrode ids for "
+                    f"{len(self._live_electrode_points)} points"
+                )
+            pts = transform_points(self._live_electrode_points, matrix)
+            flags = self._live_electrode_flags
+            if flags is None or len(flags) != len(pts):
+                flags = np.zeros(len(pts), dtype=bool)
+            healthy = ~flags
+            if healthy.any():
+                self._live_electrode_actor = self._plotter.add_points(
+                    pts[healthy],
+                    color="lime",
+                    point_size=12,
+                    render_points_as_spheres=True,
+                )
+                self._point_actors.append(self._live_electrode_actor)
+            if (~healthy).any():
+                self._flagged_actor = self._plotter.add_points(
+                    pts[~healthy], color="red", point_size=17, render_points_as_spheres=True
+                )
+                self._point_actors.append(self._flagged_actor)
+            self._live_electrode_label_actor = self._plotter.add_point_labels(
+                pts,
+                self._live_electrode_ids,
+                font_size=12,
+                text_color="white",
+                show_points=False,
+                shape="rounded_rect",
+                shape_color="black",
+                shape_opacity=0.65,
+                always_visible=True,
+            )
+            self._point_actors.append(self._live_electrode_label_actor)
+
+        self._extra_mesh_actor = None
+        if self._extra_mesh is not None:
+            poly = self._extra_mesh.copy()
+            poly.transform(matrix, inplace=True)
+            self._extra_mesh_actor = self._plotter.add_mesh(
+                poly, color="royalblue", opacity=0.55, name="extra_mesh"
+            )
+            self._point_actors.append(self._extra_mesh_actor)
+        self._apply_live_electrodes_visibility()
+
+    def _apply_visibility_states(self) -> None:
+        """Restore the layer visibility after a frame-switch actor rebuild."""
+        if self._mesh_actor is not None:
+            self._mesh_actor.SetVisibility(self._mesh_visible)
+        if self._normals_actor is not None:
+            self._normals_actor.SetVisibility(self._normals_visible)
+        if self._fiducial_actor is not None:
+            self._fiducial_actor.SetVisibility(self._fiducials_visible)
+        self._apply_labels_visibility()
+        for gi in range(len(self._group_states)):
+            self._apply_group_visibility(gi)
+        self._apply_live_electrodes_visibility()
+
+    def _volume_frame_aligned(self) -> bool:
+        """Whether the static volume actor lines up with the selected frame."""
+        return self._current_frame == natural_frame(self._mm_scene)
+
+    def _on_frame_selected(self) -> None:
+        """Re-render the point actors in the coordinate frame the user picked."""
+        combo = self._frame_combo
+        if combo is None:
+            return
+        frame = combo.currentData()
+        frame = frame if isinstance(frame, str) else None
+        if frame is None or frame == self._current_frame:
+            return
+        try:
+            matrix = scene_to_frame_matrix(frame, self._affine, self._cras_offset, self._mm_scene)
+        except ValueError as exc:
+            self._log(f"ERROR: cannot switch to {frame_label(frame)}: {exc}")
+            combo.setCurrentIndex(FRAME_IDS.index(self._current_frame))
+            return
+        self._current_frame = frame
+        self._rebuild_point_actors(matrix)
+        # The volume is only meaningful in the scene's natural frame; hide it
+        # in the alternative frames where it would otherwise float misaligned.
+        if self._mri_actor is not None:
+            self._mri_actor.SetVisibility(self._mri_visible and self._volume_frame_aligned())
         self._plotter.render()
 
+    def _add_frame_controls(self) -> None:
+        box = QGroupBox("Coordinate frame", self._layers_panel)
+        frame_layout = QVBoxLayout(box)
+        frame_layout.setContentsMargins(4, 4, 4, 4)
+        frame_layout.setSpacing(4)
+        combo = QComboBox(box)
+        for frame_id in FRAME_IDS:
+            combo.addItem(frame_label(frame_id), frame_id)
+        combo.setCurrentIndex(FRAME_IDS.index(self._current_frame))
+        for index, frame_id in enumerate(FRAME_IDS):
+            if not frame_available(frame_id, self._affine, self._cras_offset):
+                combo.model().item(index).setEnabled(False)
+        combo.currentIndexChanged.connect(lambda _index: self._on_frame_selected())
+        frame_layout.addWidget(combo)
+        frame_note = QLabel(
+            "The MRI volume is shown only in the scene's native frame; "
+            "the overlay survives all frames.",
+            box,
+        )
+        frame_note.setWordWrap(True)
+        frame_layout.addWidget(frame_note)
+        self._frame_combo = combo
+        self._layers_layout.addWidget(box)
+
+    def _add_export_controls(self, scene: SceneData) -> None:
+        box = QGroupBox("Export (display frame)", self._layers_panel)
+        export_layout = QVBoxLayout(box)
+        export_layout.setContentsMargins(4, 4, 4, 4)
+        export_layout.setSpacing(4)
+        export_note = QLabel("Active mesh arrays; vertices use the frame.", box)
+        export_note.setWordWrap(True)
+        export_layout.addWidget(export_note)
+        self._active_mesh_label = QLabel(box)
+        export_layout.addWidget(self._active_mesh_label)
+
+        self._vertices_export_button = QPushButton(box)
+        self._vertices_export_button.clicked.connect(self._on_export_vertices)
+        export_layout.addWidget(self._vertices_export_button)
+        self._faces_export_button = QPushButton(box)
+        self._faces_export_button.clicked.connect(self._on_export_faces)
+        export_layout.addWidget(self._faces_export_button)
+
+        self._electrodes_export_button = QPushButton("Electrodes (TSV)...", box)
+        self._electrodes_export_button.setToolTip(
+            "Scene groups plus live localized electrodes, in the selected frame."
+        )
+        self._electrodes_export_button.clicked.connect(self._on_export_electrodes)
+        export_layout.addWidget(self._electrodes_export_button)
+        self._fiducials_export_button = QPushButton("Fiducials (TSV)...", box)
+        self._fiducials_export_button.setToolTip(
+            "Scene fiducials plus live-edited fiducials, in the selected frame."
+        )
+        self._fiducials_export_button.clicked.connect(self._on_export_fiducials)
+        export_layout.addWidget(self._fiducials_export_button)
+        self._update_mesh_export_controls()
+        self._update_point_export_controls()
+        self._layers_layout.addWidget(box)
+
+    def _active_mesh(self) -> tuple[pv.PolyData, MeshKind] | None:
+        if self._extra_mesh is not None:
+            return self._extra_mesh, self._extra_mesh_kind
+        if self._scene is not None and self._scene.scene_mesh is not None:
+            return self._scene.scene_mesh, "scalp"
+        return None
+
+    def _update_mesh_export_controls(self) -> None:
+        active = self._active_mesh()
+        if self._active_mesh_label is not None:
+            self._active_mesh_label.setText(
+                "Active mesh: none" if active is None else f"Active mesh: {active[1]}"
+            )
+        if self._vertices_export_button is not None:
+            self._vertices_export_button.setEnabled(active is not None)
+            self._vertices_export_button.setText("Mesh vertices (NPY)...")
+            self._vertices_export_button.setToolTip(
+                "Active mesh vertices transformed into the selected frame."
+            )
+        if self._faces_export_button is not None:
+            self._faces_export_button.setEnabled(active is not None)
+            self._faces_export_button.setText("Mesh faces (NPY)...")
+            self._faces_export_button.setToolTip("Faces are connectivity, no frame applied.")
+
+    def _update_point_export_controls(self) -> None:
+        """Enable TSV exports when scene or live points exist."""
+        if self._electrodes_export_button is not None:
+            self._electrodes_export_button.setEnabled(self._has_exportable_electrodes())
+        if self._fiducials_export_button is not None:
+            self._fiducials_export_button.setEnabled(self._has_exportable_fiducials())
+
+    def _has_exportable_electrodes(self) -> bool:
+        if self._live_electrode_points is not None and len(self._live_electrode_points) > 0:
+            return True
+        scene = self._scene
+        if scene is None:
+            return False
+        return any(
+            group["points"] is not None and len(group["points"]) > 0
+            for group in scene.electrode_groups
+        )
+
+    def _has_exportable_fiducials(self) -> bool:
+        if self._live_fiducial_points is not None and len(self._live_fiducial_points) > 0:
+            return True
+        scene = self._scene
+        if scene is None:
+            return False
+        return scene.fiducial_points is not None and len(scene.fiducial_points) > 0
+
+    def _current_export_matrix(self) -> np.ndarray:
+        return scene_to_frame_matrix(
+            self._current_frame, self._affine, self._cras_offset, self._mm_scene
+        )
+
+    def _on_export_vertices(self) -> None:
+        self._export_active_mesh_array("vertices")
+
+    def _on_export_faces(self) -> None:
+        self._export_active_mesh_array("faces")
+
+    def set_project_dir(self, path: Path | None) -> None:
+        """Remember the project folder used as the NPY export default."""
+        self._project_dir = Path(path) if path is not None else None
+
+    def _export_start_path(self, mesh_kind: MeshKind, array_kind: MeshArray) -> str:
+        """Default location for the NPY export dialog (project folder when known)."""
+        filename = f"{mesh_kind}_{array_kind}.npy"
+        if self._project_dir is not None:
+            return str(self._project_dir / filename)
+        return filename
+
+    def _export_active_mesh_array(self, array_kind: MeshArray) -> None:
+        active = self._active_mesh()
+        if active is None:
+            return
+        mesh, mesh_kind = active
+        path, _selected_filter = QFileDialog.getSaveFileName(
+            self,
+            f"Export {mesh_kind} {array_kind}",
+            self._export_start_path(mesh_kind, array_kind),
+            "NumPy array (*.npy);;All files (*)",
+        )
+        if not path:
+            return
+        try:
+            points, faces = collect_polydata_mesh_export(mesh, self._current_export_matrix())
+            if array_kind == "vertices":
+                target = export_mesh_vertices(path, points)
+            elif array_kind == "faces":
+                target = export_mesh_faces(path, faces)
+            else:
+                raise ValueError(f"unknown mesh array {array_kind!r}")
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(
+                self,
+                f"Export {mesh_kind} {array_kind}",
+                f"Could not export {mesh_kind} {array_kind}:\n{exc}",
+            )
+            return
+        frame_suffix = f" in {frame_label(self._current_frame)}" if array_kind == "vertices" else ""
+        self._log(f"Exported {mesh_kind} {array_kind} to {target}{frame_suffix}")
+
+    def _points_start_path(self, stem: str) -> str:
+        """Default TSV location (project folder when known)."""
+        filename = f"{stem}_{self._current_frame}.tsv"
+        if self._project_dir is not None:
+            return str(self._project_dir / filename)
+        return filename
+
+    def _on_export_electrodes(self) -> None:
+        if self._scene is None:
+            return
+        path, _selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Export electrodes (scene groups + live)",
+            self._points_start_path("electrodes"),
+            "TSV/CSV (*.tsv *.csv);;All files (*)",
+        )
+        if not path:
+            return
+        try:
+            names, points = collect_electrodes_export(self._scene, self._current_export_matrix())
+            if self._live_electrode_points is not None and len(self._live_electrode_points) > 0:
+                live = transform_points(
+                    np.asarray(self._live_electrode_points, dtype=np.float64),
+                    self._current_export_matrix(),
+                )
+                names = [*names, *self._live_electrode_ids]
+                points = live if len(points) == 0 else np.vstack([points, live])
+            write_points_tsv(path, names, points)
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "Export electrodes", f"Could not export electrodes:\n{exc}")
+            return
+        self._log(f"Exported electrodes to {path} in {frame_label(self._current_frame)}")
+
+    def _on_export_fiducials(self) -> None:
+        if self._scene is None:
+            return
+        path, _selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Export fiducials (scene + live)",
+            self._points_start_path("fiducials"),
+            "TSV/CSV (*.tsv *.csv);;All files (*)",
+        )
+        if not path:
+            return
+        try:
+            names, points = collect_fiducials_export(self._scene, self._current_export_matrix())
+            if self._live_fiducial_points is not None and len(self._live_fiducial_points) > 0:
+                live = transform_points(
+                    np.asarray(self._live_fiducial_points, dtype=np.float64),
+                    self._current_export_matrix(),
+                )
+                names = [*names, *self._live_fiducial_ids]
+                points = live if len(points) == 0 else np.vstack([points, live])
+            write_points_tsv(path, names, points)
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "Export fiducials", f"Could not export fiducials:\n{exc}")
+            return
+        self._log(f"Exported fiducials to {path} in {frame_label(self._current_frame)}")
+
     def _build_layers(self, scene: SceneData) -> None:
+        reset_btn = QPushButton("Reset view", self._layers_panel)
+        reset_btn.setToolTip("Reframe the camera on the loaded scene.")
+        reset_btn.clicked.connect(self.reset_view)
+        self._layers_layout.addWidget(reset_btn)
         if self._mesh_actor is not None:
-            self._add_layer_check("Show mesh", True, self._set_mesh_visibility)
+            self._add_layer_check("Show mesh", self._mesh_visible, self._set_mesh_visibility)
         if self._mri_actor is not None:
-            self._add_layer_check("Show MRI", True, self._set_mri_visibility)
+            self._add_layer_check(
+                "Show MRI",
+                self._mri_visible,
+                self._set_mri_visibility,
+                "Hidden automatically outside the scene's native frame.",
+            )
         if self._fiducial_actor is not None:
-            self._add_layer_check("Show fiducials", True, self._set_fiducials_visibility)
+            self._add_layer_check(
+                "Show fiducials", self._fiducials_visible, self._set_fiducials_visibility
+            )
         if self._normals_actor is not None:
-            self._add_layer_check("Show normals", True, self._set_normals_visibility)
+            self._add_layer_check(
+                "Show normals", self._normals_visible, self._set_normals_visibility
+            )
         if self._fiducial_label_actor is not None or any(
             group_actors for group_actors in self._label_actors_per_group
         ):
-            self._add_layer_check("Show labels", True, self._set_labels_visibility)
+            self._add_layer_check(
+                "Show fiducial labels",
+                self._fiducial_labels_visible,
+                self._set_fiducial_labels_visibility,
+            )
+            self._add_layer_check(
+                "Show electrode labels",
+                self._electrode_labels_visible,
+                self._set_electrode_labels_visibility,
+            )
+        self._add_layer_check(
+            "Show localized electrodes",
+            self._live_electrodes_visible,
+            self._set_live_electrodes_visibility,
+            "Localized electrodes from the live run; uncheck to show file groups only.",
+        )
         for gi, group in enumerate(scene.electrode_groups):
             all_actors = (
                 self._electrode_actors_per_group[gi]
@@ -343,15 +964,28 @@ class ViewerWidget(QWidget):
             if all_actors or self._label_actors_per_group[gi]:
                 self._add_layer_check(
                     f"Show {group['label']}",
-                    True,
+                    self._group_states[gi],
                     lambda flag, gi=gi: self._set_group_visibility(gi, flag),
                 )
-        self._add_layer_check("Boost contrast", False, self._set_contrast)
+        self._add_layer_check("Boost contrast", self._contrast_boost, self._set_contrast)
+        self._add_frame_controls()
+        self._add_export_controls(scene)
         self._layers_layout.addStretch(1)
 
-    def _add_layer_check(self, text: str, checked: bool, slot: Callable[[bool], None]) -> None:
+    def reset_view(self) -> None:
+        """Reframe the camera on the loaded scene."""
+        if self._scene is None:
+            return
+        self._plotter.reset_camera()
+        self._plotter.render()
+
+    def _add_layer_check(
+        self, text: str, checked: bool, slot: Callable[[bool], None], tooltip: str = ""
+    ) -> None:
         check = QCheckBox(text, self._layers_panel)
         check.setChecked(checked)
+        if tooltip:
+            check.setToolTip(tooltip)
         check.toggled.connect(slot)
         self._layers_layout.addWidget(check)
 
@@ -360,10 +994,10 @@ class ViewerWidget(QWidget):
     def _apply_labels_visibility(self) -> None:
         for gi in range(len(self._group_states)):
             for actor in self._label_actors_per_group[gi]:
-                actor.SetVisibility(self._group_states[gi] and self._labels_visible)
+                actor.SetVisibility(self._group_states[gi] and self._electrode_labels_visible)
         if self._fiducial_label_actor is not None:
             self._fiducial_label_actor.SetVisibility(
-                self._fiducials_visible and self._labels_visible
+                self._fiducials_visible and self._fiducial_labels_visible
             )
 
     def _apply_group_visibility(self, gi: int) -> None:
@@ -375,16 +1009,17 @@ class ViewerWidget(QWidget):
         ):
             actor.SetVisibility(visible)
         for actor in self._label_actors_per_group[gi]:
-            actor.SetVisibility(visible and self._labels_visible)
+            actor.SetVisibility(visible and self._electrode_labels_visible)
 
     def _set_mesh_visibility(self, flag: bool) -> None:
+        self._mesh_visible = bool(flag)
         if self._mesh_actor is not None:
             self._mesh_actor.SetVisibility(flag)
 
     def _set_mri_visibility(self, flag: bool) -> None:
         self._mri_visible = bool(flag)
         if self._mri_actor is not None:
-            self._mri_actor.SetVisibility(flag)
+            self._mri_actor.SetVisibility(flag and self._volume_frame_aligned())
 
     def _set_fiducials_visibility(self, flag: bool) -> None:
         self._fiducials_visible = bool(flag)
@@ -393,31 +1028,59 @@ class ViewerWidget(QWidget):
         self._apply_labels_visibility()
 
     def _set_normals_visibility(self, flag: bool) -> None:
+        self._normals_visible = bool(flag)
         if self._normals_actor is not None:
             self._normals_actor.SetVisibility(flag)
 
-    def _set_labels_visibility(self, flag: bool) -> None:
-        self._labels_visible = bool(flag)
+    def _set_fiducial_labels_visibility(self, flag: bool) -> None:
+        self._fiducial_labels_visible = bool(flag)
         self._apply_labels_visibility()
+
+    def _set_electrode_labels_visibility(self, flag: bool) -> None:
+        self._electrode_labels_visible = bool(flag)
+        self._apply_labels_visibility()
+        self._apply_live_electrodes_visibility()
+
+    def _set_live_electrodes_visibility(self, flag: bool) -> None:
+        self._live_electrodes_visible = bool(flag)
+        self._apply_live_electrodes_visibility()
+
+    def _apply_live_electrodes_visibility(self) -> None:
+        """Show or hide the live localized-electrode actors and their labels."""
+        visible = self._live_electrodes_visible
+        if self._live_electrode_actor is not None:
+            self._live_electrode_actor.SetVisibility(visible)
+        if self._flagged_actor is not None:
+            self._flagged_actor.SetVisibility(visible)
+        if self._live_electrode_label_actor is not None:
+            self._live_electrode_label_actor.SetVisibility(
+                visible and self._electrode_labels_visible
+            )
 
     def _set_group_visibility(self, gi: int, flag: bool) -> None:
         self._group_states[gi] = bool(flag)
         self._apply_group_visibility(gi)
 
+    def _apply_mesh_props(self) -> None:
+        """Apply the boost-contrast mesh material, else the default opacity."""
+        if self._mesh_actor is None:
+            return
+        if self._contrast_boost:
+            self._mesh_actor.prop.opacity = 0.95
+            self._mesh_actor.prop.diffuse = 1.0
+            self._mesh_actor.prop.specular = 0.6
+            self._mesh_actor.prop.specular_power = 40.0
+            self._mesh_actor.prop.ambient = 0.2
+        else:
+            self._mesh_actor.prop.opacity = self._mesh_opacity
+            self._mesh_actor.prop.diffuse = 1.0
+            self._mesh_actor.prop.specular = 0.0
+            self._mesh_actor.prop.specular_power = 100.0
+            self._mesh_actor.prop.ambient = 0.0
+
     def _set_contrast(self, flag: bool) -> None:
-        if self._mesh_actor is not None:
-            if flag:
-                self._mesh_actor.prop.opacity = 0.95
-                self._mesh_actor.prop.diffuse = 1.0
-                self._mesh_actor.prop.specular = 0.6
-                self._mesh_actor.prop.specular_power = 40.0
-                self._mesh_actor.prop.ambient = 0.2
-            else:
-                self._mesh_actor.prop.opacity = self._mesh_opacity
-                self._mesh_actor.prop.diffuse = 1.0
-                self._mesh_actor.prop.specular = 0.0
-                self._mesh_actor.prop.specular_power = 100.0
-                self._mesh_actor.prop.ambient = 0.0
+        self._contrast_boost = bool(flag)
+        self._apply_mesh_props()
         if self._volume is not None and self._mri_actor is not None:
             if "intensity" in self._plotter.scalar_bars:
                 self._plotter.remove_scalar_bar("intensity")
@@ -435,8 +1098,132 @@ class ViewerWidget(QWidget):
                 self._mri_actor = self._plotter.add_volume(
                     self._volume, cmap="bone", opacity="sigmoid", mapper="smart"
                 )
-            self._mri_actor.SetVisibility(self._mri_visible)
+            self._mri_actor.SetVisibility(self._mri_visible and self._volume_frame_aligned())
         self._plotter.render()
+
+    # ---- live editing overlay ----
+
+    @property
+    def scene_frame_params(self) -> tuple[np.ndarray | None, np.ndarray | None, bool]:
+        """Expose ``(affine, cras_offset, mm_scene)`` to the embedder.
+
+        Lets the live-editing consumers convert editor rows from the input
+        coordinate frame into the scene's natural frame (the one the mesh and
+        :class:`SceneData` live in).
+        """
+        return self._affine, self._cras_offset, self._mm_scene
+
+    def current_display_matrix(self) -> np.ndarray:
+        """The 4x4 matrix mapping scene points into the selected display frame."""
+        return scene_to_frame_matrix(
+            self._current_frame, self._affine, self._cras_offset, self._mm_scene
+        )
+
+    def _to_scene_points(self, points: np.ndarray, frame: str | None) -> np.ndarray:
+        """Normalize (N, 3) *points* into the scene frame for a given input frame."""
+        pts = np.asarray(points, dtype=np.float64)
+        if pts.ndim != 2 or pts.shape[1] != 3:
+            raise ValueError(f"expected (N, 3) points, got shape {pts.shape}")
+        if frame is None or frame == natural_frame(self._mm_scene):
+            return pts
+        if frame not in FRAME_IDS:
+            raise ValueError(f"unknown coordinate frame {frame!r}, expected one of {FRAME_IDS}")
+        return frame_to_scene_points(pts, frame, self._affine, self._cras_offset, self._mm_scene)
+
+    def set_live_fiducials(
+        self, ids: list[str], points: np.ndarray, frame: str | None = None
+    ) -> None:
+        """Overlay fiduciary points typed into the live editors on the mesh.
+
+        *points* are (N, 3) rows interpreted in *frame* (None = the scene's
+        natural frame); they are re-rendered, together with the previously set
+        live electrodes and the extra mesh, whenever the display frame changes.
+        """
+        self._live_fiducial_ids = [str(fiducial_id) for fiducial_id in ids]
+        self._live_fiducial_points = self._to_scene_points(points, frame)
+        self._update_point_export_controls()
+        self._rerender_overlay()
+
+    def set_live_electrodes(
+        self,
+        ids: list[str],
+        points: np.ndarray,
+        flags: np.ndarray | None = None,
+        frame: str | None = None,
+    ) -> None:
+        """Overlay localized electrode points (from a live localization run)."""
+        self._live_electrode_ids = [str(electrode_id) for electrode_id in ids]
+        self._live_electrode_points = self._to_scene_points(points, frame)
+        self._live_electrode_flags = np.asarray(flags, dtype=bool) if flags is not None else None
+        self._update_point_export_controls()
+        self._rerender_overlay()
+
+    def clear_live_points(self) -> None:
+        """Remove the live fiducial and electrode overlay points."""
+        self._live_fiducial_ids = []
+        self._live_fiducial_points = None
+        self._live_electrode_ids = []
+        self._live_electrode_points = None
+        self._live_electrode_flags = None
+        self._update_point_export_controls()
+        self._rerender_overlay()
+
+    def set_extra_mesh(self, poly: pv.PolyData | None, mesh_kind: MeshKind = "scalp") -> None:
+        """Overlay an extra mesh and make it the active export source."""
+        self._extra_mesh = poly
+        self._extra_mesh_kind = mesh_kind
+        self._update_mesh_export_controls()
+        self._rerender_overlay()
+
+    def _rerender_overlay(self) -> None:
+        if self._scene is None:
+            return
+        self._rebuild_live_overlay(self.current_display_matrix())
+        self._plotter.render()
+
+    def focus_scene_point(self, point: np.ndarray) -> None:
+        """Point the camera at a scene-frame *point*, keeping the distance."""
+        target = np.asarray(point, dtype=np.float64).ravel()
+        camera = self._plotter.camera
+        focal = np.asarray(camera.focal_point, dtype=np.float64)
+        position = np.asarray(camera.position, dtype=np.float64)
+        direction = position - focal
+        distance = float(np.linalg.norm(direction))
+        if not distance:
+            direction = np.asarray([0.0, 0.0, 1.0])
+            distance = 200.0
+        else:
+            direction = direction / distance
+        camera.focal_point = tuple(target.tolist())
+        camera.position = tuple((target + direction * distance).tolist())
+        if self._scene is not None:
+            self._plotter.render()
+
+    def set_surface_picking(self, enabled: bool) -> bool:
+        """Toggle left-click surface picking; picked points emit :attr:`surfacePicked`.
+
+        Returns False when enabling is impossible (no scene loaded yet).
+        The picked marker is not drawn by the picker itself: the host adds
+        the point to the fiducials table, whose live overlay shows it.
+        """
+        if enabled and self._scene is None:
+            return False
+        self._plotter.disable_picking()
+        if enabled:
+            self._plotter.enable_surface_point_picking(
+                callback=self._on_surface_picked,
+                show_message=False,
+                show_point=False,
+                left_clicking=True,
+            )
+            self._plotter.setCursor(Qt.CursorShape.CrossCursor)
+        else:
+            self._plotter.unsetCursor()
+        return True
+
+    def _on_surface_picked(self, picked_point: np.ndarray) -> None:
+        """Forward a picked surface point (scene frame) to the host."""
+        self.surfacePicked.emit(np.asarray(picked_point, dtype=np.float64).ravel())
 
     def closeEvent(self, event: Any) -> None:  # noqa: N802 - Qt naming
         self.shutdown()
@@ -447,7 +1234,10 @@ class ViewerWidget(QWidget):
 
         Safe to call at application teardown for embedded widgets whose
         :meth:`closeEvent` is never delivered (children of a main window).
+        Finalizes the embedded plotter first so no VTK observer can fire
+        after the GL context is gone.
         """
+        self._plotter.close()
         if self._thread is not None and self._thread.isRunning():
             if self._worker is not None:
                 self._worker.loaded.disconnect(self._on_scene_loaded)

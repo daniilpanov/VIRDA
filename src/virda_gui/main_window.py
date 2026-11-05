@@ -14,9 +14,12 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QDialog,
     QFileDialog,
+    QHBoxLayout,
     QInputDialog,
+    QLabel,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -28,7 +31,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .constants import ADVANCED_FIELD_DEFAULTS
+from .constants import ADVANCED_FIELD_DEFAULTS, ELECTRODE_PALETTE
 from .dialogs.project_dialog import ask_create_project_folder, ask_open_project_folder
 from .importing import (
     IMPORT_FALLBACK_ROLES,
@@ -46,7 +49,9 @@ from .sidebar import ProjectSidebar
 from .state import AppState
 from .tabs.config_tab import ConfigTab
 from .tabs.preview_tab import PreviewTab
+from .viewer.hud import HUDContainer, HudPanel
 from .viewer.viewer import ViewerWidget
+from .widgets import ElectrodeGroupRow
 
 
 class IdeWindow(QMainWindow):
@@ -63,6 +68,10 @@ class IdeWindow(QMainWindow):
         super().__init__()
         self._project: Path | None = None
         self._viewer_widget: ViewerWidget | None = None
+        self._viewer_tab_widget: QWidget | None = None
+        self._viewer_hud_panel: QWidget | None = None
+        self._viewer_loading_label: QLabel | None = None
+        self._electrode_group_widgets: list[ElectrodeGroupRow] = []
         self._file_tabs: dict[str, QWidget] = {}
         self._status_history: list[str] = []
         self._prefs = prefs or Preferences()
@@ -243,8 +252,8 @@ class IdeWindow(QMainWindow):
 
     def close_project(self) -> None:
         """Close the project and reset the window to the empty state."""
-        if self._viewer_widget is not None:
-            index = self._tabs.indexOf(self._viewer_widget)
+        if self._viewer_tab_widget is not None:
+            index = self._tabs.indexOf(self._viewer_tab_widget)
             if index >= 0:
                 self._close_tab(index)
         for key in list(self._file_tabs):
@@ -253,6 +262,8 @@ class IdeWindow(QMainWindow):
         self._sidebar.set_project(None)
         self._close_action.setEnabled(False)
         self._state.last_project_dir = None
+        if self._viewer_widget is not None:
+            self._viewer_widget.set_project_dir(None)
         self._tabs.removeTab(self._tabs.indexOf(self._config_tab))
         self.setWindowTitle("VIRDA — Electrode Localization System")
 
@@ -290,9 +301,15 @@ class IdeWindow(QMainWindow):
             if memo is widget:
                 del self._file_tabs[key]
                 break
-        if widget is self._viewer_widget:
+        if widget is self._viewer_tab_widget:
+            assert self._viewer_widget is not None
+            self._sync_electrode_groups()
             self._viewer_widget.shutdown()
             self._viewer_widget = None
+            self._viewer_tab_widget = None
+            self._viewer_hud_panel = None
+            self._viewer_loading_label = None
+            self._electrode_group_widgets = []
         elif isinstance(widget, (ViewerWidget, PreviewTab)):
             widget.shutdown()
 
@@ -324,6 +341,7 @@ class IdeWindow(QMainWindow):
                 lambda message, tab=widget: self._on_scene_tab_failed(tab, message)
             )
             self._file_tabs[key] = widget
+        widget.set_project_dir(self._project)
         if self._tabs.indexOf(widget) < 0:
             self._add_tab(widget, path.name)
             self._tabs.setTabToolTip(self._tabs.indexOf(widget), str(path))
@@ -553,7 +571,7 @@ class IdeWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _on_pipeline_done(self) -> None:
-        self._config_tab.ensure_stage3_electrodes_group()
+        self._ensure_stage3_electrodes_group()
         self._config_tab.run_btn.setEnabled(True)
         self._config_tab.viewer_btn.setEnabled(True)
         if self._state.last_project_dir:
@@ -584,15 +602,178 @@ class IdeWindow(QMainWindow):
             self._status("Pipeline failed.", 8000)
 
     # ------------------------------------------------------------------
-    # 3D viewer
+    # 3D viewer (HUD shell with electrode overlays)
     # ------------------------------------------------------------------
+
+    def _ensure_stage3_electrodes_group(self) -> str | None:
+        """Add the Stage 3 output as an overlay group unless already present.
+
+        Transitional helper for the legacy one-shot runner: it moves to the
+        live-editing flow when the BaseGenerationTab replaces the runner.
+        """
+        resolved = self._state.last_project_dir
+        if not resolved:
+            return None
+        electrodes_path = Path(resolved) / "localization" / "electrodes.json"
+        if not electrodes_path.is_file():
+            return None
+        path_str = str(electrodes_path)
+        if any(path == path_str for path, _color in self._state.electrode_rows):
+            return None
+        if self._viewer_widget is None:
+            color = ELECTRODE_PALETTE[self._state.palette_index % len(ELECTRODE_PALETTE)]
+            self._state.palette_index += 1
+            self._state.electrode_rows.append((path_str, color))
+            return path_str
+        self._add_electrode_group_row(path=path_str)
+        self._sync_electrode_groups()
+        self._reload_viewer_if_open()
+        return path_str
+
+    def _reload_viewer_if_open(self) -> None:
+        """Reload the open 3D viewer scene so regenerated data reappears."""
+        if self._viewer_widget is None or self._viewer_tab_widget is None:
+            return
+        if self._state.viewer_loading:
+            return
+        project = self._project
+        if project is None and self._state.last_project_dir:
+            project = Path(self._state.last_project_dir)
+        if project is None or not self._collect_viewer_kwargs(project):
+            return
+        self._open_viewer(project)
+
+    def _sync_electrode_groups(self) -> None:
+        """Persist the current overlay rows into the state record."""
+        self._state.electrode_rows = [
+            (widget.get().strip(), widget.get_color())
+            for widget in self._electrode_group_widgets
+            if widget.get().strip()
+        ]
 
     def _build_viewer_widget(self) -> None:
         if self._viewer_widget is not None:
             return
-        self._viewer_widget = ViewerWidget(log=lambda message: self._status(message, 4000))
-        self._viewer_widget.sceneLoaded.connect(self._on_viewer_scene_loaded)
-        self._viewer_widget.sceneFailed.connect(self._on_viewer_scene_failed)
+        viewer = ViewerWidget(log=lambda message: self._status(message, 4000))
+        self._viewer_widget = viewer
+        overlay_bar = self._build_electrode_overlay_panel()
+
+        hud = HUDContainer()
+        hud.set_base(viewer)
+
+        body = QWidget()
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(0)
+        body_layout.addWidget(overlay_bar)
+
+        panel = HudPanel("Electrode overlays", hud)
+        panel.set_body(body)
+        hud.add_overlay(panel, Qt.AlignmentFlag.AlignLeft, fixed_width=430)
+        self._viewer_hud_panel = panel
+
+        viewer.sceneLoaded.connect(self._on_viewer_scene_loaded)
+        viewer.sceneFailed.connect(self._on_viewer_scene_failed)
+        self._viewer_tab_widget = hud
+
+    def _build_electrode_overlay_panel(self) -> QWidget:
+        """Rebuild the electrode-overlay controls from the state's row record."""
+        outer = QWidget()
+        layout = QVBoxLayout(outer)
+        layout.setContentsMargins(6, 4, 6, 0)
+        layout.setSpacing(2)
+
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.addWidget(QLabel("Electrode overlays:"))
+        add_group_btn = QPushButton("Add group")
+        add_group_btn.clicked.connect(self._on_add_electrode_group)
+        header.addWidget(add_group_btn)
+        self._electrodes_cras_check = QCheckBox("Force cRAS conversion")
+        self._electrodes_cras_check.setChecked(self._state.electrodes_cras)
+        self._electrodes_cras_check.setToolTip(
+            "Applies only to tabular electrode files, not JSON or live results. "
+            "Toggling reloads the viewer."
+        )
+        self._electrodes_cras_check.toggled.connect(self._on_electrodes_cras_toggled)
+        header.addWidget(self._electrodes_cras_check)
+        header.addStretch(1)
+        layout.addLayout(header)
+
+        legend = QLabel(
+            "File groups use their swatch colors; live results are lime (ok) / red (flagged).",
+            outer,
+        )
+        legend.setWordWrap(True)
+        layout.addWidget(legend)
+
+        self._electrode_groups_layout = QVBoxLayout()
+        self._electrode_groups_layout.setContentsMargins(0, 0, 0, 0)
+        self._electrode_groups_layout.setSpacing(2)
+        layout.addLayout(self._electrode_groups_layout)
+
+        self._electrode_group_widgets = []
+        for path, color in self._state.electrode_rows:
+            self._add_electrode_group_row(path=path, color=color)
+        return outer
+
+    def _on_add_electrode_group(self) -> None:
+        """Append an empty row; it joins the scene once a valid path is typed."""
+        self._add_electrode_group_row()
+
+    def _on_electrode_group_path_changed(self, row: ElectrodeGroupRow) -> None:
+        """Sync and reload on a valid path; warn and drop the row otherwise."""
+        if row not in self._electrode_group_widgets:
+            return
+        path = row.get().strip()
+        if path and not Path(path).is_file():
+            QMessageBox.warning(self, "Electrode group", f"Group file not found:\n{path}")
+            self._drop_electrode_group_row(row)
+            return
+        if not path:
+            self._drop_electrode_group_row(row)
+            self._reload_viewer_if_open()
+            return
+        self._sync_electrode_groups()
+        self._reload_viewer_if_open()
+
+    def _add_electrode_group_row(self, path: str = "", color: str | None = None) -> None:
+        if color is None:
+            color = ELECTRODE_PALETTE[self._state.palette_index % len(ELECTRODE_PALETTE)]
+            self._state.palette_index += 1
+        row = ElectrodeGroupRow(
+            on_remove=lambda: self._on_remove_electrode_group(row),
+            color=color,
+        )
+        if path:
+            row.set(path)
+        row.pathChanged.connect(
+            lambda _text, target=row: self._on_electrode_group_path_changed(target)
+        )
+        self._electrode_groups_layout.addWidget(row)
+        self._electrode_group_widgets.append(row)
+
+    def _drop_electrode_group_row(self, row: ElectrodeGroupRow) -> None:
+        """Remove the row without touching the viewer scene."""
+        if row in self._electrode_group_widgets:
+            self._electrode_group_widgets.remove(row)
+            self._electrode_groups_layout.removeWidget(row)
+        row.deleteLater()
+        self._sync_electrode_groups()
+
+    def _on_remove_electrode_group(self, row: ElectrodeGroupRow) -> None:
+        self._drop_electrode_group_row(row)
+        self._reload_viewer_if_open()
+
+    def _on_electrodes_cras_toggled(self, checked: bool) -> None:
+        self._state.electrodes_cras = checked
+        if self._viewer_widget is None:
+            return
+        project = self._project
+        if project is None and self._state.last_project_dir:
+            project = Path(self._state.last_project_dir)
+        if project is not None:
+            self._open_viewer(project)
 
     def _on_open_viewer(self) -> None:
         resolved = self._state.last_project_dir or self._project
@@ -621,27 +802,47 @@ class IdeWindow(QMainWindow):
             return
 
         self._config_tab.viewer_btn.setEnabled(False)
+        self._status("Opening 3D viewer...", 2000)
         self._state.viewer_loading = True
         self._build_viewer_widget()
-        self._add_tab(self._viewer_widget, "3D Viewer")
-        self._tabs.setCurrentWidget(self._viewer_widget)
+        assert self._viewer_tab_widget is not None
+        assert self._viewer_widget is not None
+        self._viewer_widget.set_project_dir(project)
+        self._add_tab(self._viewer_tab_widget, f"3D Viewer - {project.name}")
+        self._tabs.setTabToolTip(self._tabs.indexOf(self._viewer_tab_widget), str(project))
+        self._tabs.setCurrentWidget(self._viewer_tab_widget)
+        self._show_viewer_loading(True)
         self._viewer_widget.load(**kwargs)
+
+    def _show_viewer_loading(self, loading: bool) -> None:
+        """Show or hide the loading overlay above the 3D viewer."""
+        container = self._viewer_tab_widget
+        if container is None or not isinstance(container, HUDContainer):
+            return
+        if self._viewer_loading_label is None:
+            label = QLabel("Loading 3D scene...", container)
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            label.setStyleSheet(
+                "QLabel { background-color: rgba(20, 26, 38, 235);"
+                " color: white; padding: 12px 24px; border-radius: 8px; }"
+            )
+            container.add_overlay(label, Qt.AlignmentFlag.AlignCenter)
+            self._viewer_loading_label = label
+        self._viewer_loading_label.setVisible(loading)
+        if loading:
+            self._viewer_loading_label.raise_()
 
     def _collect_viewer_kwargs(self, project: Path) -> dict[str, Any]:
         mesh_path = project / "mesh" / "final_mesh.ply"
         fiducials_path = project / "input" / "fiducials.json"
         normals_path = project / "ese" / "normals.npy"
 
-        nifti = self._config_tab.nifti_path()
         kwargs: dict[str, Any] = {}
-        if nifti:
-            kwargs["nifti_path"] = nifti
-        else:
-            for pattern in ("input/*.nii.gz", "input/*.nii"):
-                found = sorted(project.glob(pattern))
-                if found:
-                    kwargs["nifti_path"] = str(found[0])
-                    break
+        for pattern in ("input/*.nii.gz", "input/*.nii"):
+            found = sorted(project.glob(pattern))
+            if found:
+                kwargs["nifti_path"] = str(found[0])
+                break
         if mesh_path.exists():
             kwargs["mesh_path"] = str(mesh_path)
         if fiducials_path.exists():
@@ -649,20 +850,21 @@ class IdeWindow(QMainWindow):
         if normals_path.exists():
             kwargs["normals_path"] = str(normals_path)
 
-        self._config_tab.ensure_stage3_electrodes_group(project)
-        electrode_specs = self._config_tab.collect_electrode_specs()
-        if electrode_specs:
-            kwargs["electrode_specs"] = electrode_specs
-            kwargs["electrodes_cras"] = self._config_tab.electrodes_cras_check.isChecked()
+        self._sync_electrode_groups()
+        if self._state.electrode_rows:
+            kwargs["electrode_specs"] = list(self._state.electrode_rows)
+            kwargs["electrodes_cras"] = self._state.electrodes_cras
         return kwargs
 
     def _on_viewer_scene_loaded(self, _scene: Any) -> None:
         self._state.viewer_loading = False
+        self._show_viewer_loading(False)
         self._status("3D viewer scene loaded.", 4000)
         self._config_tab.viewer_btn.setEnabled(True)
 
     def _on_viewer_scene_failed(self, message: str) -> None:
         self._state.viewer_loading = False
+        self._show_viewer_loading(False)
         self._config_tab.viewer_btn.setEnabled(True)
         self._status(f"3D viewer failed: {message}", 6000)
 

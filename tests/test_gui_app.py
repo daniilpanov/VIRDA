@@ -10,8 +10,6 @@ wiring regressions that the stubs cannot.
 import json
 import os
 from pathlib import Path
-from types import SimpleNamespace
-from typing import cast
 
 import pytest
 from PySide6.QtCore import QSettings, Signal
@@ -24,7 +22,6 @@ from virda_gui.dialogs.project_dialog import (
 )
 from virda_gui.main_window import IdeWindow
 from virda_gui.preferences import Preferences
-from virda_gui.tabs.config_tab import ConfigTab
 
 
 def _make_prefs(tmp_path: Path) -> Preferences:
@@ -47,22 +44,11 @@ class _StubViewer(QWidget):
     def load(self, **kwargs: str) -> None:
         self.load_calls.append(dict(kwargs))
 
+    def set_project_dir(self, project: object) -> None:
+        return None
+
     def shutdown(self) -> None:
         self.shut_down = True
-
-
-class _FakeRow:
-    """Duck-typed stand-in for ``ElectrodeGroupRow``."""
-
-    def __init__(self, path: str, color: str) -> None:
-        self._path = path
-        self._color = color
-
-    def get(self) -> str:
-        return self._path
-
-    def get_color(self) -> str:
-        return self._color
 
 
 def test_advanced_defaults_cover_stage3() -> None:
@@ -73,44 +59,6 @@ def test_advanced_defaults_cover_stage3() -> None:
 def test_config_keys_map_stage3_fields() -> None:
     assert CONFIG_KEY_TO_ADVANCED["residual_threshold_mm"] == "residual_threshold_mm"
     assert CONFIG_KEY_TO_ADVANCED["calibrate_ese_offset"] == "calibrate_ese_offset"
-
-
-def test_collect_electrode_specs_skips_empty_and_duplicates(tmp_path) -> None:
-    rows = [
-        _FakeRow(str(tmp_path / "a.tsv"), "yellow"),
-        _FakeRow("", "lime"),  # empty path is skipped
-        _FakeRow("   ", "cyan"),  # whitespace-only path is skipped
-        _FakeRow(str(tmp_path / "a.tsv"), "red"),  # duplicate path is skipped
-        _FakeRow(str(tmp_path / "b.json"), "magenta"),
-    ]
-    stub = SimpleNamespace(_state=SimpleNamespace(electrode_rows=rows))
-    specs = ConfigTab.collect_electrode_specs(cast("ConfigTab", stub))
-
-    assert specs == [
-        (str(tmp_path / "a.tsv"), "yellow"),
-        (str(tmp_path / "b.json"), "magenta"),
-    ]
-
-
-def test_ensure_stage3_group_without_project_dir(tmp_path) -> None:
-    stub = SimpleNamespace(_state=SimpleNamespace(last_project_dir=None, electrode_rows=[]))
-    assert ConfigTab.ensure_stage3_electrodes_group(cast("ConfigTab", stub)) is None
-
-
-def test_ensure_stage3_group_without_output_file(tmp_path) -> None:
-    state = SimpleNamespace(last_project_dir=str(tmp_path), electrode_rows=[])
-    stub = SimpleNamespace(_state=state)
-    assert ConfigTab.ensure_stage3_electrodes_group(cast("ConfigTab", stub)) is None
-
-
-def test_ensure_stage3_group_already_present(tmp_path) -> None:
-    electrodes = tmp_path / "stage3" / "electrodes.json"
-    electrodes.parent.mkdir()
-    electrodes.write_text("[]", encoding="utf-8")
-    rows = [_FakeRow(str(electrodes), "yellow")]
-    state = SimpleNamespace(last_project_dir=str(tmp_path), electrode_rows=rows)
-    stub = SimpleNamespace(_state=state)
-    assert ConfigTab.ensure_stage3_electrodes_group(cast("ConfigTab", stub)) is None
 
 
 def test_viewer_widget_importable_from_main_window() -> None:

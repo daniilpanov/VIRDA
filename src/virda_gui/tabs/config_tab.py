@@ -1,8 +1,8 @@
-"""Configuration tab: input files, electrode groups and run controls.
+"""Configuration tab: input files and run controls.
 
 The tab builds a :class:`Config` from the visible fields on demand, and asks
 the host application to act through the ``runRequested``/``openViewer``
-signals.
+signals.  Electrode overlay rows belong to the main window viewer panel.
 """
 
 from pathlib import Path
@@ -10,7 +10,6 @@ from typing import Any
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
-    QCheckBox,
     QFrame,
     QGroupBox,
     QHBoxLayout,
@@ -24,18 +23,10 @@ from virda.config import load_config_file
 from virda.io.fiducial_helpers import load_fiducials
 from virda.models.config import Config
 from virda.models.coordsystem import Coordsystem
-from virda_gui.constants import (
-    CONFIG_KEY_TO_ADVANCED,
-    CONFIG_KEY_TO_INPUT,
-    ELECTRODE_PALETTE,
-)
+from virda_gui.constants import CONFIG_KEY_TO_ADVANCED, CONFIG_KEY_TO_INPUT
 from virda_gui.dialogs.advanced_settings import AdvancedSettingsDialog
 from virda_gui.state import AppState
-from virda_gui.widgets import (
-    DirectorySelector,
-    ElectrodeGroupRow,
-    FileSelector,
-)
+from virda_gui.widgets import DirectorySelector, FileSelector
 
 
 def _strip_null(value: str) -> str:
@@ -80,11 +71,6 @@ class ConfigTab(QWidget):
         self.viewer_btn = QPushButton("Open 3D Viewer")
         self.viewer_btn.setEnabled(False)
 
-        self.electrodes_cras_check = QCheckBox("Force cRAS conversion")
-
-        self._groups_inner = QWidget(self)
-        self._groups_layout = QVBoxLayout(self._groups_inner)
-
         self._build_ui()
 
         self._config_file.textChanged.connect(self._on_config_file_changed)
@@ -107,27 +93,6 @@ class ConfigTab(QWidget):
         input_layout.addWidget(self._fiducials)
         input_layout.addWidget(self.measurements)
         outer.addWidget(input_box)
-
-        groups_box = QGroupBox("Electrode Groups (viewer overlays)", self)
-        groups_layout = QVBoxLayout(groups_box)
-        self._groups_layout.setContentsMargins(0, 0, 0, 0)
-        self._groups_layout.setSpacing(4)
-        groups_layout.addWidget(self._groups_inner)
-
-        groups_btns = QFrame(groups_box)
-        groups_btns_layout = QHBoxLayout(groups_btns)
-        groups_btns_layout.setContentsMargins(0, 0, 0, 0)
-
-        add_group_btn = QPushButton("Add group")
-        add_group_btn.clicked.connect(self._on_add_electrode_group)
-        groups_btns_layout.addWidget(add_group_btn)
-
-        groups_btns_layout.addWidget(self.electrodes_cras_check)
-
-        groups_btns_layout.addStretch(1)
-        groups_layout.addWidget(groups_btns)
-
-        outer.addWidget(groups_box)
 
         btn_frame = QFrame(self)
         btn_layout = QHBoxLayout(btn_frame)
@@ -204,57 +169,6 @@ class ConfigTab(QWidget):
         dialog = AdvancedSettingsDialog(self, self._state.advanced)
         if dialog.exec():
             self._state.advanced = dialog.result_values
-
-    # ---- Electrode groups ----
-
-    def _on_add_electrode_group(self, path: str = "", color: str | None = None) -> None:
-        if color is None:
-            color = ELECTRODE_PALETTE[self._state.palette_index % len(ELECTRODE_PALETTE)]
-            self._state.palette_index += 1
-
-        row = ElectrodeGroupRow(
-            on_remove=lambda: self._on_remove_electrode_group(row),
-            color=color,
-        )
-        if path:
-            row.set(path)
-        self._groups_layout.addWidget(row)
-        self._state.electrode_rows.append(row)
-
-    def _on_remove_electrode_group(self, row: ElectrodeGroupRow) -> None:
-        if row in self._state.electrode_rows:
-            self._state.electrode_rows.remove(row)
-            self._groups_layout.removeWidget(row)
-        row.deleteLater()
-
-    def collect_electrode_specs(self) -> list[tuple[str, str]]:
-        """Return (path, color) pairs of all non-empty electrode group rows."""
-        specs: list[tuple[str, str]] = []
-        seen: set[str] = set()
-        for row in self._state.electrode_rows:
-            path = row.get().strip()
-            if not path or path in seen:
-                continue
-            seen.add(path)
-            specs.append((path, row.get_color()))
-        return specs
-
-    def ensure_stage3_electrodes_group(self, project_dir: str | Path | None = None) -> str | None:
-        """Add the Stage 3 output as a group unless already present.
-
-        Returns the added path or None when there is nothing to add.
-        """
-        resolved = project_dir or self._state.last_project_dir
-        if not resolved:
-            return None
-        electrodes_path = Path(resolved) / "localization" / "electrodes.json"
-        if not electrodes_path.is_file():
-            return None
-        path_str = str(electrodes_path)
-        if any(row.get().strip() == path_str for row in self._state.electrode_rows):
-            return None
-        self._on_add_electrode_group(path=path_str)
-        return path_str
 
     # ---- Config collection ----
 

@@ -21,6 +21,8 @@ import trimesh
 from nibabel import aff2axcodes
 from scipy.spatial import cKDTree
 
+from virda.io.importers.electrodes_table import import_electrodes_table
+
 from .scene import (
     compute_normal_lines,
     downsample,
@@ -254,53 +256,15 @@ def _load_electrodes_from_csv(
     """Read electrodes from a TSV/CSV with columns: name, x, y, z.
 
     Returns positions with zero residuals, no flags and no fiducial links.
-    Column names are matched case-insensitively.  The delimiter is detected
-    automatically by :class:`csv.Sniffer`.  When ``cras_offset`` is given the
-    positions are treated as FreeSurfer cRAS and shifted into scanner RAS.
+    Delegates the parsing to the pure tabular loader in the ``virda`` layer so
+    the GUI and the headless parsers share one implementation.  When
+    ``cras_offset`` is given the positions are treated as FreeSurfer cRAS and
+    shifted into scanner RAS.
     """
-    import csv
-
-    with open(path, encoding="utf-8") as fh:
-        sample = fh.read(2048)
-        dialect = csv.Sniffer().sniff(sample)
-        fh.seek(0)
-        reader = csv.DictReader(fh, dialect=dialect)
-
-        if not reader.fieldnames:
-            raise ValueError(f"Electrodes file is empty or has no header: {path}")
-
-        col_map = {col.lower().strip(): col for col in reader.fieldnames}
-
-        for required in ("x", "y", "z"):
-            if required not in col_map:
-                raise ValueError(
-                    f"Electrodes file missing required column '{required}', "
-                    f"found: {list(reader.fieldnames)}"
-                )
-
-        name_col = col_map.get("name")
-        points: list[np.ndarray] = []
-        names: list[str] = []
-        for index, row in enumerate(reader):
-            x = float(row[col_map["x"]])
-            y = float(row[col_map["y"]])
-            z = float(row[col_map["z"]])
-            points.append(np.array([x, y, z]))
-            raw_name = row.get(name_col) if name_col is not None else None
-            names.append(str(raw_name).strip() if raw_name else f"E{index + 1:03d}")
-
-    if not points:
-        return np.empty((0, 3)), np.empty(0), np.empty(0, dtype=bool), [], []
-    positions = np.asarray(points)
-    if cras_offset is not None:
+    positions, residuals, flags, measured, names = import_electrodes_table(path)
+    if cras_offset is not None and positions.shape[0] > 0:
         positions = positions + cras_offset
-    return (
-        positions,
-        np.zeros(len(points)),
-        np.zeros(len(points), dtype=bool),
-        [{} for _ in points],
-        names,
-    )
+    return positions, residuals, flags, measured, names
 
 
 def build_electrode_links(
@@ -428,12 +392,17 @@ class SceneData:
     the GUI thread by :meth:`virda_gui.viewer.viewer.ViewerWidget.set_scene`.
     Contains only data objects (NumPy arrays and PyVista meshes), never actors
     or windows, so the collection step is testable without a display.
+    ``affine`` (post-downsampling) and ``cras_offset`` are retained so the GUI
+    thread can transform the scene into alternative coordinate frames without
+    reloading the volume.
     """
 
     volume: pv.ImageData | None = None
     scene_mesh: pv.PolyData | None = None
     mm_scene: bool = True
     mesh_opacity: float = 0.6
+    affine: np.ndarray | None = None
+    cras_offset: np.ndarray | None = None
     hi_clim: tuple[float, float] | None = None
     fiducial_points: np.ndarray | None = None
     fiducial_labels: list[str] = field(default_factory=list)
@@ -556,6 +525,8 @@ def collect_scene_data(
         scene_mesh=scene_mesh,
         mm_scene=mm_scene,
         mesh_opacity=mesh_opacity,
+        affine=affine,
+        cras_offset=cras_offset,
         hi_clim=hi_clim,
         fiducial_points=scene_fiducials,
         fiducial_labels=fiducial_labels,
