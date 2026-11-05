@@ -10,6 +10,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+import pyvista as pv
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
@@ -31,6 +33,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from virda.models.scalp_mesh import ScalpMesh
+
 from .constants import ADVANCED_FIELD_DEFAULTS, ELECTRODE_PALETTE
 from .dialogs.project_dialog import ask_create_project_folder, ask_open_project_folder
 from .importing import (
@@ -47,8 +51,10 @@ from .scan_hash import read_source_hash, sha256_file
 from .sidebar import ProjectSidebar
 from .state import AppState
 from .tabs.base_generation_tab import BaseGenerationTab
+from .tabs.mesh_processing_tab import MeshProcessingTab
 from .tabs.preview_tab import PreviewTab
 from .viewer.hud import HUDContainer, HudPanel
+from .viewer.scene import scene_placement
 from .viewer.viewer import ViewerWidget
 from .widgets import ElectrodeGroupRow
 
@@ -71,6 +77,7 @@ class IdeWindow(QMainWindow):
         self._viewer_hud_panel: QWidget | None = None
         self._viewer_loading_label: QLabel | None = None
         self._electrode_group_widgets: list[ElectrodeGroupRow] = []
+        self._last_preview_mesh: ScalpMesh | None = None
         self._file_tabs: dict[str, QWidget] = {}
         self._invalidated_file_tabs: list[str] = []
         self._status_history: list[str] = []
@@ -81,9 +88,16 @@ class IdeWindow(QMainWindow):
 
         self._state = AppState(advanced=dict(ADVANCED_FIELD_DEFAULTS))
 
+        self._mesh_processing_tab = MeshProcessingTab(self._state)
+        self._mesh_processing_tab.previewMesh.connect(self._on_mesh_preview)
+        self._mesh_processing_tab.saved.connect(self._on_mesh_saved)
+        self._mesh_processing_tab.baseRequested.connect(self._show_base_tab)
+        self._mesh_processing_tab.status.connect(self._status)
+
         self._base_tab = BaseGenerationTab(self._state)
         self._base_tab.baseMesh.connect(self._on_base_generated)
         self._base_tab.status.connect(self._status)
+        self._base_tab.busyChanged.connect(self._mesh_processing_tab.set_locked)
 
         self._sidebar = ProjectSidebar(self)
         self._sidebar.openViewerRequested.connect(self._on_open_viewer)
@@ -150,6 +164,9 @@ class IdeWindow(QMainWindow):
         splitter = self._prefs.main_splitter()
         if splitter is not None:
             self._splitter.restoreState(splitter)
+        mesh_splitter = self._prefs.mesh_splitter()
+        if mesh_splitter is not None:
+            self._mesh_processing_tab.restore_splitter_state(mesh_splitter)
 
     def _ensure_visible_on_screen(self) -> None:
         """Center the window on the primary screen when it is fully off-screen."""
@@ -188,6 +205,10 @@ class IdeWindow(QMainWindow):
         file_menu.addMenu(self._recent_menu)
 
         file_menu.addSeparator()
+
+        mesh_action = QAction("&Mesh processing", self)
+        mesh_action.triggered.connect(self._show_mesh_processing_tab)
+        file_menu.addAction(mesh_action)
 
         base_action = QAction("&Base generation", self)
         base_action.triggered.connect(self._show_base_tab)
@@ -240,6 +261,7 @@ class IdeWindow(QMainWindow):
         self._close_action.setEnabled(True)
         self._state.last_project_dir = str(project)
         self._base_tab.prefill_from_project(project)
+        self._mesh_processing_tab.prefill_from_project(project)
         self._prefs.note_project_opened(project)
         self._refresh_recent_menu()
         self.setWindowTitle(f"VIRDA — {project.name}")
@@ -259,8 +281,11 @@ class IdeWindow(QMainWindow):
         self._state.last_project_dir = None
         if self._viewer_widget is not None:
             self._viewer_widget.set_project_dir(None)
+        self._tabs.removeTab(self._tabs.indexOf(self._mesh_processing_tab))
         self._tabs.removeTab(self._tabs.indexOf(self._base_tab))
+        self._mesh_processing_tab.clear()
         self._base_tab.clear()
+        self._last_preview_mesh = None
         self.setWindowTitle("VIRDA — Electrode Localization System")
 
     def _create_project(self) -> None:
@@ -308,6 +333,9 @@ class IdeWindow(QMainWindow):
             self._electrode_group_widgets = []
         elif isinstance(widget, (ViewerWidget, PreviewTab)):
             widget.shutdown()
+
+    def _show_mesh_processing_tab(self) -> None:
+        self._add_tab(self._mesh_processing_tab, "Mesh Processing")
 
     def _show_base_tab(self) -> None:
         self._add_tab(self._base_tab, "Base Generation")
@@ -476,7 +504,9 @@ class IdeWindow(QMainWindow):
                 except OSError as exc:
                     self._status(f"Could not remove stale file {path.name}:\n{exc}", 5000)
         if delete_base:
+            self._mesh_processing_tab.clear()
             self._base_tab.clear()
+        self._last_preview_mesh = None
         if project is not None:
             self._sidebar.set_project(project)
 
@@ -544,8 +574,11 @@ class IdeWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _on_base_generated(self, _mesh: object) -> None:
-        """Invalidate the now-stale derived meshes after the base tab saved."""
+        """Reload the mesh tab after the base tab saved; the ESE mesh went stale."""
         self._invalidate_derived_meshes(delete_base=False)
+        project = self._project
+        if project is not None:
+            self._mesh_processing_tab.prefill_from_project(project)
         self._reopen_invalidated_file_tabs()
         self._reload_viewer_if_open()
 
@@ -554,6 +587,34 @@ class IdeWindow(QMainWindow):
         pending, self._invalidated_file_tabs = self._invalidated_file_tabs, []
         for key in pending:
             self._open_file_tab(Path(key))
+
+    # ------------------------------------------------------------------
+    # Mesh processing overlay + save
+    # ------------------------------------------------------------------
+
+    def _mesh_to_scene_poly(self, vertices: np.ndarray, faces: np.ndarray) -> pv.PolyData:
+        """Build a pyvista mesh whose points live in the viewer's scene frame."""
+        faces_ravel = np.column_stack(
+            [np.full(len(faces), 3, dtype=np.int64), np.asarray(faces, dtype=np.int64)]
+        ).ravel()
+        poly = pv.PolyData(np.asarray(vertices, dtype=np.float64), faces_ravel)
+        _, _, transform, mm_scene = scene_placement(self._viewer_widget.scene_frame_params[0])
+        if not mm_scene:
+            poly.transform(transform, inplace=True)
+        return poly
+
+    def _on_mesh_preview(self, mesh: ScalpMesh) -> None:
+        self._last_preview_mesh = mesh
+        if self._viewer_widget is None:
+            return
+        self._viewer_widget.set_extra_mesh(
+            self._mesh_to_scene_poly(mesh.vertices, mesh.faces), "scalp"
+        )
+
+    def _on_mesh_saved(self) -> None:
+        if self._state.last_project_dir:
+            self._sidebar.set_project(Path(self._state.last_project_dir))
+        self._status("Mesh saved. Re-open the 3D viewer to inspect the persisted surface.", 5000)
 
     # ------------------------------------------------------------------
     # 3D viewer (HUD shell with electrode overlays)
@@ -788,6 +849,16 @@ class IdeWindow(QMainWindow):
         self._state.viewer_loading = False
         self._show_viewer_loading(False)
         self._status("3D viewer scene loaded.", 4000)
+        self._restore_mesh_overlays()
+
+    def _restore_mesh_overlays(self) -> None:
+        """Re-apply the tab meshes over a freshly loaded viewer scene."""
+        viewer = self._viewer_widget
+        if viewer is None:
+            return
+        if self._last_preview_mesh is not None:
+            mesh = self._last_preview_mesh
+            viewer.set_extra_mesh(self._mesh_to_scene_poly(mesh.vertices, mesh.faces), "scalp")
 
     def _on_viewer_scene_failed(self, message: str) -> None:
         self._state.viewer_loading = False
@@ -808,9 +879,11 @@ class IdeWindow(QMainWindow):
         self._state.closed = True
         self._prefs.save_window_geometry(self.saveGeometry())
         self._prefs.save_main_splitter(self._splitter.saveState())
+        self._prefs.save_mesh_splitter(self._mesh_processing_tab.splitter_state())
         for widget in self._file_tabs.values():
             if isinstance(widget, (PreviewTab, ViewerWidget)):
                 widget.shutdown()
         if self._viewer_widget is not None:
             self._viewer_widget.shutdown()
+        self._mesh_processing_tab.shutdown()
         self._base_tab.shutdown()

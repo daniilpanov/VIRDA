@@ -10,6 +10,7 @@ _KEY_LAST_PROJECT = "projects/last_project"
 _KEY_RECENT_PROJECTS = "projects/recent_projects"
 _KEY_GEOMETRY = "ui/main_geometry"
 _KEY_MAIN_SPLITTER = "ui/main_splitter"
+_KEY_MESH_SPLITTER = "ui/mesh_splitter"
 MAX_RECENT = 8
 
 
@@ -64,3 +65,9 @@ class Preferences:
 
     def main_splitter(self) -> QByteArray | None:
         return self.load_blob(_KEY_MAIN_SPLITTER)
+
+    def save_mesh_splitter(self, data: QByteArray) -> None:
+        self.save_blob(_KEY_MESH_SPLITTER, data)
+
+    def mesh_splitter(self) -> QByteArray | None:
+        return self.load_blob(_KEY_MESH_SPLITTER)
