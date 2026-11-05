@@ -15,8 +15,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from virda.logging_setup import add_log_handler, remove_log_handler
-
 from .constants import ADVANCED_FIELD_DEFAULTS
 from .dialogs.project_dialog import ask_create_project_folder, ask_open_project_folder
 from .importing import ImportRole, import_file, import_target
@@ -56,7 +54,6 @@ class IdeWindow(QMainWindow):
         self._state = AppState(advanced=dict(ADVANCED_FIELD_DEFAULTS))
 
         self._pipe_runner = PipelineRunner(self._state)
-        add_log_handler(self._pipe_runner.log_handler)
         self._pipe_runner.finished.connect(self._on_pipeline_done)
         self._pipe_runner.failed.connect(self._on_pipeline_error)
 
@@ -472,4 +469,3 @@ class IdeWindow(QMainWindow):
         if self._viewer_widget is not None:
             self._viewer_widget.shutdown()
         self._pipe_runner.shutdown()
-        remove_log_handler(self._pipe_runner.log_handler)

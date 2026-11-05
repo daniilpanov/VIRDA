@@ -24,7 +24,6 @@ from virda.config import resolve_stage3_config
 from virda.io.importers.fiducials import load_manual_fiducials
 from virda.io.importers.measurements import load_measurements
 from virda.io.importers.nifti import import_nifti
-from virda.logging_setup import get_stage_logger
 from virda.models.config import Config
 from virda.models.coordsystem import Coordsystem
 from virda.models.electrode import Electrodes
@@ -132,11 +131,10 @@ def run_stage1(config: Config) -> _Stage1Result:
             " or add it to an input config file."
         )
 
-    project_dir = Path(resolved_project_dir)
     resolved_fiducials_path = config.fiducials_path
     nifti_path = Path(resolved_nifti_path)
 
-    logger = get_stage_logger(project_dir, "stage_1")
+    logger = logging.getLogger("virda_gui.stage_1")
 
     volume = import_nifti(nifti_path)
     _log_artifact(logger, volume)
@@ -186,7 +184,7 @@ def run_stage1(config: Config) -> _Stage1Result:
 
 def run_stage2(config: Config, scalp_mesh: ScalpMesh) -> ESEMesh:
     """Build the ESE surface and export it (Stage 2)."""
-    logger = get_stage_logger(Path(config.project_dir), "stage_2")
+    logger = logging.getLogger("virda_gui.stage_2")
 
     ese_mesh = build_ese(
         scalp_mesh,
@@ -222,7 +220,6 @@ def run_stage3(
             "Project directory path not provided. "
             "Set project_dir in a config file or the PROJECT_DIR environment variable."
         )
-    project = Path(project_dir)
 
     stage3_config = resolve_stage3_config(config)
 
@@ -231,7 +228,7 @@ def run_stage3(
         stage1_result.fiducials,
     )
 
-    logger = get_stage_logger(project, "stage_3")
+    logger = logging.getLogger("virda_gui.stage_3")
     electrodes = localize_electrodes(
         ese_mesh,
         fiducials,
