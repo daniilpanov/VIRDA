@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QFileDialog,
+    QInputDialog,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -29,18 +30,23 @@ from PySide6.QtWidgets import (
 
 from .constants import ADVANCED_FIELD_DEFAULTS
 from .dialogs.project_dialog import ask_create_project_folder, ask_open_project_folder
-from .importing import ImportRole, import_file, import_target
+from .importing import (
+    IMPORT_FALLBACK_ROLES,
+    ImportRole,
+    detect_role,
+    import_file,
+    import_target,
+    validate_import_source,
+)
 from .preferences import Preferences
 from .project import classify_artifact
+from .scan_hash import read_source_hash, sha256_file
 from .services.pipeline_runner import PipelineRunner
 from .sidebar import ProjectSidebar
 from .state import AppState
 from .tabs.config_tab import ConfigTab
 from .tabs.preview_tab import PreviewTab
 from .viewer.viewer import ViewerWidget
-
-_TAB_RUN = "run-pipeline"
-_TAB_VIEWER = "3d-viewer"
 
 
 class IdeWindow(QMainWindow):
@@ -76,9 +82,8 @@ class IdeWindow(QMainWindow):
 
         self._sidebar = ProjectSidebar(self)
         self._sidebar.openViewerRequested.connect(self._on_open_viewer)
-        self._sidebar.runPipelineRequested.connect(self._show_run_tab)
+        self._sidebar.importFilesRequested.connect(self._on_import_files)
         self._sidebar.fileActivated.connect(self._open_file_tab)
-        self._sidebar.importRequested.connect(self._on_import_role)
 
         self._tabs = QTabWidget(self)
         self._tabs.setTabsClosable(True)
@@ -91,8 +96,8 @@ class IdeWindow(QMainWindow):
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([300, 800])
-        self.setCentralWidget(splitter)
         self._splitter = splitter
+        self.setCentralWidget(splitter)
         self._restore_layout()
 
         self._build_menu()
@@ -179,6 +184,12 @@ class IdeWindow(QMainWindow):
 
         file_menu.addSeparator()
 
+        run_action = QAction("&Run pipeline...", self)
+        run_action.triggered.connect(self._show_run_tab)
+        file_menu.addAction(run_action)
+
+        file_menu.addSeparator()
+
         self._close_action = QAction("&Close project", self)
         self._close_action.setEnabled(False)
         self._close_action.triggered.connect(self.close_project)
@@ -232,6 +243,12 @@ class IdeWindow(QMainWindow):
 
     def close_project(self) -> None:
         """Close the project and reset the window to the empty state."""
+        if self._viewer_widget is not None:
+            index = self._tabs.indexOf(self._viewer_widget)
+            if index >= 0:
+                self._close_tab(index)
+        for key in list(self._file_tabs):
+            self._close_file_tab(key)
         self._project = None
         self._sidebar.set_project(None)
         self._close_action.setEnabled(False)
@@ -265,9 +282,6 @@ class IdeWindow(QMainWindow):
     def _close_tab(self, index: int) -> None:
         widget = self._tabs.widget(index)
         self._tabs.removeTab(index)
-        if widget is self._config_tab:
-            # The run form keeps its state across closes via the sidebar.
-            return
         self._discard_tab_widget(widget)
 
     def _discard_tab_widget(self, widget: QWidget) -> None:
@@ -334,27 +348,161 @@ class IdeWindow(QMainWindow):
     def _on_scene_tab_failed(self, _tab: ViewerWidget, message: str) -> None:
         self._status(f"3D viewer failed: {message}", 6000)
 
+    def _close_file_tab(self, key: str) -> None:
+        """Close the open file tab for *key* so it cannot show stale bytes."""
+        widget = self._file_tabs.get(key)
+        if widget is None:
+            return
+        index = self._tabs.indexOf(widget)
+        if index >= 0:
+            self._close_tab(index)
+
     # ------------------------------------------------------------------
     # Import
     # ------------------------------------------------------------------
 
-    def _on_import_role(self, role: ImportRole) -> None:
-        """Pick a source file for *role* and import it into the project."""
+    def _on_import_files(self) -> None:
+        """Pick files, detect each role and import them into the project."""
         if self._project is None:
             QMessageBox.warning(self, "No project", "Open a project first to import artifacts.")
             return
-        source, _selected_filter = QFileDialog.getOpenFileName(self, f"Import {role.label}...")
-        if not source:
-            return
-        self._perform_import(role, Path(source))
+        sources, _selected_filter = QFileDialog.getOpenFileNames(self, "Import files...")
+        for source in sources:
+            role = detect_role(source)
+            if role is None:
+                labels = [candidate.label for candidate in IMPORT_FALLBACK_ROLES]
+                label, ok = QInputDialog.getItem(
+                    self,
+                    "Import file...",
+                    f"What does this file contain?\n{source}",
+                    labels,
+                    editable=False,
+                )
+                if not ok:
+                    continue
+                role = next(
+                    candidate for candidate in IMPORT_FALLBACK_ROLES if candidate.label == label
+                )
+            try:
+                validate_import_source(role, source)
+            except ValueError as exc:
+                QMessageBox.critical(self, "Import error", str(exc))
+                continue
+            if role.key == "nifti":
+                self._import_nifti_scan(role, Path(source))
+                continue
+            self._perform_import(role, Path(source))
 
-    def _perform_import(self, role: ImportRole, source: Path) -> Path | None:
-        """Copy *source* into the project as *role*; return the target or None."""
+    def _import_nifti_scan(self, role: ImportRole, source: Path) -> None:
+        """Import a NIfTI scan, dropping stale meshes when it is new.
+
+        A scan identical to the recorded source is skipped with a warning;
+        anything else replaces the project's scan and drops the derived
+        base, final and ESE meshes.
+        """
+        assert self._project is not None
+        try:
+            incoming = sha256_file(source)
+        except OSError as exc:
+            QMessageBox.critical(self, "Import error", f"Could not read scan:\n{exc}")
+            return
+        stored = read_source_hash(self._project / "mesh")
+        known = [stored] if stored is not None else []
+        for candidate in sorted(self._project.glob("input/*.nii*")):
+            try:
+                known.append(sha256_file(candidate))
+            except OSError:
+                continue
+        if incoming in known:
+            self._warn_identical_scan()
+            return
+
+        if not self._confirm_nifti_replace():
+            return
+        target = self._perform_import(role, source)
+        if target is None:
+            return
+        self._invalidate_derived_meshes(delete_base=True)
+        self._status("Scan imported.", 5000)
+
+    def _warn_identical_scan(self) -> None:
+        """Tell the user the scan is already in the project (modal + status)."""
+        self._status("Existing NIfTI is identical to the imported one.", 5000)
+        QMessageBox.information(
+            self,
+            "Import NIfTI scan",
+            "Existing NIfTI is identical to the imported one.",
+        )
+
+    def _invalidate_derived_meshes(self, *, delete_base: bool) -> None:
+        """Drop derived meshes from disk.
+
+        With *delete_base* the base and final mesh files go too (a new scan
+        arrived); otherwise only the ESE artifacts are dropped (a fresh base
+        was just generated).
+        """
+        project = self._project
+        if project is None:
+            return
+        stale: list[Path] = []
+        ese_dir = project / "ese"
+        if ese_dir.is_dir():
+            stale.extend(path for path in ese_dir.glob("*") if path.is_file())
+        if delete_base:
+            stale.append(project / "mesh" / "base_mesh.ply")
+            stale.append(project / "mesh" / "final_mesh.ply")
+        for path in stale:
+            key = str(path)
+            self._close_file_tab(key)
+            try:
+                path.unlink(missing_ok=True)
+            except OSError as exc:
+                self._status(f"Could not remove stale file {path.name}:\n{exc}", 5000)
+        self._sidebar.set_project(project)
+
+    def _confirm_nifti_replace(self) -> bool:
+        """Warn that a new scan supersedes the project's inputs; False aborts.
+
+        The base/final/ESE meshes derived from the previous scan go stale, so
+        the dialog offers a fresh project as an alternative.
+        """
+        assert self._project is not None
+        if not any(self._project.glob("input/*.nii*")):
+            return True
+        box = QMessageBox(self)
+        box.setWindowTitle("Import NIfTI scan")
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setText(
+            "The project already holds a brain scan. Importing another one makes "
+            "the base, final and ESE meshes stale. To keep previous work, "
+            "create a new project."
+        )
+        import_btn = box.addButton("Import anyway", QMessageBox.ButtonRole.AcceptRole)
+        new_btn = box.addButton("New project...", QMessageBox.ButtonRole.ActionRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked == new_btn:
+            project = ask_create_project_folder(self)
+            if project is None:
+                return False
+            self.open_project(project)
+            return True
+        return clicked == import_btn
+
+    def _perform_import(
+        self, role: ImportRole, source: Path, *, overwrite_confirmed: bool = False
+    ) -> Path | None:
+        """Copy *source* into the project as *role*; return the target or None.
+
+        With *overwrite_confirmed* an existing target is replaced without
+        asking again (the caller already confirmed the replacement).
+        """
         if self._project is None:
             return None
         target = import_target(role, self._project, source)
         exists = target.exists()
-        if exists:
+        if exists and not overwrite_confirmed:
             answer = QMessageBox.question(
                 self,
                 "Overwrite?",
@@ -364,7 +512,9 @@ class IdeWindow(QMainWindow):
             )
             if answer != QMessageBox.StandardButton.Yes:
                 return None
+        self._status(f"Importing {role.label}...", 2000)
         import_file(self._project, source, role, overwrite=exists)
+        self._close_file_tab(str(target))
         self._sidebar.set_project(self._project)
         self._status(f"Imported {role.label} -> {target}", 5000)
         return target

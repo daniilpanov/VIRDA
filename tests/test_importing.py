@@ -73,4 +73,4 @@ def test_import_creates_target_subdirectories(tmp_path: Path) -> None:
     source = tmp_path / "ese_mesh.ply"
     source.write_bytes(b"ply\n")
     import_file(project, source, _role("ese_mesh"))
-    assert (project / "ese" / "ese_mesh.ply").is_file()
+    assert (project / "ese" / "mesh.ply").is_file()

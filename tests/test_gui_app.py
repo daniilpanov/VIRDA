@@ -156,7 +156,7 @@ def test_ide_window_runs_pipeline_tab_offscreen(tmp_path: Path) -> None:
 
         window._close_tab(0)
         assert window._tabs.count() == 0
-        window._sidebar.runPipelineRequested.emit()
+        window._show_run_tab()
         assert window._tabs.count() == 1
         assert window._tabs.tabText(0) == "Run Pipeline"
 

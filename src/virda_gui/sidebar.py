@@ -16,7 +16,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from virda_gui.importing import ROLE_REGISTRY, ImportRole
 from virda_gui.project import format_file_size, format_mtime, scan_project
 
 
@@ -24,16 +23,15 @@ class ProjectSidebar(QWidget):
     """Left panel of the IDE main window.
 
     Shows the artifact tree of the open project, grouped by the well-known
-    artifact subdirectories in pipeline order, with the *Open 3D viewer* and
-    *Run pipeline* quick actions pinned to the bottom.  Double-clicking a file
-    emits :attr:`fileActivated`; the right-click context menu offers the
-    role-based :attr:`importRequested` actions.
+    artifact subdirectories, with the *Open 3D viewer* and *Import files*
+    quick actions pinned to the bottom.  Double-clicking a file emits
+    :attr:`fileActivated`; the right-click context menu offers an *Import files*
+    action driven by role auto-detection (:attr:`importFilesRequested`).
     """
 
     openViewerRequested = Signal()  # noqa: N815
-    runPipelineRequested = Signal()  # noqa: N815
+    importFilesRequested = Signal()  # noqa: N815
     fileActivated = Signal(object)  # noqa: N815  # path: Path
-    importRequested = Signal(object)  # noqa: N815  # role: ImportRole
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -49,14 +47,16 @@ class ProjectSidebar(QWidget):
         self._tree.setColumnCount(3)
         self._tree.setHeaderLabels(["Artifact", "Size", "Modified"])
         self._tree.setColumnWidth(0, 190)
+        self._tree.setSortingEnabled(True)
+        self._tree.sortByColumn(0, Qt.SortOrder.AscendingOrder)
         self._tree.itemDoubleClicked.connect(self._on_item_double_clicked)
         self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._tree.customContextMenuRequested.connect(self._show_context_menu)
 
         self._open_viewer_btn = QPushButton("Open 3D viewer")
         self._open_viewer_btn.clicked.connect(self.openViewerRequested)
-        self._run_pipeline_btn = QPushButton("Run pipeline")
-        self._run_pipeline_btn.clicked.connect(self.runPipelineRequested)
+        self._import_files_btn = QPushButton("Import files...")
+        self._import_files_btn.clicked.connect(self.importFilesRequested)
 
         self._build_ui()
         self.set_project(None)
@@ -74,7 +74,7 @@ class ProjectSidebar(QWidget):
         buttons = QFrame(self)
         buttons_layout = QHBoxLayout(buttons)
         buttons_layout.setContentsMargins(0, 0, 0, 0)
-        buttons_layout.addWidget(self._run_pipeline_btn)
+        buttons_layout.addWidget(self._import_files_btn)
         buttons_layout.addWidget(self._open_viewer_btn)
         outer.addWidget(buttons)
 
@@ -83,13 +83,17 @@ class ProjectSidebar(QWidget):
         """The project currently shown in the sidebar, if any."""
         return self._project
 
+    def refresh(self) -> None:
+        """Re-scan the current project folder."""
+        self.set_project(self._project)
+
     def set_project(self, project: Path | None) -> None:
         """Populate the tree from *project* or clear it when None."""
         self._project = project
         self._tree.clear()
         enabled = project is not None
         self._open_viewer_btn.setEnabled(enabled)
-        self._run_pipeline_btn.setEnabled(enabled)
+        self._import_files_btn.setEnabled(enabled)
         if project is None:
             self._stack.setCurrentWidget(self._hint)
             return
@@ -128,20 +132,6 @@ class ProjectSidebar(QWidget):
 
     def _show_context_menu(self, position) -> None:
         menu = QMenu(self._tree)
-        grouped: list[tuple[str, list[ImportRole]]] = []
-        group_order: list[str] = []
-        for role in ROLE_REGISTRY:
-            if role.group not in group_order:
-                group_order.append(role.group)
-                grouped.append((role.group, []))
-            grouped[group_order.index(role.group)][1].append(role)
-
-        import_menu = menu.addMenu("Import artifact...")
-        for group, roles in grouped:
-            group_menu = import_menu.addMenu(group)
-            for role in roles:
-                action = group_menu.addAction(role.label)
-                action.triggered.connect(
-                    lambda _checked=False, selected=role: self.importRequested.emit(selected)
-                )
+        import_action = menu.addAction("Import files...")
+        import_action.triggered.connect(self.importFilesRequested)
         menu.exec(self._tree.viewport().mapToGlobal(position))
