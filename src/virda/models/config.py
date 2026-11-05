@@ -19,7 +19,6 @@ class Config(BaseModel):
     nifti_path: str | None = None
     project_dir: str | None = None
     fiducials_path: str | None = None
-    auto_detect_fiducials: bool = False
 
     closing_radius: int = 5
 

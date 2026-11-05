@@ -1,7 +1,7 @@
 """Reusable widgets for the VIRDA GUI application (PySide6).
 
 Provides ``FileSelector``, ``DirectorySelector``, ``CollapsibleSection``,
-``LabeledField``, ``LogViewer`` and ``ElectrodeGroupRow`` — thin wrappers
+``LabeledField`` and ``ElectrodeGroupRow`` — thin wrappers
 around standard Qt widgets that reduce boilerplate in the main application
 window.
 """
@@ -9,7 +9,6 @@ window.
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime
 from typing import Literal
 
 from PySide6.QtCore import Qt, Signal
@@ -23,7 +22,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QPlainTextEdit,
     QPushButton,
     QSizePolicy,
     QToolButton,
@@ -242,29 +240,6 @@ class LabeledField(QFrame):
             self._check.setChecked(value == "true")
         else:
             self._entry.setText(value)
-
-
-class LogViewer(QFrame):
-    """A read-only multi-line text area for pipeline log output."""
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-
-        self._text = QPlainTextEdit()
-        self._text.setReadOnly(True)
-        self._text.setMaximumBlockCount(10000)
-        layout.addWidget(self._text)
-
-    def append(self, message: str) -> None:
-        """Append a timestamped line to the log."""
-        ts = datetime.now().strftime("%H:%M:%S")
-        self._text.appendPlainText(f"[{ts}] {message}")
-
-    def clear(self) -> None:
-        self._text.clear()
 
 
 class ElectrodeGroupRow(QFrame):

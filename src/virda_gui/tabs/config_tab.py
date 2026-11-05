@@ -1,8 +1,8 @@
 """Configuration tab: input files, electrode groups and run controls.
 
-The tab builds a :class:`Config` from the visible fields on demand, streams
-progress into its own :class:`LogViewer`, and asks the host application to
-act through the ``runRequested``/``openViewer`` signals.
+The tab builds a :class:`Config` from the visible fields on demand, and asks
+the host application to act through the ``runRequested``/``openViewer``
+signals.
 """
 
 from pathlib import Path
@@ -35,8 +35,6 @@ from virda_gui.widgets import (
     DirectorySelector,
     ElectrodeGroupRow,
     FileSelector,
-    LabeledField,
-    LogViewer,
 )
 
 
@@ -77,20 +75,12 @@ class ConfigTab(QWidget):
             label="Measurements",
             filetypes=[("JSON", "*.json"), ("All files", "*")],
         )
-        self._auto_detect_fid = LabeledField(
-            self,
-            label="Auto detect fiducials",
-            widget_type="check",
-            default="false",
-        )
 
         self.run_btn = QPushButton("Run Pipeline")
         self.viewer_btn = QPushButton("Open 3D Viewer")
         self.viewer_btn.setEnabled(False)
 
         self.electrodes_cras_check = QCheckBox("Force cRAS conversion")
-
-        self.log_viewer = LogViewer(self)
 
         self._groups_inner = QWidget(self)
         self._groups_layout = QVBoxLayout(self._groups_inner)
@@ -116,7 +106,6 @@ class ConfigTab(QWidget):
         input_layout.addWidget(self._project_dir)
         input_layout.addWidget(self._fiducials)
         input_layout.addWidget(self.measurements)
-        input_layout.addWidget(self._auto_detect_fid)
         outer.addWidget(input_box)
 
         groups_box = QGroupBox("Electrode Groups (viewer overlays)", self)
@@ -157,8 +146,7 @@ class ConfigTab(QWidget):
 
         btn_layout.addStretch(1)
         outer.addWidget(btn_frame)
-
-        outer.addWidget(self.log_viewer, 1)
+        outer.addStretch(1)
 
     # ---- Config file handling ----
 
@@ -198,11 +186,6 @@ class ConfigTab(QWidget):
         if isinstance(coordsystem, Coordsystem):
             self._state.coordsystem = coordsystem
         else:
-            if coordsystem is not None:
-                self.log_viewer.append(
-                    "WARNING: 'coordsystem' entry in the config file was not parsed "
-                    "from a coordsystem.json file — its fiducials are ignored."
-                )
             self._state.coordsystem = None
 
     def _on_fiducials_path_changed(self, _text: str) -> None:
@@ -356,7 +339,6 @@ class ConfigTab(QWidget):
             nifti_path=nifti,
             project_dir=project,
             fiducials_path=fiducials or None,
-            auto_detect_fiducials=self._auto_detect_fid.get() == "true",
             coordsystem=self._state.coordsystem,
             closing_radius=_int(adv["closing_radius"], 5, key="closing_radius"),
             otsu_scope=adv["otsu_scope"] or "all",  # type: ignore[arg-type]
