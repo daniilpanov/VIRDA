@@ -35,7 +35,6 @@ from virda_gui.widgets import (
     DirectorySelector,
     ElectrodeGroupRow,
     FileSelector,
-    LabeledField,
     LogViewer,
 )
 
@@ -77,12 +76,6 @@ class ConfigTab(QWidget):
             label="Measurements",
             filetypes=[("JSON", "*.json"), ("All files", "*")],
         )
-        self._auto_detect_fid = LabeledField(
-            self,
-            label="Auto detect fiducials",
-            widget_type="check",
-            default="false",
-        )
 
         self.run_btn = QPushButton("Run Pipeline")
         self.viewer_btn = QPushButton("Open 3D Viewer")
@@ -116,7 +109,6 @@ class ConfigTab(QWidget):
         input_layout.addWidget(self._project_dir)
         input_layout.addWidget(self._fiducials)
         input_layout.addWidget(self.measurements)
-        input_layout.addWidget(self._auto_detect_fid)
         outer.addWidget(input_box)
 
         groups_box = QGroupBox("Electrode Groups (viewer overlays)", self)
@@ -356,7 +348,6 @@ class ConfigTab(QWidget):
             nifti_path=nifti,
             project_dir=project,
             fiducials_path=fiducials or None,
-            auto_detect_fiducials=self._auto_detect_fid.get() == "true",
             coordsystem=self._state.coordsystem,
             closing_radius=_int(adv["closing_radius"], 5, key="closing_radius"),
             otsu_scope=adv["otsu_scope"] or "all",  # type: ignore[arg-type]

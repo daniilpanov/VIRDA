@@ -23,7 +23,6 @@ class VirdaSettings(BaseSettings):
     nifti_path: str | None = None
     project_dir: str | None = None
     fiducials_path: str | None = None
-    auto_detect_fiducials: bool = False
     measurements_path: str | None = None
 
     closing_radius: int = 5

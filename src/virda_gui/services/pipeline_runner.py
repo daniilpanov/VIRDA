@@ -29,12 +29,10 @@ from virda.models.coordsystem import Coordsystem
 from virda.models.electrode import Electrodes
 from virda.models.ese_mesh import ESEMesh
 from virda.models.fiducial import (
-    AutoDetectedFiducials,
     Fiducials,
     ManualFiducials,
 )
 from virda.models.scalp_mesh import ScalpMesh
-from virda.ops.auto_detect_fiducials import auto_detect_fiducials
 from virda.ops.build_ese import build_ese
 from virda.ops.clean_mesh import clean_mesh
 from virda.ops.extract_mesh import extract_mesh
@@ -55,20 +53,18 @@ class _Stage1Result:
 
 def _resolve_stage1_fiducials(
     manual: ManualFiducials | None,
-    auto: AutoDetectedFiducials | None,
     coordsystem: Coordsystem | None,
 ) -> Fiducials:
-    """Prefer manual fiducials, then auto-detected ones, then coordsystem defaults."""
+    """Prefer manual fiducials, then coordsystem defaults."""
     for candidate in (
         manual.fiducials if manual is not None else None,
-        auto.fiducials if auto is not None else None,
         coordsystem.to_fiducials() if coordsystem is not None else None,
     ):
         if candidate is not None and candidate.items:
             return candidate
     raise ValueError(
-        "No fiducials available: provide a manual fiducials file,"
-        " enable auto_detect_fiducials, or supply a coordsystem.json config file"
+        "No fiducials available: provide a manual fiducials file"
+        " or supply a coordsystem.json config file"
     )
 
 
@@ -172,9 +168,8 @@ def run_stage1(config: Config) -> _Stage1Result:
     manual = (
         load_manual_fiducials(Path(resolved_fiducials_path)) if resolved_fiducials_path else None
     )
-    auto = auto_detect_fiducials(mesh) if config.auto_detect_fiducials else None
 
-    fiducials = _resolve_stage1_fiducials(manual, auto, config.coordsystem)
+    fiducials = _resolve_stage1_fiducials(manual, config.coordsystem)
 
     result = _Stage1Result(mesh=mesh, fiducials=fiducials)
     _log_artifact(logger, result)
