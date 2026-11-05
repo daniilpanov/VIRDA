@@ -1,18 +1,21 @@
 """IDE-style main window: file sidebar, closable tabs and project management.
 
 The window owns the shared :class:`AppState`, the project-aware sidebar and
-the closable tab bar hosting the run pipeline form, the 3D viewer and
-per-file preview tabs.  Every operation is reported through the status bar
-(kept in the *Recent messages* history) or dialogs.
+the closable tab bar hosting the mesh processing tab, the 3D viewer (with the
+live-editing tables floating over it as a HUD) and per-file preview tabs.  It
+has no pipeline runner, no config file and no log viewer: every operation is
+driven from the interface and reported through the status bar or dialogs.
 """
 
+import queue
+import threading
 import time
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pyvista as pv
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
@@ -33,10 +36,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from virda.models.electrode import Electrode, Electrodes
 from virda.models.ese_mesh import ESEMesh
+from virda.models.fiducial import Fiducial, Fiducials
 from virda.models.scalp_mesh import ScalpMesh
+from virda_gui.ops import localize
+from virda_gui.options import LocalizeOptions
 
 from .constants import ADVANCED_FIELD_DEFAULTS, ELECTRODE_PALETTE
+from .dialogs.advanced_settings import AdvancedSettingsDialog
 from .dialogs.project_dialog import ask_create_project_folder, ask_open_project_folder
 from .importing import (
     IMPORT_FALLBACK_ROLES,
@@ -46,19 +54,37 @@ from .importing import (
     import_target,
     validate_import_source,
 )
+from .pipeline_bar import PipelineBar
+from .pipeline_status import describe_hole, pipeline_steps
 from .preferences import Preferences
 from .project import classify_artifact
 from .scan_hash import read_source_hash, sha256_file
 from .sidebar import ProjectSidebar
 from .state import AppState
 from .tabs.base_generation_tab import BaseGenerationTab
+from .tabs.editors_tab import EditorsTab, FiducialRow
 from .tabs.ese_tab import EseTab
 from .tabs.mesh_processing_tab import MeshProcessingTab
 from .tabs.preview_tab import PreviewTab
+from .viewer.frames import (
+    FRAME_SCANNER,
+    frame_available,
+    frame_label,
+    frame_to_frame_matrix,
+    frame_to_scene_matrix,
+    scene_to_world_matrix,
+)
 from .viewer.hud import HUDContainer, HudPanel
-from .viewer.scene import scene_placement
+from .viewer.scene import scene_placement, transform_points
 from .viewer.viewer import ViewerWidget
 from .widgets import ElectrodeGroupRow
+
+_ESE_BLOCKED_REASON = (
+    "Generate the ESE mesh first (open the ESE Surface tab): localization runs on the ESE surface."
+)
+_FIDUCIALS_BLOCKED_REASON = "Add at least three fiducial rows before localizing."
+_MEASUREMENTS_BLOCKED_REASON = "Add at least one measurement row before localizing."
+_FILL_COORDS_BLOCKED_REASON = "Fill in NAS/LPA/RPA coordinates before localizing."
 
 
 class IdeWindow(QMainWindow):
@@ -66,9 +92,8 @@ class IdeWindow(QMainWindow):
 
     The left panel is a :class:`~virda_gui.sidebar.ProjectSidebar` listing
     the project artifacts; the right panel is a closable tab bar where the
-    run pipeline form, the 3D viewer and individual project files open in
-    their own tabs.  The window owns the base-generation tab and the shared
-    :class:`AppState`.
+    live editing form, the mesh processing tab, the 3D viewer and individual
+    project files open in their own tabs.
     """
 
     def __init__(self, prefs: Preferences | None = None) -> None:
@@ -79,7 +104,6 @@ class IdeWindow(QMainWindow):
         self._viewer_hud_panel: QWidget | None = None
         self._viewer_loading_label: QLabel | None = None
         self._electrode_group_widgets: list[ElectrodeGroupRow] = []
-        self._last_preview_mesh: ScalpMesh | None = None
         self._file_tabs: dict[str, QWidget] = {}
         self._invalidated_file_tabs: list[str] = []
         self._status_history: list[str] = []
@@ -90,12 +114,24 @@ class IdeWindow(QMainWindow):
 
         self._state = AppState(advanced=dict(ADVANCED_FIELD_DEFAULTS))
 
+        self._editors_tab = EditorsTab(self._state)
+        self._editors_tab.advancedRequested.connect(self._on_show_advanced_settings)
+        self._editors_tab.localizeRequested.connect(self._on_localize_manual)
+        self._editors_tab.localization.electrodeActivated.connect(self._on_electrode_activated)
+        self._editors_tab.measurements.rowsChanged.connect(self._schedule_localization)
+        self._editors_tab.fiducials.inputFrameChanged.connect(self._on_fiducial_frame_changed)
+
         self._mesh_processing_tab = MeshProcessingTab(self._state)
         self._mesh_processing_tab.previewMesh.connect(self._on_mesh_preview)
         self._mesh_processing_tab.saved.connect(self._on_mesh_saved)
         self._mesh_processing_tab.eseRequested.connect(self._show_ese_tab)
         self._mesh_processing_tab.baseRequested.connect(self._show_base_tab)
         self._mesh_processing_tab.status.connect(self._status)
+        self._mesh_processing_tab.previewMesh.connect(lambda _m: self._refresh_pipeline())
+        self._mesh_processing_tab.baseMeshChanged.connect(lambda _p: self._refresh_pipeline())
+        self._editors_tab.fiducials.rowsChanged.connect(lambda: self._refresh_pipeline())
+        self._editors_tab.measurements.rowsChanged.connect(lambda: self._refresh_pipeline())
+        self._editors_tab.localization.resultChanged.connect(self._refresh_pipeline)
 
         self._ese_tab = EseTab(
             self._state,
@@ -103,16 +139,44 @@ class IdeWindow(QMainWindow):
         )
         self._mesh_processing_tab.previewMesh.connect(self._ese_tab.show_preview)
         self._ese_tab.eseMesh.connect(self._on_ese_mesh)
+        self._ese_tab.eseMesh.connect(lambda _m: self._refresh_pipeline())
         self._ese_tab.saved.connect(self._on_ese_saved)
+        self._ese_tab.continueRequested.connect(self._show_editors_tab)
         self._ese_tab.status.connect(self._status)
         self._ese_tab.busyChanged.connect(self._mesh_processing_tab.set_locked)
 
         self._base_tab = BaseGenerationTab(self._state)
         self._base_tab.baseMesh.connect(self._on_base_generated)
+        self._base_tab.saved.connect(self._refresh_pipeline)
+        self._base_tab.meshRequested.connect(self._show_mesh_processing_tab)
         self._base_tab.status.connect(self._status)
         self._base_tab.busyChanged.connect(self._mesh_processing_tab.set_locked)
 
+        self._fiducial_overlay_timer = QTimer(self)
+        self._fiducial_overlay_timer.setSingleShot(True)
+        self._fiducial_overlay_timer.setInterval(150)
+        self._fiducial_overlay_timer.timeout.connect(self._refresh_live_fiducials)
+        self._editors_tab.fiducials.rowsChanged.connect(self._on_fiducials_edited)
+
+        self._localize_timer = QTimer(self)
+        self._localize_timer.setSingleShot(True)
+        self._localize_timer.setInterval(200)
+        self._localize_timer.timeout.connect(self._run_localize_auto)
+        self._localized_electrodes: Electrodes | None = None
+        self._last_preview_mesh: ScalpMesh | None = None
+        self._localize_queue = queue.Queue()
+        self._localize_thread: threading.Thread | None = None
+        self._localize_generation = 0
+        self._localize_rerun_pending = False
+        self._localize_last_auto_skip = ""
+        self._localize_poll = QTimer(self)
+        self._localize_poll.setInterval(80)
+        self._localize_poll.timeout.connect(self._drain_localize_queue)
+        self._localize_poll.start()
+
         self._sidebar = ProjectSidebar(self)
+        self._editors_tab.filesSaved.connect(self._sidebar.refresh)
+        self._editors_tab.filesSaved.connect(self._refresh_pipeline)
         self._sidebar.openViewerRequested.connect(self._on_open_viewer)
         self._sidebar.importFilesRequested.connect(self._on_import_files)
         self._sidebar.fileActivated.connect(self._open_file_tab)
@@ -121,6 +185,7 @@ class IdeWindow(QMainWindow):
         self._tabs.setTabsClosable(True)
         self._tabs.setDocumentMode(True)
         self._tabs.tabCloseRequested.connect(self._close_tab)
+        self._tabs.currentChanged.connect(self._on_tab_changed)
 
         splitter = QSplitter(Qt.Orientation.Horizontal, self)
         splitter.addWidget(self._sidebar)
@@ -129,15 +194,21 @@ class IdeWindow(QMainWindow):
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([300, 800])
         self._splitter = splitter
-        self.setCentralWidget(splitter)
+
+        self._pipeline_bar = PipelineBar(self)
+        self._pipeline_bar.stepActivated.connect(self._on_pipeline_step)
+        central = QWidget(self)
+        central_layout = QVBoxLayout(central)
+        central_layout.setContentsMargins(0, 0, 0, 0)
+        central_layout.setSpacing(0)
+        central_layout.addWidget(self._pipeline_bar)
+        central_layout.addWidget(splitter, 1)
+        self.setCentralWidget(central)
         self._restore_layout()
+        self._refresh_pipeline()
 
         self._build_menu()
         self._status("")
-
-    # ------------------------------------------------------------------
-    # Status bar (with history)
-    # ------------------------------------------------------------------
 
     def _status(self, message: str, timeout: int = 5000) -> None:
         """Show *message* in the status bar and remember it for the history."""
@@ -219,6 +290,10 @@ class IdeWindow(QMainWindow):
 
         file_menu.addSeparator()
 
+        live_action = QAction("&Live editing", self)
+        live_action.triggered.connect(self._show_editors_tab)
+        file_menu.addAction(live_action)
+
         mesh_action = QAction("&Mesh processing", self)
         mesh_action.triggered.connect(self._show_mesh_processing_tab)
         file_menu.addAction(mesh_action)
@@ -272,11 +347,14 @@ class IdeWindow(QMainWindow):
         return self._project
 
     def open_project(self, project: Path) -> None:
-        """Open *project*: populate the sidebar and prefill the base tab."""
+        """Open *project*: populate the sidebar and prefill the editors."""
+        if not self._confirm_discard():
+            return
         self._project = project
         self._sidebar.set_project(project)
         self._close_action.setEnabled(True)
         self._state.last_project_dir = str(project)
+        self._editors_tab.prefill_from_project(project)
         self._base_tab.prefill_from_project(project)
         self._mesh_processing_tab.prefill_from_project(project)
         self._ese_tab.prefill_from_project(project)
@@ -284,9 +362,14 @@ class IdeWindow(QMainWindow):
         self._refresh_recent_menu()
         self.setWindowTitle(f"VIRDA — {project.name}")
         self._status(f"Project opened: {project}", 5000)
+        self._refresh_pipeline()
+        self._sync_ese_backdrop()
+        self._maybe_warn_data_loss()
 
     def close_project(self) -> None:
         """Close the project and reset the window to the empty state."""
+        if not self._confirm_discard():
+            return
         if self._viewer_tab_widget is not None:
             index = self._tabs.indexOf(self._viewer_tab_widget)
             if index >= 0:
@@ -299,14 +382,31 @@ class IdeWindow(QMainWindow):
         self._state.last_project_dir = None
         if self._viewer_widget is not None:
             self._viewer_widget.set_project_dir(None)
+        self._tabs.removeTab(self._tabs.indexOf(self._editors_tab))
+        self._tabs.removeTab(self._tabs.indexOf(self._base_tab))
         self._tabs.removeTab(self._tabs.indexOf(self._mesh_processing_tab))
         self._tabs.removeTab(self._tabs.indexOf(self._ese_tab))
-        self._tabs.removeTab(self._tabs.indexOf(self._base_tab))
-        self._mesh_processing_tab.clear()
+        self._editors_tab.clear()
         self._base_tab.clear()
+        self._mesh_processing_tab.clear()
         self._ese_tab.clear()
+        self._localized_electrodes = None
         self._last_preview_mesh = None
         self.setWindowTitle("VIRDA — Electrode Localization System")
+        self._refresh_pipeline()
+
+    def _confirm_discard(self) -> bool:
+        """Ask before dropping unsaved table edits; False aborts."""
+        if not self._editors_tab.is_dirty():
+            return True
+        answer = QMessageBox.question(
+            self,
+            "Unsaved changes",
+            "Unsaved table edits will be lost. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        return answer == QMessageBox.StandardButton.Yes
 
     def _create_project(self) -> None:
         project = ask_create_project_folder(self)
@@ -346,6 +446,9 @@ class IdeWindow(QMainWindow):
             assert self._viewer_widget is not None
             self._sync_electrode_groups()
             self._viewer_widget.shutdown()
+            # The live editors tab is embedded in the viewer HUD: reparent it
+            # back first, otherwise closing the viewer deletes it as a child.
+            self._editors_tab.setParent(None)
             self._viewer_widget = None
             self._viewer_tab_widget = None
             self._viewer_hud_panel = None
@@ -354,11 +457,62 @@ class IdeWindow(QMainWindow):
         elif isinstance(widget, (ViewerWidget, PreviewTab)):
             widget.shutdown()
 
+    def _show_editors_tab(self) -> None:
+        """Bring live editing to the foreground.
+
+        Opens the 3D viewer with the live-editing HUD when the project holds
+        renderable data; otherwise falls back to the standalone editors tab so
+        fiducials and measurements stay editable without a mesh or NIfTI.
+        """
+        if self._viewer_widget is not None and self._viewer_tab_widget is not None:
+            self._tabs.setCurrentWidget(self._viewer_tab_widget)
+            return
+        project = self._project
+        if project is None and self._state.last_project_dir:
+            project = Path(self._state.last_project_dir)
+        if project is not None and self._has_renderable_viewer_data(project):
+            self._open_viewer(project)
+            return
+        self._add_tab(self._editors_tab, "Live Editing")
+
+    def _has_renderable_viewer_data(self, project: Path) -> bool:
+        """Return whether *project* holds something the 3D viewer can render."""
+        return (project / "mesh" / "final_mesh.ply").is_file() or any(project.glob("input/*.nii*"))
+
     def _show_mesh_processing_tab(self) -> None:
         self._add_tab(self._mesh_processing_tab, "Mesh Processing")
 
     def _show_base_tab(self) -> None:
         self._add_tab(self._base_tab, "Base Generation")
+
+    def _on_base_generated(self, _mesh: object) -> None:
+        """Reload the mesh tab after the base tab saved; the ESE mesh went stale."""
+        self._invalidate_derived_meshes(delete_base=False)
+        project = self._project
+        if project is not None:
+            self._mesh_processing_tab.prefill_from_project(project)
+        self._reopen_invalidated_file_tabs()
+        self._reload_viewer_if_open()
+        self._refresh_pipeline()
+
+    def _reload_viewer_if_open(self) -> None:
+        """Reload the open 3D viewer scene so regenerated data reappears."""
+        if self._viewer_widget is None or self._viewer_tab_widget is None:
+            return
+        if self._state.viewer_loading:
+            return
+        project = self._project
+        if project is None and self._state.last_project_dir:
+            project = Path(self._state.last_project_dir)
+        if project is None or not self._collect_viewer_kwargs(project):
+            return
+        self._open_viewer(project)
+
+    def _reopen_invalidated_file_tabs(self) -> None:
+        """Re-open file tabs closed by invalidation; missing files are skipped."""
+        pending, self._invalidated_file_tabs = self._invalidated_file_tabs, []
+        for key in pending:
+            self._open_file_tab(Path(key))
 
     def _show_ese_tab(self) -> None:
         self._sync_ese_backdrop()
@@ -369,6 +523,98 @@ class IdeWindow(QMainWindow):
         working = self._mesh_processing_tab.current_scalp_mesh()
         if working is not None:
             self._ese_tab.show_preview(working)
+
+    def _pipeline_progress(self) -> dict[str, object]:
+        """Gather the saved and in-memory inputs of the pipeline step model."""
+        project = self._project
+        progress: dict[str, object] = {
+            "nifti_saved": False,
+            "base_saved": False,
+            "mesh_saved": False,
+            "ese_saved": False,
+        }
+        if project is not None:
+            progress["nifti_saved"] = any(project.glob("input/*.nii*"))
+            progress["base_saved"] = (project / "mesh" / "base_mesh.ply").is_file()
+            progress["mesh_saved"] = (project / "mesh" / "final_mesh.ply").is_file()
+            progress["ese_saved"] = (project / "ese" / "mesh.ply").is_file()
+        try:
+            progress["fiducials_filled"] = len(self._editors_tab.fiducials.filled_rows())
+        except ValueError:
+            progress["fiducials_filled"] = 0
+        try:
+            progress["measurement_rows"] = len(self._editors_tab.measurements.measurement_rows())
+        except ValueError:
+            progress["measurement_rows"] = 0
+        progress["base_in_memory"] = (
+            self._mesh_processing_tab.base_mesh() is not None
+            or self._base_tab.current_base_mesh() is not None
+        )
+        progress["mesh_in_memory"] = self._mesh_processing_tab.current_scalp_mesh() is not None
+        progress["ese_in_memory"] = self._ese_tab.current_ese_mesh() is not None
+        return progress
+
+    def _refresh_pipeline(self) -> None:
+        """Recompute the stepper bar from project files and tab memory."""
+        self._pipeline_bar.set_steps(pipeline_steps(**self._pipeline_progress()))  # type: ignore[arg-type]
+
+    def _maybe_warn_data_loss(self) -> None:
+        """Report orphaned meshes on project open and offer a rebuild.
+
+        Fiducials and measurements are never part of the loss: they survive
+        in their tables and files, only the derived meshes go stale.
+        """
+        report = describe_hole(pipeline_steps(**self._pipeline_progress()))  # type: ignore[arg-type]
+        if report is None:
+            return
+        answer = QMessageBox.question(
+            self,
+            "Derived data lost",
+            "Derived data was lost: "
+            + ", ".join(report.orphaned_titles)
+            + f".\n\nThe last valid step is {report.last_valid_title}.\n"
+            f"Go to {report.redo_title} to regenerate?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        if report.redo_key == "base":
+            self._show_base_tab()
+        elif report.redo_key == "mesh":
+            self._show_mesh_processing_tab()
+        elif report.redo_key == "ese":
+            self._show_ese_tab()
+
+    def _on_tab_changed(self, _index: int) -> None:
+        """Highlight the stepper chip of the active pipeline tab, if any."""
+        widget = self._tabs.currentWidget()
+        if widget is self._base_tab:
+            key: str | None = "base"
+        elif widget is self._mesh_processing_tab:
+            key = "mesh"
+        elif widget is self._ese_tab:
+            key = "ese"
+        elif widget is self._editors_tab:
+            key = "points"
+        else:
+            key = None
+        self._pipeline_bar.set_current(key)
+
+    def _on_pipeline_step(self, key: str) -> None:
+        """Navigate to the tab where pipeline step *key* is performed."""
+        if not self._pipeline_bar.is_enabled(key):
+            return
+        if key == "scan":
+            self._on_import_files()
+        elif key == "base":
+            self._show_base_tab()
+        elif key == "mesh":
+            self._show_mesh_processing_tab()
+        elif key == "ese":
+            self._show_ese_tab()
+        elif key == "points":
+            self._show_editors_tab()
 
     # ------------------------------------------------------------------
     # Project file tabs
@@ -419,15 +665,6 @@ class IdeWindow(QMainWindow):
 
     def _on_scene_tab_failed(self, _tab: ViewerWidget, message: str) -> None:
         self._status(f"3D viewer failed: {message}", 6000)
-
-    def _close_file_tab(self, key: str) -> None:
-        """Close the open file tab for *key* so it cannot show stale bytes."""
-        widget = self._file_tabs.get(key)
-        if widget is None:
-            return
-        index = self._tabs.indexOf(widget)
-        if index >= 0:
-            self._close_tab(index)
 
     # ------------------------------------------------------------------
     # Import
@@ -509,11 +746,11 @@ class IdeWindow(QMainWindow):
         )
 
     def _invalidate_derived_meshes(self, *, delete_base: bool) -> None:
-        """Drop derived meshes from disk and memory.
+        """Drop derived meshes from disk and memory; tables are always kept.
 
         With *delete_base* the base and final mesh files go too (a new scan
         arrived); otherwise only the ESE artifacts are dropped (a fresh base
-        was just generated).
+        was just generated).  Fiducials and measurements survive either way.
         """
         project = self._project
         if project is not None:
@@ -538,8 +775,11 @@ class IdeWindow(QMainWindow):
             self._base_tab.clear()
         self._ese_tab.clear()
         self._last_preview_mesh = None
+        self._localized_electrodes = None
+        self._editors_tab.localization.set_blocked(_ESE_BLOCKED_REASON)
         if project is not None:
             self._sidebar.set_project(project)
+        self._refresh_pipeline()
 
     def _confirm_nifti_replace(self) -> bool:
         """Warn that a new scan supersedes the project's inputs; False aborts.
@@ -600,81 +840,308 @@ class IdeWindow(QMainWindow):
         self._status(f"Imported {role.label} -> {target}", 5000)
         return target
 
-    # ------------------------------------------------------------------
-    # Base generation
-    # ------------------------------------------------------------------
-
-    def _on_base_generated(self, _mesh: object) -> None:
-        """Reload the mesh tab after the base tab saved; the ESE mesh went stale."""
-        self._invalidate_derived_meshes(delete_base=False)
-        project = self._project
-        if project is not None:
-            self._mesh_processing_tab.prefill_from_project(project)
-        self._reopen_invalidated_file_tabs()
-        self._reload_viewer_if_open()
-
-    def _reopen_invalidated_file_tabs(self) -> None:
-        """Re-open file tabs closed by invalidation; missing files are skipped."""
-        pending, self._invalidated_file_tabs = self._invalidated_file_tabs, []
-        for key in pending:
-            self._open_file_tab(Path(key))
-
-    # ------------------------------------------------------------------
-    # Mesh processing overlay + save
-    # ------------------------------------------------------------------
-
-    def _mesh_to_scene_poly(self, vertices: np.ndarray, faces: np.ndarray) -> pv.PolyData:
-        """Build a pyvista mesh whose points live in the viewer's scene frame."""
-        faces_ravel = np.column_stack(
-            [np.full(len(faces), 3, dtype=np.int64), np.asarray(faces, dtype=np.int64)]
-        ).ravel()
-        poly = pv.PolyData(np.asarray(vertices, dtype=np.float64), faces_ravel)
-        _, _, transform, mm_scene = scene_placement(self._viewer_widget.scene_frame_params[0])
-        if not mm_scene:
-            poly.transform(transform, inplace=True)
-        return poly
-
-    def _on_mesh_preview(self, mesh: ScalpMesh) -> None:
-        self._last_preview_mesh = mesh
-        if self._viewer_widget is None:
+    def _close_file_tab(self, key: str) -> None:
+        """Close the open file tab for *key* so it cannot show stale bytes."""
+        widget = self._file_tabs.get(key)
+        if widget is None:
             return
-        self._viewer_widget.set_extra_mesh(
-            self._mesh_to_scene_poly(mesh.vertices, mesh.faces), "scalp"
+        index = self._tabs.indexOf(widget)
+        if index >= 0:
+            self._close_tab(index)
+
+    # ------------------------------------------------------------------
+    # Live localization overlay
+    # ------------------------------------------------------------------
+
+    def _schedule_localization(self) -> None:
+        """Re-run live localization after inputs change (debounced by the timer).
+
+        Runs once the prerequisites are in place (ESE mesh, the three
+        canonical fiducials and at least one measurement row) so the read-only
+        preview self-fills without a manual "Localize" trigger.
+        """
+        if self._ese_tab.current_ese_mesh() is None:
+            self._localized_electrodes = None
+            self._editors_tab.localization.set_blocked(_ESE_BLOCKED_REASON)
+            return
+        try:
+            enough_fiducials = len(self._editors_tab.fiducials.fiducial_rows()) >= 3
+            has_measurements = bool(self._editors_tab.measurements.measurement_rows())
+        except ValueError:
+            if self._localized_electrodes is None:
+                self._editors_tab.localization.set_blocked(_FILL_COORDS_BLOCKED_REASON)
+            return
+        if not enough_fiducials or not has_measurements:
+            if self._localized_electrodes is None:
+                reason = (
+                    _FIDUCIALS_BLOCKED_REASON
+                    if not enough_fiducials
+                    else _MEASUREMENTS_BLOCKED_REASON
+                )
+                self._editors_tab.localization.set_blocked(reason)
+            return
+        self._localize_timer.start()
+
+    def _run_localize_auto(self) -> None:
+        self._run_localize(interactive=False)
+
+    def _on_localize_manual(self) -> None:
+        """Run localization once from the explicit button with dialogs."""
+        self._run_localize(interactive=True)
+
+    def _on_electrode_activated(self, electrode_id: str) -> None:
+        """Focus the 3D camera on the double-clicked localized electrode."""
+        viewer = self._viewer_widget
+        electrodes = self._localized_electrodes
+        if viewer is None or electrodes is None:
+            return
+        match = next((e for e in electrodes.items if (e.electrode_id or "") == electrode_id), None)
+        if match is None or match.ese_coords is None:
+            return
+        affine, cras_offset, mm_scene = viewer.scene_frame_params
+        scene_points = transform_points(
+            np.asarray([match.ese_coords], dtype=np.float64),
+            frame_to_scene_matrix(FRAME_SCANNER, affine, cras_offset, mm_scene),
+        )
+        viewer.focus_scene_point(np.asarray(scene_points[0], dtype=np.float64))
+
+    def _localize_warning(self, message: str, interactive: bool) -> None:
+        if not interactive:
+            if message == self._localize_last_auto_skip:
+                return
+            self._localize_last_auto_skip = message
+            self._status(f"Localization skipped: {message}", 5000)
+            return
+        self._localize_last_auto_skip = ""
+        self._status(f"Localization skipped: {message}", 5000)
+        QMessageBox.warning(self, "Localize", message)
+
+    def _localize_options(self) -> LocalizeOptions:
+        """The localization options, from the advanced GUI settings."""
+        advanced = self._state.advanced
+        calibrate = str(advanced.get("calibrate_ese_offset", "true")).lower() == "true"
+        try:
+            threshold = float(advanced.get("residual_threshold_mm", 10.0))
+        except TypeError, ValueError:
+            threshold = 10.0
+        return LocalizeOptions(calibrate_ese_offset=calibrate, residual_threshold_mm=threshold)
+
+    def _run_localize(self, *, interactive: bool) -> None:
+        """Snapshot the table inputs and localize on a background thread.
+
+        The brute-force search is heavy, so it runs on a daemon thread; the
+        result is applied back on the main thread by :meth:`_drain_localize_queue`.
+        Only the latest snapshot is rendered, so an in-flight run can never
+        overwrite a newer one (a follow-up run is queued instead of overlapping).
+        """
+        if self._localize_thread is not None and self._localize_thread.is_alive():
+            self._localize_rerun_pending = True
+            return
+
+        mesh = self._ese_tab.current_ese_mesh()
+        if mesh is None:
+            self._localize_warning(_ESE_BLOCKED_REASON, interactive)
+            self._editors_tab.localization.set_blocked(_ESE_BLOCKED_REASON)
+            return
+        surface: ESEMesh | ScalpMesh = mesh
+
+        try:
+            fiducial_rows = self._editors_tab.fiducials.fiducial_rows()
+            measurement_rows = self._editors_tab.measurements.measurement_rows()
+        except (ValueError, np.linalg.LinAlgError) as exc:
+            self._localize_warning(f"Invalid table:\n{exc}", interactive)
+            return
+
+        if len(fiducial_rows) < 3:
+            self._localize_warning(
+                "Add at least three fiducial rows before localizing.", interactive
+            )
+            return
+        if not measurement_rows:
+            self._localize_warning(
+                "Add at least one measurement row before localizing.", interactive
+            )
+            return
+
+        affine, cras_offset, mm_scene = (
+            self._viewer_widget.scene_frame_params
+            if self._viewer_widget is not None
+            else (None, None, True)
+        )
+        frame = self._editors_tab.fiducials.input_frame()
+        if not frame_available(frame, affine, cras_offset):
+            self._localize_warning(
+                f"The {frame_label(frame)} frame is not available for this scene.", interactive
+            )
+            return
+
+        to_world = scene_to_world_matrix(affine, mm_scene) @ frame_to_scene_matrix(
+            frame, affine, cras_offset, mm_scene
+        )
+        world_points = transform_points(
+            np.asarray([row.coordinates for row in fiducial_rows], dtype=np.float64), to_world
         )
 
-    def _on_mesh_saved(self) -> None:
-        if self._state.last_project_dir:
-            self._sidebar.set_project(Path(self._state.last_project_dir))
-        self._status("Mesh saved. Re-open the 3D viewer to inspect the persisted surface.", 5000)
-
-    def _on_ese_mesh(self, ese: ESEMesh) -> None:
-        if self._viewer_widget is None:
+        try:
+            fiducials = Fiducials(
+                items=[
+                    Fiducial(
+                        fiducial_id=row.fiducial_id,
+                        name=row.name,
+                        coordinates=point,
+                        coordinate_system="world",
+                        definition_method=row.definition_method,
+                        weight=row.weight,
+                    )
+                    for row, point in zip(fiducial_rows, world_points, strict=True)
+                ]
+            )
+            electrodes = Electrodes(
+                items=[
+                    Electrode(
+                        electrode_id=row.electrode_id or None,
+                        measured_distances=dict(row.measured_distances),
+                    )
+                    for row in measurement_rows
+                ]
+            )
+        except ValueError as exc:
+            self._localize_warning(f"Invalid table:\n{exc}", interactive)
             return
-        self._viewer_widget.set_extra_mesh(self._mesh_to_scene_poly(ese.vertices, ese.faces), "ese")
 
-    def _on_ese_saved(self) -> None:
-        if self._state.last_project_dir:
-            self._sidebar.set_project(Path(self._state.last_project_dir))
-        self._status("ESE mesh saved.", 5000)
-        self._reopen_invalidated_file_tabs()
-        self._reload_viewer_if_open()
+        options = self._localize_options()
+        self._localize_generation += 1
+        generation = self._localize_generation
+        thread = threading.Thread(
+            target=self._localize_worker_thread,
+            args=(surface, fiducials, electrodes, options, generation),
+            daemon=True,
+        )
+        self._localize_thread = thread
+        thread.start()
+
+    def _localize_worker_thread(
+        self,
+        surface: ESEMesh | ScalpMesh,
+        fiducials: Fiducials,
+        electrodes: Electrodes,
+        options: LocalizeOptions,
+        generation: int,
+    ) -> None:
+        """Background thread: run the localizer and post the outcome via queue."""
+        try:
+            result = localize(
+                surface=surface, fiducials=fiducials, electrodes=electrodes, options=options
+            )
+            self._localize_queue.put((generation, result))
+        except Exception as exc:  # noqa: BLE001 - surfaced on the main thread
+            self._localize_queue.put((generation, exc))
+
+    def _drain_localize_queue(self) -> None:
+        """Apply finished localization results on the main thread."""
+        if self._localize_thread is not None and not self._localize_thread.is_alive():
+            self._localize_thread = None
+        while True:
+            try:
+                generation, payload = self._localize_queue.get_nowait()
+            except queue.Empty:
+                break
+            if generation != self._localize_generation:
+                continue
+            if isinstance(payload, Exception):
+                self._localize_warning(f"Localization failed:\n{payload}", interactive=False)
+                continue
+            self._localized_electrodes = payload
+            self._show_localized_electrodes(payload)
+            self._refresh_localization_preview()
+            self._refresh_pipeline()
+            localized_count = sum(1 for electrode in payload.items if electrode.is_localized)
+            self._status(
+                f"Localized {localized_count}/{len(payload.items)} electrodes "
+                f"(offset shift {payload.calibrated_offset_shift_mm or 0.0:g} mm).",
+                5000,
+            )
+        if self._localize_rerun_pending:
+            self._localize_rerun_pending = False
+            self._localize_timer.start()
+
+    def _show_localized_electrodes(self, localized: Electrodes) -> None:
+        viewer = self._viewer_widget
+        if viewer is None:
+            return
+        ids: list[str] = []
+        points: list[np.ndarray] = []
+        flags: list[bool] = []
+        for electrode in localized.items:
+            if electrode.ese_coords is not None:
+                ids.append(electrode.electrode_id or "")
+                points.append(electrode.ese_coords)
+                flags.append(electrode.flagged)
+        if not ids:
+            return
+        viewer.set_live_electrodes(
+            ids,
+            np.asarray(points, dtype=np.float64),
+            np.asarray(flags, dtype=bool),
+            frame=FRAME_SCANNER,
+        )
+
+    def _refresh_localization_preview(self) -> None:
+        """Repopulate the read-only localization table from the cached result."""
+        affine, cras_offset = (
+            (self._viewer_widget.scene_frame_params[0], self._viewer_widget.scene_frame_params[1])
+            if self._viewer_widget is not None
+            else (None, None)
+        )
+        self._editors_tab.localization.set_result(self._localized_electrodes, cras_offset, affine)
 
     # ------------------------------------------------------------------
-    # 3D viewer (HUD shell with electrode overlays)
+    # Fiducial frame conversion
     # ------------------------------------------------------------------
 
-    def _reload_viewer_if_open(self) -> None:
-        """Reload the open 3D viewer scene so regenerated data reappears."""
-        if self._viewer_widget is None or self._viewer_tab_widget is None:
+    def _on_fiducial_frame_changed(self, old_frame: str, new_frame: str) -> None:
+        """Recalculate the fiducial X/Y/Z cells when the coordinate system changes."""
+        editor = self._editors_tab.fiducials
+        affine, cras_offset, _mm_scene = (
+            self._viewer_widget.scene_frame_params
+            if self._viewer_widget is not None
+            else (None, None, True)
+        )
+        if not frame_available(new_frame, affine, cras_offset):
+            QMessageBox.warning(
+                self,
+                "Coordinate system",
+                f"The {frame_label(new_frame)} frame requires a loaded NIfTI scan.",
+            )
+            editor.set_input_frame(old_frame)
             return
-        if self._state.viewer_loading:
+        try:
+            matrix = frame_to_frame_matrix(old_frame, new_frame, affine, cras_offset)
+            rows = editor.filled_rows()
+        except (ValueError, np.linalg.LinAlgError) as exc:
+            QMessageBox.warning(self, "Coordinate system", f"Cannot convert coordinates:\n{exc}")
+            editor.set_input_frame(old_frame)
             return
-        project = self._project
-        if project is None and self._state.last_project_dir:
-            project = Path(self._state.last_project_dir)
-        if project is None or not self._collect_viewer_kwargs(project):
+        if not rows:
             return
-        self._open_viewer(project)
+        points = np.asarray([row.coordinates for row in rows], dtype=np.float64)
+        converted = transform_points(points, matrix)
+        new_rows = [
+            FiducialRow(
+                fiducial_id=row.fiducial_id,
+                name=row.name,
+                coordinates=tuple(float(value) for value in point),
+                coordinate_system="world",
+                definition_method=row.definition_method,
+                weight=row.weight,
+            )
+            for row, point in zip(rows, converted, strict=True)
+        ]
+        editor.set_rows(new_rows)
+
+    # ------------------------------------------------------------------
+    # 3D viewer + electrode overlays
+    # ------------------------------------------------------------------
 
     def _sync_electrode_groups(self) -> None:
         """Persist the current overlay rows into the state record."""
@@ -683,6 +1150,12 @@ class IdeWindow(QMainWindow):
             for widget in self._electrode_group_widgets
             if widget.get().strip()
         ]
+
+    def _on_show_advanced_settings(self) -> None:
+        dialog = AdvancedSettingsDialog(self, self._state.advanced)
+        if dialog.exec():
+            self._state.advanced = dict(dialog.result_values)
+            self._status("Advanced settings applied.", 5000)
 
     def _build_viewer_widget(self) -> None:
         if self._viewer_widget is not None:
@@ -699,8 +1172,9 @@ class IdeWindow(QMainWindow):
         body_layout.setContentsMargins(0, 0, 0, 0)
         body_layout.setSpacing(0)
         body_layout.addWidget(overlay_bar)
+        body_layout.addWidget(self._editors_tab, 1)
 
-        panel = HudPanel("Electrode overlays", hud)
+        panel = HudPanel("Live editing", hud)
         panel.set_body(body)
         hud.add_overlay(panel, Qt.AlignmentFlag.AlignLeft, fixed_width=430)
         self._viewer_hud_panel = panel
@@ -814,7 +1288,7 @@ class IdeWindow(QMainWindow):
             QMessageBox.warning(
                 self,
                 "No project directory",
-                "No project directory selected. Run the pipeline or pick a Project dir.",
+                "No project directory selected. Open or create a project first.",
             )
             return
         self._open_viewer(Path(resolved))
@@ -892,7 +1366,11 @@ class IdeWindow(QMainWindow):
         self._state.viewer_loading = False
         self._show_viewer_loading(False)
         self._status("3D viewer scene loaded.", 4000)
+        self._refresh_live_fiducials()
         self._restore_mesh_overlays()
+        if self._localized_electrodes is not None:
+            self._show_localized_electrodes(self._localized_electrodes)
+        self._refresh_localization_preview()
 
     def _restore_mesh_overlays(self) -> None:
         """Re-apply the tab meshes over a freshly loaded viewer scene."""
@@ -911,11 +1389,85 @@ class IdeWindow(QMainWindow):
         self._show_viewer_loading(False)
         self._status(f"3D viewer failed: {message}", 6000)
 
+    def _on_fiducials_edited(self) -> None:
+        """Debounce fast table edits before pushing rows to the viewer."""
+        self._fiducial_overlay_timer.start()
+        self._schedule_localization()
+
+    def _refresh_live_fiducials(self) -> None:
+        """Push the current fiducials table onto the viewer as a live overlay.
+
+        Rows are interpreted in the editor's input coordinate system; the
+        viewer converts them into the scene frame before rendering, so a
+        coordinate-system switch immediately re-places the points on the mesh.
+        """
+        viewer = self._viewer_widget
+        if viewer is None:
+            return
+        try:
+            rows = self._editors_tab.fiducials.filled_rows()
+            ids = [row.fiducial_id for row in rows]
+            points = (
+                np.asarray([row.coordinates for row in rows], dtype=np.float64)
+                if rows
+                else np.empty((0, 3))
+            )
+            viewer.set_live_fiducials(ids, points, frame=self._editors_tab.fiducials.input_frame())
+        except (ValueError, np.linalg.LinAlgError) as exc:
+            self._status(f"Live fiducials skipped: {exc}", 5000)
+
+    # ------------------------------------------------------------------
+    # Mesh processing overlay + save
+    # ------------------------------------------------------------------
+
+    def _mesh_to_scene_poly(self, vertices: np.ndarray, faces: np.ndarray) -> pv.PolyData:
+        """Build a pyvista mesh whose points live in the viewer's scene frame."""
+        faces_ravel = np.column_stack(
+            [np.full(len(faces), 3, dtype=np.int64), np.asarray(faces, dtype=np.int64)]
+        ).ravel()
+        poly = pv.PolyData(np.asarray(vertices, dtype=np.float64), faces_ravel)
+        _, _, transform, mm_scene = scene_placement(self._viewer_widget.scene_frame_params[0])
+        if not mm_scene:
+            poly.transform(transform, inplace=True)
+        return poly
+
+    def _on_mesh_preview(self, mesh: ScalpMesh) -> None:
+        self._last_preview_mesh = mesh
+        self._schedule_localization()
+        if self._viewer_widget is None:
+            return
+        self._viewer_widget.set_extra_mesh(
+            self._mesh_to_scene_poly(mesh.vertices, mesh.faces), "scalp"
+        )
+
+    def _on_ese_mesh(self, ese: ESEMesh) -> None:
+        self._schedule_localization()
+        if self._viewer_widget is None:
+            return
+        self._viewer_widget.set_extra_mesh(self._mesh_to_scene_poly(ese.vertices, ese.faces), "ese")
+
+    def _on_mesh_saved(self) -> None:
+        if self._state.last_project_dir:
+            self._sidebar.set_project(Path(self._state.last_project_dir))
+        self._status("Mesh saved. Re-open the 3D viewer to inspect the persisted surface.", 5000)
+        self._refresh_pipeline()
+
+    def _on_ese_saved(self) -> None:
+        if self._state.last_project_dir:
+            self._sidebar.set_project(Path(self._state.last_project_dir))
+        self._status("ESE mesh saved.", 5000)
+        self._reopen_invalidated_file_tabs()
+        self._reload_viewer_if_open()
+        self._refresh_pipeline()
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
     def closeEvent(self, event: Any) -> None:  # noqa: N802 - Qt naming
+        if not self._confirm_discard():
+            event.ignore()
+            return
         try:
             self._on_close()
         finally:
@@ -926,6 +1478,10 @@ class IdeWindow(QMainWindow):
         self._prefs.save_window_geometry(self.saveGeometry())
         self._prefs.save_main_splitter(self._splitter.saveState())
         self._prefs.save_mesh_splitter(self._mesh_processing_tab.splitter_state())
+        self._localize_poll.stop()
+        self._fiducial_overlay_timer.stop()
+        self._localize_timer.stop()
+        self._editors_tab.shutdown()
         for widget in self._file_tabs.values():
             if isinstance(widget, (PreviewTab, ViewerWidget)):
                 widget.shutdown()
