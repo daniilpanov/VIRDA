@@ -6,9 +6,6 @@ every view/worker touches the same dataclass so ownership is explicit.
 """
 
 from dataclasses import dataclass, field
-from typing import Any
-
-from virda.models.coordsystem import Coordsystem
 
 
 @dataclass
@@ -16,8 +13,7 @@ class AppState:
     """Mutable state shared across the GUI tabs and background workers.
 
     Owned by :class:`virda_gui.main_window.IdeWindow` and passed to any
-    component that must read or update it (tabs, pipeline runner, preview
-    worker).
+    component that must read or update it (tabs, preview worker).
     """
 
     viewer_loading: bool = False
@@ -26,6 +22,4 @@ class AppState:
     electrode_rows: list[tuple[str, str]] = field(default_factory=list)
     palette_index: int = 0
     electrodes_cras: bool = False
-    stage3_summary: dict[str, Any] | None = None
-    coordsystem: Coordsystem | None = None
     closed: bool = False

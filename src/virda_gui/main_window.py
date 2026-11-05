@@ -44,10 +44,9 @@ from .importing import (
 from .preferences import Preferences
 from .project import classify_artifact
 from .scan_hash import read_source_hash, sha256_file
-from .services.pipeline_runner import PipelineRunner
 from .sidebar import ProjectSidebar
 from .state import AppState
-from .tabs.config_tab import ConfigTab
+from .tabs.base_generation_tab import BaseGenerationTab
 from .tabs.preview_tab import PreviewTab
 from .viewer.hud import HUDContainer, HudPanel
 from .viewer.viewer import ViewerWidget
@@ -60,8 +59,8 @@ class IdeWindow(QMainWindow):
     The left panel is a :class:`~virda_gui.sidebar.ProjectSidebar` listing
     the project artifacts; the right panel is a closable tab bar where the
     run pipeline form, the 3D viewer and individual project files open in
-    their own tabs.  The window owns the :class:`PipelineRunner` and the
-    shared :class:`AppState`.
+    their own tabs.  The window owns the base-generation tab and the shared
+    :class:`AppState`.
     """
 
     def __init__(self, prefs: Preferences | None = None) -> None:
@@ -73,6 +72,7 @@ class IdeWindow(QMainWindow):
         self._viewer_loading_label: QLabel | None = None
         self._electrode_group_widgets: list[ElectrodeGroupRow] = []
         self._file_tabs: dict[str, QWidget] = {}
+        self._invalidated_file_tabs: list[str] = []
         self._status_history: list[str] = []
         self._prefs = prefs or Preferences()
 
@@ -81,13 +81,9 @@ class IdeWindow(QMainWindow):
 
         self._state = AppState(advanced=dict(ADVANCED_FIELD_DEFAULTS))
 
-        self._pipe_runner = PipelineRunner(self._state)
-        self._pipe_runner.finished.connect(self._on_pipeline_done)
-        self._pipe_runner.failed.connect(self._on_pipeline_error)
-
-        self._config_tab = ConfigTab(self._state)
-        self._config_tab.runRequested.connect(self._on_run)
-        self._config_tab.openViewer.connect(self._on_open_viewer)
+        self._base_tab = BaseGenerationTab(self._state)
+        self._base_tab.baseMesh.connect(self._on_base_generated)
+        self._base_tab.status.connect(self._status)
 
         self._sidebar = ProjectSidebar(self)
         self._sidebar.openViewerRequested.connect(self._on_open_viewer)
@@ -193,9 +189,9 @@ class IdeWindow(QMainWindow):
 
         file_menu.addSeparator()
 
-        run_action = QAction("&Run pipeline...", self)
-        run_action.triggered.connect(self._show_run_tab)
-        file_menu.addAction(run_action)
+        base_action = QAction("&Base generation", self)
+        base_action.triggered.connect(self._show_base_tab)
+        file_menu.addAction(base_action)
 
         file_menu.addSeparator()
 
@@ -238,16 +234,15 @@ class IdeWindow(QMainWindow):
         return self._project
 
     def open_project(self, project: Path) -> None:
-        """Open *project*: populate the sidebar and show the run pipeline tab."""
+        """Open *project*: populate the sidebar and prefill the base tab."""
         self._project = project
         self._sidebar.set_project(project)
         self._close_action.setEnabled(True)
         self._state.last_project_dir = str(project)
-        self._config_tab.prefill_from_project(project)
+        self._base_tab.prefill_from_project(project)
         self._prefs.note_project_opened(project)
         self._refresh_recent_menu()
         self.setWindowTitle(f"VIRDA — {project.name}")
-        self._show_run_tab()
         self._status(f"Project opened: {project}", 5000)
 
     def close_project(self) -> None:
@@ -264,7 +259,8 @@ class IdeWindow(QMainWindow):
         self._state.last_project_dir = None
         if self._viewer_widget is not None:
             self._viewer_widget.set_project_dir(None)
-        self._tabs.removeTab(self._tabs.indexOf(self._config_tab))
+        self._tabs.removeTab(self._tabs.indexOf(self._base_tab))
+        self._base_tab.clear()
         self.setWindowTitle("VIRDA — Electrode Localization System")
 
     def _create_project(self) -> None:
@@ -313,8 +309,8 @@ class IdeWindow(QMainWindow):
         elif isinstance(widget, (ViewerWidget, PreviewTab)):
             widget.shutdown()
 
-    def _show_run_tab(self) -> None:
-        self._add_tab(self._config_tab, "Run Pipeline")
+    def _show_base_tab(self) -> None:
+        self._add_tab(self._base_tab, "Base Generation")
 
     # ------------------------------------------------------------------
     # Project file tabs
@@ -412,11 +408,11 @@ class IdeWindow(QMainWindow):
             self._perform_import(role, Path(source))
 
     def _import_nifti_scan(self, role: ImportRole, source: Path) -> None:
-        """Import a NIfTI scan, dropping stale meshes when it is new.
+        """Import a NIfTI scan, invalidating stale meshes when it is new.
 
         A scan identical to the recorded source is skipped with a warning;
         anything else replaces the project's scan and drops the derived
-        base, final and ESE meshes.
+        base, final and ESE meshes (fiducials and measurements are kept).
         """
         assert self._project is not None
         try:
@@ -441,7 +437,9 @@ class IdeWindow(QMainWindow):
         if target is None:
             return
         self._invalidate_derived_meshes(delete_base=True)
-        self._status("Scan imported.", 5000)
+        self._show_base_tab()
+        self._base_tab.set_source(target)
+        self._status("Scan imported. Press Generate base mesh when ready.", 5000)
 
     def _warn_identical_scan(self) -> None:
         """Tell the user the scan is already in the project (modal + status)."""
@@ -453,30 +451,34 @@ class IdeWindow(QMainWindow):
         )
 
     def _invalidate_derived_meshes(self, *, delete_base: bool) -> None:
-        """Drop derived meshes from disk.
+        """Drop derived meshes from disk and memory.
 
         With *delete_base* the base and final mesh files go too (a new scan
         arrived); otherwise only the ESE artifacts are dropped (a fresh base
         was just generated).
         """
         project = self._project
-        if project is None:
-            return
-        stale: list[Path] = []
-        ese_dir = project / "ese"
-        if ese_dir.is_dir():
-            stale.extend(path for path in ese_dir.glob("*") if path.is_file())
+        if project is not None:
+            stale: list[Path] = []
+            ese_dir = project / "ese"
+            if ese_dir.is_dir():
+                stale.extend(path for path in ese_dir.glob("*") if path.is_file())
+            if delete_base:
+                stale.append(project / "mesh" / "base_mesh.ply")
+                stale.append(project / "mesh" / "final_mesh.ply")
+            for path in stale:
+                key = str(path)
+                if key in self._file_tabs and key not in self._invalidated_file_tabs:
+                    self._invalidated_file_tabs.append(key)
+                self._close_file_tab(key)
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError as exc:
+                    self._status(f"Could not remove stale file {path.name}:\n{exc}", 5000)
         if delete_base:
-            stale.append(project / "mesh" / "base_mesh.ply")
-            stale.append(project / "mesh" / "final_mesh.ply")
-        for path in stale:
-            key = str(path)
-            self._close_file_tab(key)
-            try:
-                path.unlink(missing_ok=True)
-            except OSError as exc:
-                self._status(f"Could not remove stale file {path.name}:\n{exc}", 5000)
-        self._sidebar.set_project(project)
+            self._base_tab.clear()
+        if project is not None:
+            self._sidebar.set_project(project)
 
     def _confirm_nifti_replace(self) -> bool:
         """Warn that a new scan supersedes the project's inputs; False aborts.
@@ -538,97 +540,24 @@ class IdeWindow(QMainWindow):
         return target
 
     # ------------------------------------------------------------------
-    # Pipeline execution (background thread)
+    # Base generation
     # ------------------------------------------------------------------
 
-    def _on_run(self) -> None:
-        try:
-            config = self._config_tab.collect_config()
-        except Exception as exc:  # noqa: BLE001 - surfaced to the user as a dialog
-            QMessageBox.critical(self, "Validation error", str(exc))
-            return
+    def _on_base_generated(self, _mesh: object) -> None:
+        """Invalidate the now-stale derived meshes after the base tab saved."""
+        self._invalidate_derived_meshes(delete_base=False)
+        self._reopen_invalidated_file_tabs()
+        self._reload_viewer_if_open()
 
-        self._config_tab.run_btn.setEnabled(False)
-        self._config_tab.viewer_btn.setEnabled(False)
-        self._state.last_project_dir = config.project_dir
-        self._state.stage3_summary = None
-
-        measurements_path = self._config_tab.measurements.get().strip() or None
-        if measurements_path and not Path(measurements_path).is_file():
-            QMessageBox.critical(
-                self,
-                "Measurements error",
-                f"Measurements file not found:\n{measurements_path}",
-            )
-            self._config_tab.run_btn.setEnabled(True)
-            self._config_tab.viewer_btn.setEnabled(True)
-            return
-
-        self._pipe_runner.submit(config, measurements_path)
-
-    # ------------------------------------------------------------------
-    # Pipeline completion handlers (main thread)
-    # ------------------------------------------------------------------
-
-    def _on_pipeline_done(self) -> None:
-        self._ensure_stage3_electrodes_group()
-        self._config_tab.run_btn.setEnabled(True)
-        self._config_tab.viewer_btn.setEnabled(True)
-        if self._state.last_project_dir:
-            self._sidebar.set_project(Path(self._state.last_project_dir))
-        self._update_results_info(success=True)
-
-    def _on_pipeline_error(self) -> None:
-        self._config_tab.run_btn.setEnabled(True)
-        self._config_tab.viewer_btn.setEnabled(True)
-        self._update_results_info(success=False)
-
-    def _update_results_info(self, *, success: bool) -> None:
-        project = self._state.last_project_dir
-        if success:
-            if project:
-                self._open_viewer(Path(project))
-            summary = self._state.stage3_summary
-            if summary:
-                self._status(
-                    "Pipeline completed. "
-                    f"Stage 3: {summary['localized']}/{summary['total']} electrodes "
-                    f"localized ({summary['flagged']} flagged).",
-                    8000,
-                )
-            elif project:
-                self._status(f"Pipeline completed. Project directory: {project}", 8000)
-        else:
-            self._status("Pipeline failed.", 8000)
+    def _reopen_invalidated_file_tabs(self) -> None:
+        """Re-open file tabs closed by invalidation; missing files are skipped."""
+        pending, self._invalidated_file_tabs = self._invalidated_file_tabs, []
+        for key in pending:
+            self._open_file_tab(Path(key))
 
     # ------------------------------------------------------------------
     # 3D viewer (HUD shell with electrode overlays)
     # ------------------------------------------------------------------
-
-    def _ensure_stage3_electrodes_group(self) -> str | None:
-        """Add the Stage 3 output as an overlay group unless already present.
-
-        Transitional helper for the legacy one-shot runner: it moves to the
-        live-editing flow when the BaseGenerationTab replaces the runner.
-        """
-        resolved = self._state.last_project_dir
-        if not resolved:
-            return None
-        electrodes_path = Path(resolved) / "localization" / "electrodes.json"
-        if not electrodes_path.is_file():
-            return None
-        path_str = str(electrodes_path)
-        if any(path == path_str for path, _color in self._state.electrode_rows):
-            return None
-        if self._viewer_widget is None:
-            color = ELECTRODE_PALETTE[self._state.palette_index % len(ELECTRODE_PALETTE)]
-            self._state.palette_index += 1
-            self._state.electrode_rows.append((path_str, color))
-            return path_str
-        self._add_electrode_group_row(path=path_str)
-        self._sync_electrode_groups()
-        self._reload_viewer_if_open()
-        return path_str
 
     def _reload_viewer_if_open(self) -> None:
         """Reload the open 3D viewer scene so regenerated data reappears."""
@@ -801,7 +730,6 @@ class IdeWindow(QMainWindow):
             )
             return
 
-        self._config_tab.viewer_btn.setEnabled(False)
         self._status("Opening 3D viewer...", 2000)
         self._state.viewer_loading = True
         self._build_viewer_widget()
@@ -860,12 +788,10 @@ class IdeWindow(QMainWindow):
         self._state.viewer_loading = False
         self._show_viewer_loading(False)
         self._status("3D viewer scene loaded.", 4000)
-        self._config_tab.viewer_btn.setEnabled(True)
 
     def _on_viewer_scene_failed(self, message: str) -> None:
         self._state.viewer_loading = False
         self._show_viewer_loading(False)
-        self._config_tab.viewer_btn.setEnabled(True)
         self._status(f"3D viewer failed: {message}", 6000)
 
     # ------------------------------------------------------------------
@@ -887,4 +813,4 @@ class IdeWindow(QMainWindow):
                 widget.shutdown()
         if self._viewer_widget is not None:
             self._viewer_widget.shutdown()
-        self._pipe_runner.shutdown()
+        self._base_tab.shutdown()

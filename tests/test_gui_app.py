@@ -7,10 +7,10 @@ smoke tests, which construct the real :class:`IdeWindow` to catch signal
 wiring regressions that the stubs cannot.
 """
 
-import json
 import os
 from pathlib import Path
 
+import numpy as np
 import pytest
 from PySide6.QtCore import QSettings, Signal
 from PySide6.QtWidgets import QWidget
@@ -27,6 +27,16 @@ from virda_gui.preferences import Preferences
 def _make_prefs(tmp_path: Path) -> Preferences:
     """Preferences backed by an isolated INI file so user config stays clean."""
     return Preferences(QSettings(str(tmp_path / "prefs.ini"), QSettings.Format.IniFormat))
+
+
+def _write_mini_nifti(path: Path) -> Path:
+    """Write a tiny NIfTI volume with a solid central block."""
+    import nibabel as nib
+
+    data = np.zeros((16, 16, 16), dtype=np.uint8)
+    data[4:12, 4:12, 4:12] = 200
+    nib.Nifti1Image(data, np.eye(4)).to_filename(path)
+    return path
 
 
 class _StubViewer(QWidget):
@@ -69,8 +79,8 @@ def test_viewer_widget_importable_from_main_window() -> None:
     assert vars(main_window_module)["ViewerWidget"] is ViewerWidget
 
 
-def test_ide_window_runs_pipeline_tab_offscreen(tmp_path: Path) -> None:
-    """Opening a project shows the Run Pipeline tab; the sidebar can reopen it.
+def test_ide_window_base_generation_tab_offscreen(tmp_path: Path) -> None:
+    """The Base Generation tab opens from the menu and clears on project close.
 
     Builds the real ``IdeWindow`` under the offscreen Qt platform to catch
     ``AttributeError`` wiring regressions the stub-based tests cannot see
@@ -97,20 +107,17 @@ def test_ide_window_runs_pipeline_tab_offscreen(tmp_path: Path) -> None:
         (project / "mesh" / "final_mesh.ply").write_bytes(b"ply\n")
 
         window.open_project(project)
-        assert window._tabs.count() == 1
-        assert window._tabs.tabText(0) == "Run Pipeline"
-        assert window._config_tab.project_dir() == str(project)
+        assert window._tabs.count() == 0
         assert window._sidebar._tree.topLevelItemCount() == 1
 
-        window._close_tab(0)
-        assert window._tabs.count() == 0
-        window._show_run_tab()
+        window._show_base_tab()
         assert window._tabs.count() == 1
-        assert window._tabs.tabText(0) == "Run Pipeline"
+        assert window._tabs.tabText(0) == "Base Generation"
 
         window.close_project()
         assert window._project is None
         assert window._tabs.count() == 0
+        assert window._base_tab.current_base_mesh() is None
     finally:
         window._on_close()
         app.quit()
@@ -152,9 +159,9 @@ def test_ide_window_constructs_and_manages_project_offscreen(
 
         tab = QWidget()
         window._tabs.addTab(tab, "Untitled")
-        assert window._tabs.count() == 2  # run pipeline tab + embedded test tab
-        window._close_tab(1)
         assert window._tabs.count() == 1
+        window._close_tab(0)
+        assert window._tabs.count() == 0
         assert window.project() == project
 
         window.close_project()
@@ -285,7 +292,7 @@ def test_ide_window_opens_project_files_in_tabs_offscreen(tmp_path: Path, monkey
         assert mesh_tab.load_calls == [{"mesh_path": str(mesh)}]
 
         window._sidebar.fileActivated.emit(mesh)
-        assert window._tabs.count() == 2  # run pipeline tab + one mesh tab
+        assert window._tabs.count() == 1  # one mesh tab, reused
 
         window._sidebar.fileActivated.emit(project / "note.txt")
         from virda_gui.tabs.preview_tab import PreviewTab
@@ -312,10 +319,10 @@ def test_ide_window_opens_project_files_in_tabs_offscreen(tmp_path: Path, monkey
         app.quit()
 
 
-def test_ide_window_prefills_run_tab_from_artifacts_offscreen(
+def test_ide_window_prefills_base_tab_from_artifacts_offscreen(
     tmp_path: Path,
 ) -> None:
-    """Opening a project fills the Run Pipeline fields from its artifacts."""
+    """Opening a project points the base tab at the project's scan."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     if os.environ.get("PYVISTA_OFF_SCREEN") is None:
         os.environ["PYVISTA_OFF_SCREEN"] = "true"
@@ -333,34 +340,10 @@ def test_ide_window_prefills_run_tab_from_artifacts_offscreen(
         inputs = project / "input"
         inputs.mkdir(parents=True)
         (inputs / "head.nii.gz").write_bytes(b"\x00")
-        (inputs / "fiducials.json").write_text('{"fiducials": []}', encoding="utf-8")
-        (inputs / "measurements.json").write_text("{}", encoding="utf-8")
-        (inputs / "config.json").write_text(
-            json.dumps(
-                {
-                    "nifti_path": str(inputs / "head.nii.gz"),
-                    "project_dir": str(project),
-                }
-            ),
-            encoding="utf-8",
-        )
-        (inputs / "pipeline_config.json").write_text(
-            json.dumps(
-                {
-                    "nifti_path": str(inputs / "head.nii.gz"),
-                    "project_dir": str(project),
-                }
-            ),
-            encoding="utf-8",
-        )
 
         window.open_project(project)
 
-        assert window._config_tab.nifti_path() == str(inputs / "head.nii.gz")
-        assert window._config_tab.project_dir() == str(project)
-        assert window._config_tab.measurements.get() == str(inputs / "measurements.json")
-        assert window._config_tab._fiducials.get() == str(inputs / "fiducials.json")
-        assert window._config_tab._config_file.get() == str(inputs / "pipeline_config.json")
+        assert window._base_tab._source_path == inputs / "head.nii.gz"
     finally:
         window._on_close()
         app.quit()
@@ -411,4 +394,92 @@ def test_perform_import_copies_into_project_and_refreshes_sidebar(
         assert mesh_group.childCount() == 1
     finally:
         window._on_close()
+        app.quit()
+
+
+def test_base_tab_step_labels_follow_voxel_spin_offscreen(tmp_path: Path) -> None:
+    """Editing voxel size recomputes only the step/real-voxel labels."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    if os.environ.get("PYVISTA_OFF_SCREEN") is None:
+        os.environ["PYVISTA_OFF_SCREEN"] = "true"
+
+    try:
+        from PySide6.QtWidgets import QApplication
+    except Exception as exc:  # pragma: no cover - depends on local Qt install
+        pytest.skip(f"Qt platform unavailable: {exc}")
+
+    app = QApplication.instance() or QApplication([])
+
+    from virda_gui.state import AppState
+    from virda_gui.tabs.base_generation_tab import BaseGenerationTab
+
+    tab = BaseGenerationTab(AppState())
+    try:
+        assert "marching cube step = --" in tab._real_label.text()
+        tab.set_source(_write_mini_nifti(tmp_path / "mini.nii.gz"))
+        assert tab._voxel_spin.value() == 1.0
+        assert "marching cube step = 1" in tab._real_label.text()
+
+        tab._voxel_spin.setValue(2.5)
+        assert "marching cube step = 2" in tab._real_label.text()
+        assert "2 x 2 x 2" in tab._real_label.text()
+        assert tab._seal_chk.isChecked()
+        assert tab._seal_radius_spin.value() == 4
+        assert tab._cleaner_min_vertices_spin.value() == 100
+        assert tab._cleaner_merge_digits_spin.value() == 7
+    finally:
+        tab.shutdown()
+        tab.close()
+        app.quit()
+
+
+def test_base_tab_store_result_writes_meshes_and_sidecar_offscreen(
+    tmp_path: Path,
+) -> None:
+    """Storing a generated mesh writes base, final and the source sidecar."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    if os.environ.get("PYVISTA_OFF_SCREEN") is None:
+        os.environ["PYVISTA_OFF_SCREEN"] = "true"
+
+    try:
+        from PySide6.QtWidgets import QApplication
+    except Exception as exc:  # pragma: no cover - depends on local Qt install
+        pytest.skip(f"Qt platform unavailable: {exc}")
+
+    app = QApplication.instance() or QApplication([])
+
+    from virda_gui.options import CleanOptions, SealingOptions
+    from virda_gui.scan_hash import read_source_hash, sha256_file
+    from virda_gui.state import AppState
+    from virda_gui.tabs.base_generation_tab import BaseGenerationTab, generate_mesh_from_nifti
+
+    state = AppState()
+    tab = None
+    try:
+        project = tmp_path / "gen-project"
+        (project / "input").mkdir(parents=True)
+        source = _write_mini_nifti(project / "input" / "head.nii.gz")
+        state.last_project_dir = str(project)
+
+        mesh = generate_mesh_from_nifti(
+            source,
+            SealingOptions(seal_enabled=True, seal_radius=1),
+            CleanOptions(min_component_vertices=1, merge_digits=7),
+            voxel_size_mm=2.0,
+        )
+        tab = BaseGenerationTab(state)
+        fired: list[str] = []
+        tab.baseMesh.connect(lambda _m: fired.append("base"))
+        tab.saved.connect(lambda: fired.append("saved"))
+        tab._store_result(mesh, source)
+
+        assert (project / "mesh" / "base_mesh.ply").is_file()
+        assert (project / "mesh" / "final_mesh.ply").is_file()
+        assert read_source_hash(project / "mesh") == sha256_file(source)
+        assert tab.current_base_mesh() is mesh
+        assert fired == ["base", "saved"]
+    finally:
+        if tab is not None:
+            tab.shutdown()
+            tab.close()
         app.quit()
