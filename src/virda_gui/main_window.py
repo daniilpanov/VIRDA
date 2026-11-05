@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -37,8 +37,8 @@ class IdeWindow(QMainWindow):
     The left panel is a :class:`~virda_gui.sidebar.ProjectSidebar` listing
     the project artifacts; the right panel is a closable tab bar where the
     run pipeline form, the 3D viewer and individual project files open in
-    their own tabs.  The window owns the :class:`PipelineRunner`, the shared
-    :class:`AppState` and the log stream forwarded to the active run tab.
+    their own tabs.  The window owns the :class:`PipelineRunner` and the
+    shared :class:`AppState`.
     """
 
     def __init__(self, prefs: Preferences | None = None) -> None:
@@ -82,11 +82,6 @@ class IdeWindow(QMainWindow):
 
         self._build_menu()
         self.statusBar().showMessage("")
-
-        self._poll_timer = QTimer()
-        self._poll_timer.setInterval(100)
-        self._poll_timer.timeout.connect(self._poll_log_queue)
-        self._poll_timer.start()
 
     def _build_menu(self) -> None:
         file_menu = self.menuBar().addMenu("&File")
@@ -226,7 +221,7 @@ class IdeWindow(QMainWindow):
         key = str(path)
         widget = self._file_tabs.get(key)
         if widget is None:
-            widget = ViewerWidget(log=self._state.log_queue.put)
+            widget = ViewerWidget()
             widget.sceneLoaded.connect(lambda _scene, tab=widget: self._on_scene_tab_loaded(tab))
             widget.sceneFailed.connect(
                 lambda message, tab=widget: self._on_scene_tab_failed(tab, message)
@@ -251,10 +246,10 @@ class IdeWindow(QMainWindow):
         widget.open(path)
 
     def _on_scene_tab_loaded(self, _tab: ViewerWidget) -> None:
-        self._config_tab.log_viewer.append("3D viewer scene loaded.")
+        self.statusBar().showMessage("3D viewer scene loaded.", 5000)
 
     def _on_scene_tab_failed(self, _tab: ViewerWidget, message: str) -> None:
-        self._config_tab.log_viewer.append(f"3D viewer failed: {message}")
+        self.statusBar().showMessage(f"3D viewer failed: {message}", 8000)
 
     # ------------------------------------------------------------------
     # Import
@@ -286,7 +281,6 @@ class IdeWindow(QMainWindow):
             )
             if answer != QMessageBox.StandardButton.Yes:
                 return None
-        self._config_tab.log_viewer.append(f"Importing {role.label}: {source} -> {target}")
         import_file(self._project, source, role, overwrite=exists)
         self._sidebar.set_project(self._project)
         self.statusBar().showMessage(f"Imported {role.label} -> {target}", 5000)
@@ -305,8 +299,6 @@ class IdeWindow(QMainWindow):
 
         self._config_tab.run_btn.setEnabled(False)
         self._config_tab.viewer_btn.setEnabled(False)
-        self._config_tab.log_viewer.clear()
-        self._state.log_queue.put("Starting pipeline...")
         self._state.last_project_dir = config.project_dir
         self._state.stage3_summary = None
 
@@ -324,16 +316,11 @@ class IdeWindow(QMainWindow):
         self._pipe_runner.submit(config, measurements_path)
 
     # ------------------------------------------------------------------
-    # Log queue polling (main thread)
+    # Pipeline completion handlers (main thread)
     # ------------------------------------------------------------------
 
-    def _poll_log_queue(self) -> None:
-        self._pipe_runner.poll(self._config_tab.log_viewer.append)
-
     def _on_pipeline_done(self) -> None:
-        added = self._config_tab.ensure_stage3_electrodes_group()
-        if added:
-            self._config_tab.log_viewer.append(f"Electrode group added: {added}")
+        self._config_tab.ensure_stage3_electrodes_group()
         self._config_tab.run_btn.setEnabled(True)
         self._config_tab.viewer_btn.setEnabled(True)
         if self._state.last_project_dir:
@@ -352,19 +339,18 @@ class IdeWindow(QMainWindow):
                 self._open_viewer(Path(project))
             summary = self._state.stage3_summary
             if summary:
-                shift = summary["offset_shift_mm"]
-                shift_text = f", offset shift {shift:.2f} mm" if shift is not None else ""
-                self._config_tab.log_viewer.append(
+                self.statusBar().showMessage(
                     "Pipeline completed. "
                     f"Stage 3: {summary['localized']}/{summary['total']} electrodes "
-                    f"localized ({summary['flagged']} flagged{shift_text})."
+                    f"localized ({summary['flagged']} flagged).",
+                    8000,
                 )
             elif project:
-                self._config_tab.log_viewer.append(
-                    f"Pipeline completed. Project directory: {project}"
+                self.statusBar().showMessage(
+                    f"Pipeline completed. Project directory: {project}", 8000
                 )
         else:
-            self._config_tab.log_viewer.append("Pipeline failed. Check the log for details.")
+            self.statusBar().showMessage("Pipeline failed.", 8000)
 
     # ------------------------------------------------------------------
     # 3D viewer
@@ -373,7 +359,7 @@ class IdeWindow(QMainWindow):
     def _build_viewer_widget(self) -> None:
         if self._viewer_widget is not None:
             return
-        self._viewer_widget = ViewerWidget(log=self._state.log_queue.put)
+        self._viewer_widget = ViewerWidget()
         self._viewer_widget.sceneLoaded.connect(self._on_viewer_scene_loaded)
         self._viewer_widget.sceneFailed.connect(self._on_viewer_scene_failed)
 
@@ -403,7 +389,6 @@ class IdeWindow(QMainWindow):
             )
             return
 
-        self._config_tab.log_viewer.append("Opening 3D viewer...")
         self._config_tab.viewer_btn.setEnabled(False)
         self._state.viewer_loading = True
         self._build_viewer_widget()
@@ -442,13 +427,13 @@ class IdeWindow(QMainWindow):
 
     def _on_viewer_scene_loaded(self, _scene: Any) -> None:
         self._state.viewer_loading = False
-        self._config_tab.log_viewer.append("3D viewer scene loaded.")
+        self.statusBar().showMessage("3D viewer scene loaded.", 5000)
         self._config_tab.viewer_btn.setEnabled(True)
 
     def _on_viewer_scene_failed(self, message: str) -> None:
         self._state.viewer_loading = False
         self._config_tab.viewer_btn.setEnabled(True)
-        self._config_tab.log_viewer.append(f"3D viewer failed: {message}")
+        self.statusBar().showMessage(f"3D viewer failed: {message}", 8000)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -462,7 +447,6 @@ class IdeWindow(QMainWindow):
 
     def _on_close(self) -> None:
         self._state.closed = True
-        self._poll_timer.stop()
         for widget in self._file_tabs.values():
             if isinstance(widget, (PreviewTab, ViewerWidget)):
                 widget.shutdown()

@@ -1,8 +1,8 @@
 """Configuration tab: input files, electrode groups and run controls.
 
-The tab builds a :class:`Config` from the visible fields on demand, streams
-progress into its own :class:`LogViewer`, and asks the host application to
-act through the ``runRequested``/``openViewer`` signals.
+The tab builds a :class:`Config` from the visible fields on demand, and asks
+the host application to act through the ``runRequested``/``openViewer``
+signals.
 """
 
 from pathlib import Path
@@ -35,7 +35,6 @@ from virda_gui.widgets import (
     DirectorySelector,
     ElectrodeGroupRow,
     FileSelector,
-    LogViewer,
 )
 
 
@@ -82,8 +81,6 @@ class ConfigTab(QWidget):
         self.viewer_btn.setEnabled(False)
 
         self.electrodes_cras_check = QCheckBox("Force cRAS conversion")
-
-        self.log_viewer = LogViewer(self)
 
         self._groups_inner = QWidget(self)
         self._groups_layout = QVBoxLayout(self._groups_inner)
@@ -149,8 +146,7 @@ class ConfigTab(QWidget):
 
         btn_layout.addStretch(1)
         outer.addWidget(btn_frame)
-
-        outer.addWidget(self.log_viewer, 1)
+        outer.addStretch(1)
 
     # ---- Config file handling ----
 
@@ -190,11 +186,6 @@ class ConfigTab(QWidget):
         if isinstance(coordsystem, Coordsystem):
             self._state.coordsystem = coordsystem
         else:
-            if coordsystem is not None:
-                self.log_viewer.append(
-                    "WARNING: 'coordsystem' entry in the config file was not parsed "
-                    "from a coordsystem.json file — its fiducials are ignored."
-                )
             self._state.coordsystem = None
 
     def _on_fiducials_path_changed(self, _text: str) -> None:
