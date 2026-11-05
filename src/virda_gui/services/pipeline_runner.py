@@ -20,9 +20,6 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Signal
 
 from virda.config import resolve_stage3_config
-from virda.io.exporters.ese import export_ese
-from virda.io.exporters.localization import export_localization
-from virda.io.exporters.stage1 import export_stage1
 from virda.io.importers.fiducials import load_manual_fiducials
 from virda.io.importers.measurements import load_measurements
 from virda.io.importers.nifti import load_nifti
@@ -156,13 +153,6 @@ def run_stage1(config: Config) -> Stage1Result:
         fiducials=fiducials,
     )
     _log_artifact(logger, result)
-    export_stage1(
-        result,
-        project_dir=project_dir,
-        config=config,
-        nifti_path=nifti_path,
-        logger=logger,
-    )
 
     return result
 
@@ -178,7 +168,6 @@ def run_stage2(config: Config, scalp_mesh: ScalpMesh) -> ESEMesh:
         logger=logger,
     )
     _log_artifact(logger, ese_mesh)
-    export_ese(ese_mesh, Path(config.project_dir))
     return ese_mesh
 
 
@@ -224,7 +213,6 @@ def run_stage3(
         logger=logger,
     )
     _log_artifact(logger, electrodes)
-    export_localization(electrodes, project)
     return electrodes
 
 
