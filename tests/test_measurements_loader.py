@@ -4,7 +4,32 @@ import numpy as np
 import pytest
 
 from tests.helpers.measurements import make_fiducials, make_measurements_file
-from virda.io.importers.measurements import load_measurements
+from virda.io.importers.measurements import import_measurements, load_measurements
+
+
+class TestImportMeasurements:
+    def test_returns_only_electrodes(self, tmp_path) -> None:
+        path = make_measurements_file(tmp_path / "measurements.json", points=np.zeros((2, 3)))
+
+        electrodes = import_measurements(path)
+
+        assert [electrode.electrode_id for electrode in electrodes.items] == ["E0", "E1"]
+        assert set(electrodes.items[0].measured_distances) == {"NAS", "LPA", "RPA"}
+
+    def test_ignores_fiducial_weights(self, tmp_path) -> None:
+        path = tmp_path / "measurements.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "fiducial_weights": {"NAS": 2.0},
+                    "electrodes": [{"electrode_id": "Fz", "measured_distances": {"NAS": 120.5}}],
+                }
+            )
+        )
+
+        electrodes = import_measurements(path)
+
+        assert electrodes.items[0].measured_distances == {"NAS": 120.5}
 
 
 class TestMeasurementsLoader:

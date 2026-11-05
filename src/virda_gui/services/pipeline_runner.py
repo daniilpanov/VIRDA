@@ -23,7 +23,7 @@ from PySide6.QtCore import QObject, Signal
 from virda.config import resolve_stage3_config
 from virda.io.importers.fiducials import load_manual_fiducials
 from virda.io.importers.measurements import load_measurements
-from virda.io.importers.nifti import load_nifti
+from virda.io.importers.nifti import import_nifti
 from virda.logging_setup import get_stage_logger
 from virda.models.config import Config
 from virda.models.coordsystem import Coordsystem
@@ -138,7 +138,7 @@ def run_stage1(config: Config) -> _Stage1Result:
 
     logger = get_stage_logger(project_dir, "stage_1")
 
-    volume = load_nifti(nifti_path)
+    volume = import_nifti(nifti_path)
     _log_artifact(logger, volume)
 
     mask = segment_head(

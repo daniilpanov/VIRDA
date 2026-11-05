@@ -4,16 +4,31 @@ import numpy as np
 from skimage.measure import marching_cubes
 
 from virda.mesh.adjacency import build_scalp_mesh
+from virda.mesh.density import step_size_for_voxel_size
 from virda.models.mri_volume import MRIVolume
 from virda.models.scalp_mesh import ScalpMesh
 from virda.models.segmentation_mask import SegmentationMask
 
 
-def extract_mesh(mask: SegmentationMask, mri_volume: MRIVolume) -> ScalpMesh:
-    """Extract the mask surface and map it into world millimeters."""
+def extract_mesh(
+    mask: SegmentationMask,
+    mri_volume: MRIVolume,
+    *,
+    voxel_size_mm: float | None = None,
+) -> ScalpMesh:
+    """Extract the mask surface and map it into world millimeters.
+
+    ``voxel_size_mm`` is the desired effective voxel size of the output mesh;
+    ``None`` keeps the native NIfTI resolution (``step_size=1``).
+    """
     affine = mri_volume.affine
 
-    voxel_vertices, triangle_faces, _, _ = marching_cubes(mask.mask, level=0.5)
+    if voxel_size_mm is None:
+        step_size = 1
+    else:
+        step_size, _ = step_size_for_voxel_size(voxel_size_mm, mri_volume.spacing)
+
+    voxel_vertices, triangle_faces, _, _ = marching_cubes(mask.mask, level=0.5, step_size=step_size)
     world_vertices = voxel_vertices @ affine[:3, :3].T + affine[:3, 3]
 
     return build_scalp_mesh(
