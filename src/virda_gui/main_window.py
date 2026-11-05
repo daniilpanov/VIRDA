@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from virda.models.ese_mesh import ESEMesh
 from virda.models.scalp_mesh import ScalpMesh
 
 from .constants import ADVANCED_FIELD_DEFAULTS, ELECTRODE_PALETTE
@@ -51,6 +52,7 @@ from .scan_hash import read_source_hash, sha256_file
 from .sidebar import ProjectSidebar
 from .state import AppState
 from .tabs.base_generation_tab import BaseGenerationTab
+from .tabs.ese_tab import EseTab
 from .tabs.mesh_processing_tab import MeshProcessingTab
 from .tabs.preview_tab import PreviewTab
 from .viewer.hud import HUDContainer, HudPanel
@@ -91,8 +93,19 @@ class IdeWindow(QMainWindow):
         self._mesh_processing_tab = MeshProcessingTab(self._state)
         self._mesh_processing_tab.previewMesh.connect(self._on_mesh_preview)
         self._mesh_processing_tab.saved.connect(self._on_mesh_saved)
+        self._mesh_processing_tab.eseRequested.connect(self._show_ese_tab)
         self._mesh_processing_tab.baseRequested.connect(self._show_base_tab)
         self._mesh_processing_tab.status.connect(self._status)
+
+        self._ese_tab = EseTab(
+            self._state,
+            base_provider=lambda: self._mesh_processing_tab.current_scalp_mesh(),
+        )
+        self._mesh_processing_tab.previewMesh.connect(self._ese_tab.show_preview)
+        self._ese_tab.eseMesh.connect(self._on_ese_mesh)
+        self._ese_tab.saved.connect(self._on_ese_saved)
+        self._ese_tab.status.connect(self._status)
+        self._ese_tab.busyChanged.connect(self._mesh_processing_tab.set_locked)
 
         self._base_tab = BaseGenerationTab(self._state)
         self._base_tab.baseMesh.connect(self._on_base_generated)
@@ -214,6 +227,10 @@ class IdeWindow(QMainWindow):
         base_action.triggered.connect(self._show_base_tab)
         file_menu.addAction(base_action)
 
+        ese_action = QAction("&ESE surface", self)
+        ese_action.triggered.connect(self._show_ese_tab)
+        file_menu.addAction(ese_action)
+
         file_menu.addSeparator()
 
         self._close_action = QAction("&Close project", self)
@@ -262,6 +279,7 @@ class IdeWindow(QMainWindow):
         self._state.last_project_dir = str(project)
         self._base_tab.prefill_from_project(project)
         self._mesh_processing_tab.prefill_from_project(project)
+        self._ese_tab.prefill_from_project(project)
         self._prefs.note_project_opened(project)
         self._refresh_recent_menu()
         self.setWindowTitle(f"VIRDA — {project.name}")
@@ -282,9 +300,11 @@ class IdeWindow(QMainWindow):
         if self._viewer_widget is not None:
             self._viewer_widget.set_project_dir(None)
         self._tabs.removeTab(self._tabs.indexOf(self._mesh_processing_tab))
+        self._tabs.removeTab(self._tabs.indexOf(self._ese_tab))
         self._tabs.removeTab(self._tabs.indexOf(self._base_tab))
         self._mesh_processing_tab.clear()
         self._base_tab.clear()
+        self._ese_tab.clear()
         self._last_preview_mesh = None
         self.setWindowTitle("VIRDA — Electrode Localization System")
 
@@ -339,6 +359,16 @@ class IdeWindow(QMainWindow):
 
     def _show_base_tab(self) -> None:
         self._add_tab(self._base_tab, "Base Generation")
+
+    def _show_ese_tab(self) -> None:
+        self._sync_ese_backdrop()
+        self._add_tab(self._ese_tab, "ESE Surface")
+
+    def _sync_ese_backdrop(self) -> None:
+        """Push the working scalp mesh into the ESE tab backdrop, if any."""
+        working = self._mesh_processing_tab.current_scalp_mesh()
+        if working is not None:
+            self._ese_tab.show_preview(working)
 
     # ------------------------------------------------------------------
     # Project file tabs
@@ -506,6 +536,7 @@ class IdeWindow(QMainWindow):
         if delete_base:
             self._mesh_processing_tab.clear()
             self._base_tab.clear()
+        self._ese_tab.clear()
         self._last_preview_mesh = None
         if project is not None:
             self._sidebar.set_project(project)
@@ -615,6 +646,18 @@ class IdeWindow(QMainWindow):
         if self._state.last_project_dir:
             self._sidebar.set_project(Path(self._state.last_project_dir))
         self._status("Mesh saved. Re-open the 3D viewer to inspect the persisted surface.", 5000)
+
+    def _on_ese_mesh(self, ese: ESEMesh) -> None:
+        if self._viewer_widget is None:
+            return
+        self._viewer_widget.set_extra_mesh(self._mesh_to_scene_poly(ese.vertices, ese.faces), "ese")
+
+    def _on_ese_saved(self) -> None:
+        if self._state.last_project_dir:
+            self._sidebar.set_project(Path(self._state.last_project_dir))
+        self._status("ESE mesh saved.", 5000)
+        self._reopen_invalidated_file_tabs()
+        self._reload_viewer_if_open()
 
     # ------------------------------------------------------------------
     # 3D viewer (HUD shell with electrode overlays)
@@ -859,6 +902,9 @@ class IdeWindow(QMainWindow):
         if self._last_preview_mesh is not None:
             mesh = self._last_preview_mesh
             viewer.set_extra_mesh(self._mesh_to_scene_poly(mesh.vertices, mesh.faces), "scalp")
+        ese = self._ese_tab.current_ese_mesh()
+        if ese is not None:
+            viewer.set_extra_mesh(self._mesh_to_scene_poly(ese.vertices, ese.faces), "ese")
 
     def _on_viewer_scene_failed(self, message: str) -> None:
         self._state.viewer_loading = False
@@ -886,4 +932,5 @@ class IdeWindow(QMainWindow):
         if self._viewer_widget is not None:
             self._viewer_widget.shutdown()
         self._mesh_processing_tab.shutdown()
+        self._ese_tab.shutdown()
         self._base_tab.shutdown()
