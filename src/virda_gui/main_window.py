@@ -1,17 +1,29 @@
-"""IDE-style main window: file sidebar, closable tabs and project management."""
+"""IDE-style main window: file sidebar, closable tabs and project management.
 
+The window owns the shared :class:`AppState`, the project-aware sidebar and
+the closable tab bar hosting the run pipeline form, the 3D viewer and
+per-file preview tabs.  Every operation is reported through the status bar
+(kept in the *Recent messages* history) or dialogs.
+"""
+
+import time
 from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
+    QApplication,
+    QDialog,
     QFileDialog,
     QMainWindow,
     QMenu,
     QMessageBox,
+    QPlainTextEdit,
+    QPushButton,
     QSplitter,
     QTabWidget,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -46,6 +58,7 @@ class IdeWindow(QMainWindow):
         self._project: Path | None = None
         self._viewer_widget: ViewerWidget | None = None
         self._file_tabs: dict[str, QWidget] = {}
+        self._status_history: list[str] = []
         self._prefs = prefs or Preferences()
 
         self.setWindowTitle("VIRDA — Electrode Localization System")
@@ -79,9 +92,74 @@ class IdeWindow(QMainWindow):
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([300, 800])
         self.setCentralWidget(splitter)
+        self._splitter = splitter
+        self._restore_layout()
 
         self._build_menu()
-        self.statusBar().showMessage("")
+        self._status("")
+
+    # ------------------------------------------------------------------
+    # Status bar (with history)
+    # ------------------------------------------------------------------
+
+    def _status(self, message: str, timeout: int = 5000) -> None:
+        """Show *message* in the status bar and remember it for the history."""
+        if message:
+            stamp = time.strftime("%H:%M:%S", time.localtime())
+            self._status_history.append(f"[{stamp}] {message}")
+            del self._status_history[:-100]
+        self.statusBar().showMessage(message, timeout)
+
+    def _show_status_history(self) -> None:
+        """Show the remembered status-bar messages."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Recent messages")
+        dialog.resize(560, 320)
+        view = QPlainTextEdit(dialog)
+        view.setReadOnly(True)
+        view.setPlainText("\n".join(self._status_history) or "No messages yet.")
+        close_btn = QPushButton("Close", dialog)
+        close_btn.clicked.connect(dialog.accept)
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(view)
+        layout.addWidget(close_btn)
+        dialog.exec()
+
+    def _restore_layout(self) -> None:
+        """Restore window geometry and splitter layout from the last session.
+
+        The stored blob carries a screen number and position, so on a changed
+        monitor setup (unplugged display, RDP, smaller resolution) the window
+        could land outside every screen.  In that case the size is clamped to
+        the primary screen and the window is centered on it; splitter blobs
+        simply fall back to the defaults when they cannot be applied.
+        """
+        geometry = self._prefs.window_geometry()
+        if geometry is not None and self.restoreGeometry(geometry):
+            self._ensure_visible_on_screen()
+        splitter = self._prefs.main_splitter()
+        if splitter is not None:
+            self._splitter.restoreState(splitter)
+
+    def _ensure_visible_on_screen(self) -> None:
+        """Center the window on the primary screen when it is fully off-screen."""
+        screens = QApplication.screens()
+        if not screens:
+            return
+        frame = self.frameGeometry()
+        if any(screen.availableGeometry().intersects(frame) for screen in screens):
+            return
+        primary = QApplication.primaryScreen()
+        area = (
+            primary.availableGeometry() if primary is not None else screens[0].availableGeometry()
+        )
+        width = min(frame.width(), area.width())
+        height = min(frame.height(), area.height())
+        self.resize(width, height)
+        self.move(
+            area.center().x() - width // 2,
+            area.center().y() - height // 2,
+        )
 
     def _build_menu(self) -> None:
         file_menu = self.menuBar().addMenu("&File")
@@ -115,6 +193,11 @@ class IdeWindow(QMainWindow):
 
         self._refresh_recent_menu()
 
+        view_menu = self.menuBar().addMenu("&View")
+        history_action = QAction("&Recent messages...", self)
+        history_action.triggered.connect(self._show_status_history)
+        view_menu.addAction(history_action)
+
     def _refresh_recent_menu(self) -> None:
         self._recent_menu.clear()
         recent = [p for p in self._prefs.recent_projects() if p.is_dir()]
@@ -145,7 +228,7 @@ class IdeWindow(QMainWindow):
         self._refresh_recent_menu()
         self.setWindowTitle(f"VIRDA — {project.name}")
         self._show_run_tab()
-        self.statusBar().showMessage(f"Project opened: {project}", 5000)
+        self._status(f"Project opened: {project}", 5000)
 
     def close_project(self) -> None:
         """Close the project and reset the window to the empty state."""
@@ -221,7 +304,7 @@ class IdeWindow(QMainWindow):
         key = str(path)
         widget = self._file_tabs.get(key)
         if widget is None:
-            widget = ViewerWidget()
+            widget = ViewerWidget(log=lambda message: self._status(message, 4000))
             widget.sceneLoaded.connect(lambda _scene, tab=widget: self._on_scene_tab_loaded(tab))
             widget.sceneFailed.connect(
                 lambda message, tab=widget: self._on_scene_tab_failed(tab, message)
@@ -246,10 +329,10 @@ class IdeWindow(QMainWindow):
         widget.open(path)
 
     def _on_scene_tab_loaded(self, _tab: ViewerWidget) -> None:
-        self.statusBar().showMessage("3D viewer scene loaded.", 5000)
+        self._status("3D viewer scene loaded.", 4000)
 
     def _on_scene_tab_failed(self, _tab: ViewerWidget, message: str) -> None:
-        self.statusBar().showMessage(f"3D viewer failed: {message}", 8000)
+        self._status(f"3D viewer failed: {message}", 6000)
 
     # ------------------------------------------------------------------
     # Import
@@ -283,7 +366,7 @@ class IdeWindow(QMainWindow):
                 return None
         import_file(self._project, source, role, overwrite=exists)
         self._sidebar.set_project(self._project)
-        self.statusBar().showMessage(f"Imported {role.label} -> {target}", 5000)
+        self._status(f"Imported {role.label} -> {target}", 5000)
         return target
 
     # ------------------------------------------------------------------
@@ -339,18 +422,16 @@ class IdeWindow(QMainWindow):
                 self._open_viewer(Path(project))
             summary = self._state.stage3_summary
             if summary:
-                self.statusBar().showMessage(
+                self._status(
                     "Pipeline completed. "
                     f"Stage 3: {summary['localized']}/{summary['total']} electrodes "
                     f"localized ({summary['flagged']} flagged).",
                     8000,
                 )
             elif project:
-                self.statusBar().showMessage(
-                    f"Pipeline completed. Project directory: {project}", 8000
-                )
+                self._status(f"Pipeline completed. Project directory: {project}", 8000)
         else:
-            self.statusBar().showMessage("Pipeline failed.", 8000)
+            self._status("Pipeline failed.", 8000)
 
     # ------------------------------------------------------------------
     # 3D viewer
@@ -359,7 +440,7 @@ class IdeWindow(QMainWindow):
     def _build_viewer_widget(self) -> None:
         if self._viewer_widget is not None:
             return
-        self._viewer_widget = ViewerWidget()
+        self._viewer_widget = ViewerWidget(log=lambda message: self._status(message, 4000))
         self._viewer_widget.sceneLoaded.connect(self._on_viewer_scene_loaded)
         self._viewer_widget.sceneFailed.connect(self._on_viewer_scene_failed)
 
@@ -427,13 +508,13 @@ class IdeWindow(QMainWindow):
 
     def _on_viewer_scene_loaded(self, _scene: Any) -> None:
         self._state.viewer_loading = False
-        self.statusBar().showMessage("3D viewer scene loaded.", 5000)
+        self._status("3D viewer scene loaded.", 4000)
         self._config_tab.viewer_btn.setEnabled(True)
 
     def _on_viewer_scene_failed(self, message: str) -> None:
         self._state.viewer_loading = False
         self._config_tab.viewer_btn.setEnabled(True)
-        self.statusBar().showMessage(f"3D viewer failed: {message}", 8000)
+        self._status(f"3D viewer failed: {message}", 6000)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -447,6 +528,8 @@ class IdeWindow(QMainWindow):
 
     def _on_close(self) -> None:
         self._state.closed = True
+        self._prefs.save_window_geometry(self.saveGeometry())
+        self._prefs.save_main_splitter(self._splitter.saveState())
         for widget in self._file_tabs.values():
             if isinstance(widget, (PreviewTab, ViewerWidget)):
                 widget.shutdown()
