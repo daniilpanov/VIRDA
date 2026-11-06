@@ -2,9 +2,9 @@
 
 Everything that reads a file or resolves coordinates into the scene frame
 lives here so it can be tested without a display: mesh loading, MRI volume
-loading and downsampling, fiducial points, normal glyphs, electrode loading
-(Stage 3 JSON or tabular cRAS files) with automatic frame detection, and the
-QC report.  :class:`SceneData` is the plain-data result consumed by
+loading and downsampling, fiducial points, electrode loading (Stage 3 JSON or
+tabular cRAS files) with automatic frame detection, and the QC report.
+:class:`SceneData` is the plain-data result consumed by
 :class:`virda_gui.viewer.viewer.ViewerWidget` on the GUI thread.
 """
 
@@ -22,12 +22,9 @@ from nibabel import aff2axcodes
 from scipy.spatial import cKDTree
 
 from .scene import (
-    compute_normal_lines,
     downsample,
     load_fiducial_points,
-    load_normals,
     percentile_clim,
-    sample_normals,
     scene_placement,
     transform_points,
 )
@@ -158,33 +155,6 @@ def intensify_color(color: str) -> str:
     h, lightness, sat = colorsys.rgb_to_hls(r, g, b)
     darker = colorsys.hls_to_rgb(h, min(0.45, lightness * 0.7), min(1.0, sat * 1.6))
     return pv.Color(darker).hex_rgb
-
-
-def _create_normal_glyphs(
-    points: np.ndarray,
-    normals: np.ndarray,
-    scale: float,
-    density: int,
-) -> pv.PolyData:
-    """Build line-segment glyphs pointing along *normals* at sampled vertices.
-
-    Returns a ``PolyData`` mesh of line segments that can be added to a
-    PyVista plotter.
-    """
-    idx, sampled = sample_normals(normals, density)
-    origins, tips = compute_normal_lines(points[idx], sampled, scale)
-
-    n = len(idx)
-    lines = np.empty((n * 2, 3), dtype=np.float64)
-    lines[0::2] = origins
-    lines[1::2] = tips
-
-    line_cells = np.empty((n, 3), dtype=np.int64)
-    line_cells[:, 0] = 2
-    line_cells[:, 1] = np.arange(0, n * 2, 2)
-    line_cells[:, 2] = np.arange(1, n * 2, 2)
-
-    return pv.PolyData(lines, lines=line_cells.ravel())
 
 
 def _load_electrodes(
@@ -438,7 +408,6 @@ class SceneData:
     fiducial_points: np.ndarray | None = None
     fiducial_labels: list[str] = field(default_factory=list)
     fiducial_id_to_point: dict[str, np.ndarray] = field(default_factory=dict)
-    normals_poly: pv.PolyData | None = None
     electrode_groups: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -446,11 +415,8 @@ def collect_scene_data(
     nifti_path: str | None = None,
     mesh_path: str | None = None,
     fiducials_path: str | None = None,
-    normals_path: str | None = None,
     downsample_stride: int = 1,
     mesh_opacity: float = 0.6,
-    normals_scale: float = 3.0,
-    normals_density: int = 500,
     electrode_specs: list[tuple[str, str | None]] | None = None,
     electrodes_cras: bool = False,
     log: Callable[[str], None] = print,
@@ -458,9 +424,9 @@ def collect_scene_data(
     """Load a full viewer scene without touching any display.
 
     Runs on a worker thread: nibabel reading, volume downsampling, mesh
-    loading, scene placement, fiducials, normals glyphs, electrode loading with
-    cRAS frame detection, and QC reporting.  All returned points are already in
-    the scene frame.
+    loading, scene placement, fiducials, electrode loading with cRAS frame
+    detection, and QC reporting.  All returned points are already in the
+    scene frame.
     """
     if not nifti_path and not mesh_path:
         raise ValueError("at least one of nifti_path or mesh_path is required")
@@ -494,25 +460,6 @@ def collect_scene_data(
     fiducial_labels: list[str] = []
     if fiducials_path:
         fiducial_points, fiducial_labels = load_fiducial_points(fiducials_path)
-
-    normals_data = None
-    if normals_path:
-        normals_data = load_normals(normals_path)
-        if scene_mesh is not None and normals_data.shape[0] != scene_mesh.n_points:
-            raise ValueError(
-                f"Normals count ({normals_data.shape[0]}) does not match "
-                f"mesh vertex count ({scene_mesh.n_points})"
-            )
-
-    normals_poly = None
-    if normals_data is not None and scene_mesh is not None:
-        scene_normals = normals_data
-        if not mm_scene:
-            inv_rot = np.linalg.inv(affine)[:3, :3]
-            scene_normals = normals_data @ inv_rot.T
-        normals_poly = _create_normal_glyphs(
-            np.asarray(scene_mesh.points), scene_normals, normals_scale, normals_density
-        )
 
     scene_fiducials = None
     fiducial_id_to_point: dict[str, np.ndarray] = {}
@@ -560,6 +507,5 @@ def collect_scene_data(
         fiducial_points=scene_fiducials,
         fiducial_labels=fiducial_labels,
         fiducial_id_to_point=fiducial_id_to_point,
-        normals_poly=normals_poly,
         electrode_groups=electrode_groups,
     )

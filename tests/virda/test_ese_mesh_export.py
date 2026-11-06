@@ -63,11 +63,37 @@ class TestExportEseCompanions:
         root = export_ese_companions(tmp_path / "ese" / "mesh.ply", ese)
 
         assert root == tmp_path / "ese"
-        for name in ("ese_vertices.npy", "ese_faces.npy", "normals.npy", "quality.npy"):
+        for name in ("ese_vertices.npy", "ese_faces.npy", "quality.npy"):
             assert (root / name).is_file()
+        assert not (root / "normals.npy").exists()
         pairs = json.loads((root / "point_pairs.json").read_text(encoding="utf-8"))
         assert pairs["n_points"] == int(ese.vertices.shape[0])
         assert len(pairs["scalp_vertices"]) == int(ese.vertices.shape[0])
+
+    def test_round_trip_without_normals_file(self, tmp_path: Path) -> None:
+        ese = make_ese(ese_offset_mm=1.5)
+
+        export_ese_companions(tmp_path / "ese" / "mesh.ply", ese)
+        (tmp_path / "ese" / "mesh.ply").touch()
+        (tmp_path / "ese" / "normals.npy").unlink(missing_ok=True)
+        restored = import_ese_mesh(tmp_path / "ese" / "mesh.ply")
+
+        np.testing.assert_array_almost_equal(restored.normals, ese.normals)
+
+    def test_legacy_round_trip_reads_normals_file(self, tmp_path: Path) -> None:
+        ese = make_ese(ese_offset_mm=1.5)
+
+        export_ese_companions(tmp_path / "ese" / "mesh.ply", ese)
+        # simulate a legacy project: no embedded normals in point_pairs.json
+        pairs_path = tmp_path / "ese" / "point_pairs.json"
+        pairs = json.loads(pairs_path.read_text(encoding="utf-8"))
+        del pairs["normals"]
+        pairs_path.write_text(json.dumps(pairs), encoding="utf-8")
+        np.save(tmp_path / "ese" / "normals.npy", ese.normals)
+        (tmp_path / "ese" / "mesh.ply").touch()
+        restored = import_ese_mesh(tmp_path / "ese" / "mesh.ply")
+
+        np.testing.assert_array_almost_equal(restored.normals, ese.normals)
 
     def test_full_round_trip_with_importer(self, tmp_path: Path) -> None:
         ese = make_ese(ese_offset_mm=1.5)

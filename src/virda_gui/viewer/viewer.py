@@ -3,9 +3,9 @@
 :class:`ViewerWidget` renders the scalp mesh on top of a semi-transparent MRI
 volume and places both objects in the same coordinate frame using the NIfTI
 affine, so the mesh overlays the actual scalp in all three views. Qt
-checkboxes toggle the visibility of the mesh, the MRI, the fiducial points,
-the normal glyphs and per-electrode labels, and a "Boost contrast" checkbox
-sharpens the MRI and the mesh.  :class:`ViewerWidget` wraps the same scene
+checkboxes toggle the visibility of the mesh, the MRI, the fiducial points and
+per-electrode labels, and a "Boost contrast" checkbox sharpens the MRI and the
+mesh.  :class:`ViewerWidget` wraps the same scene
 that the standalone ``virda-gui-viewer`` CLI (module ``virda_gui.viewer.viewer_cli``)
 shows in a blocking window; the GUI embeds it on its 3D Viewer tab.
 """
@@ -89,7 +89,6 @@ class ViewerWidget(QWidget):
         self._mesh_actor: Any = None
         self._fiducial_actor: Any = None
         self._fiducial_label_actor: Any = None
-        self._normals_actor: Any = None
         self._electrode_actors_per_group: list[list[Any]] = []
         self._flagged_actors_per_group: list[list[Any]] = []
         self._link_actors_per_group: list[list[Any]] = []
@@ -247,12 +246,6 @@ class ViewerWidget(QWidget):
                 always_visible=True,
             )
 
-        self._normals_actor = None
-        if scene.normals_poly is not None:
-            self._normals_actor = self._plotter.add_mesh(
-                scene.normals_poly, color="cyan", opacity=0.8, line_width=2
-            )
-
         self._electrode_actors_per_group = []
         self._flagged_actors_per_group = []
         self._link_actors_per_group = []
@@ -323,8 +316,6 @@ class ViewerWidget(QWidget):
             self._add_layer_check("Show MRI", True, self._set_mri_visibility)
         if self._fiducial_actor is not None:
             self._add_layer_check("Show fiducials", True, self._set_fiducials_visibility)
-        if self._normals_actor is not None:
-            self._add_layer_check("Show normals", True, self._set_normals_visibility)
         if self._fiducial_label_actor is not None or any(
             group_actors for group_actors in self._label_actors_per_group
         ):
@@ -386,10 +377,6 @@ class ViewerWidget(QWidget):
         if self._fiducial_actor is not None:
             self._fiducial_actor.SetVisibility(flag)
         self._apply_labels_visibility()
-
-    def _set_normals_visibility(self, flag: bool) -> None:
-        if self._normals_actor is not None:
-            self._normals_actor.SetVisibility(flag)
 
     def _set_labels_visibility(self, flag: bool) -> None:
         self._labels_visible = bool(flag)
