@@ -17,6 +17,11 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Signal
 
 from virda.config import resolve_stage3_config
+from virda.io.exporters.ese_mesh import export_ese_companions, export_ese_mesh
+from virda.io.exporters.fiducials import export_fiducials
+from virda.io.exporters.localization_table import export_localization_table
+from virda.io.exporters.mesh_arrays import export_mesh_faces, export_mesh_vertices
+from virda.io.exporters.scalp_mesh import export_scalp_mesh
 from virda.io.importers.fiducials import load_manual_fiducials
 from virda.io.importers.measurements import load_measurements
 from virda.io.importers.nifti import import_nifti
@@ -122,6 +127,7 @@ def run_stage1(config: Config) -> _Stage1Result:
 
     resolved_fiducials_path = config.fiducials_path
     nifti_path = Path(resolved_nifti_path)
+    project_dir = Path(resolved_project_dir)
 
     logger = logging.getLogger("virda_gui.stage_1")
 
@@ -164,6 +170,11 @@ def run_stage1(config: Config) -> _Stage1Result:
 
     fiducials = _resolve_stage1_fiducials(manual, config.coordsystem)
 
+    export_scalp_mesh(project_dir / "mesh" / "final_mesh.ply", mesh)
+    export_mesh_vertices(project_dir / "mesh" / "scalp_vertices.npy", mesh.vertices)
+    export_mesh_faces(project_dir / "mesh" / "scalp_faces.npy", mesh.faces)
+    export_fiducials(project_dir / "input" / "fiducials.json", fiducials)
+
     result = _Stage1Result(mesh=mesh, fiducials=fiducials)
     _log_artifact(logger, result)
 
@@ -181,6 +192,11 @@ def run_stage2(config: Config, scalp_mesh: ScalpMesh) -> ESEMesh:
         logger=logger,
     )
     _log_artifact(logger, ese_mesh)
+
+    ese_mesh_path = Path(config.project_dir) / "ese" / "ese_mesh.ply"
+    export_ese_mesh(ese_mesh_path, ese_mesh)
+    export_ese_companions(ese_mesh_path, ese_mesh)
+
     return ese_mesh
 
 
@@ -225,6 +241,12 @@ def run_stage3(
         logger=logger,
     )
     _log_artifact(logger, electrodes)
+
+    export_localization_table(
+        Path(project_dir) / "localization" / "electrode_coords.csv",
+        electrodes,
+    )
+
     return electrodes
 
 
