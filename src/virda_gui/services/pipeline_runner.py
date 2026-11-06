@@ -17,6 +17,11 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Signal
 
 from virda.config import resolve_stage3_config
+from virda.io.exporters.electrodes import (
+    export_electrodes,
+    export_electrodes_ese,
+    export_electrodes_scalp,
+)
 from virda.io.exporters.ese_mesh import export_ese_companions, export_ese_mesh
 from virda.io.exporters.fiducials import export_fiducials
 from virda.io.exporters.localization_table import export_localization_table
@@ -253,10 +258,12 @@ def run_stage3(
     )
     _log_artifact(logger, electrodes)
 
-    export_localization_table(
-        Path(project_dir) / "localization" / "electrode_coords.csv",
-        electrodes,
-    )
+    localization_dir = Path(project_dir) / "localization"
+    export_localization_table(localization_dir / "electrode_coords.csv", electrodes)
+    electrodes_path = localization_dir / "electrodes.json"
+    export_electrodes(electrodes_path, electrodes)
+    export_electrodes_scalp(localization_dir / "electrodes_scalp.json", electrodes)
+    export_electrodes_ese(localization_dir / "electrodes_ese.json", electrodes)
 
     return electrodes
 
