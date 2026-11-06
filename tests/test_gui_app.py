@@ -1879,8 +1879,12 @@ def test_base_generated_drops_derived_meshes_but_keeps_tables_offscreen(
             "RPA",
         ]
         assert "[ok]" not in _chip_text(window, "3. Skin")
-        assert "[ok]" not in _chip_text(window, "4. Sensor")
+        assert "[!]" in _chip_text(window, "3. Skin")
+        assert "[ ]" in _chip_text(window, "4. Sensor")
+        assert "[>]" not in _chip_text(window, "4. Sensor")
         assert "[ok]" not in _chip_text(window, "5. Points")
+        assert not window._pipeline_bar.is_enabled("ese")
+        assert not window._pipeline_bar.is_enabled("points")
     finally:
         window.close()
         app.quit()
@@ -1898,6 +1902,14 @@ def test_base_generation_busy_locks_other_pipeline_tabs_offscreen(
         _write_full_project(project)
         window.open_project(project)
 
+        window._show_base_tab()
+        window._show_mesh_processing_tab()
+        tabs = window._tabs
+        current = tabs.widget(tabs.indexOf(window._base_tab))
+        assert current is not None
+        other_idx = tabs.indexOf(window._mesh_processing_tab)
+        window._tabs.setCurrentWidget(current)
+
         window._base_tab.busyChanged.emit(True)
 
         mesh_tab = window._mesh_processing_tab
@@ -1913,6 +1925,9 @@ def test_base_generation_busy_locks_other_pipeline_tabs_offscreen(
         assert not window._sidebar._import_files_btn.isEnabled()
         assert not window._sidebar._open_viewer_btn.isEnabled()
 
+        assert not tabs.isTabEnabled(other_idx)
+        assert tabs.isTabEnabled(tabs.indexOf(current))
+
         window._base_tab.busyChanged.emit(False)
 
         assert actions_box.isEnabled()
@@ -1920,6 +1935,7 @@ def test_base_generation_busy_locks_other_pipeline_tabs_offscreen(
         assert generate_btn.isEnabled()
         assert window._sidebar._import_files_btn.isEnabled()
         assert window._sidebar._open_viewer_btn.isEnabled()
+        assert tabs.isTabEnabled(other_idx)
     finally:
         window.close()
         app.quit()
@@ -1941,10 +1957,14 @@ def test_ese_backdrop_skips_invalidated_mesh_until_saved_offscreen(
         window._on_base_generated(object())
         window._show_ese_tab()
         assert window._ese_tab._final_mesh is None
+        generate_btn = window._ese_tab._generate_btn
+        assert generate_btn is not None
+        assert not generate_btn.isEnabled()  # cascade: mesh step unsaved
 
         window._on_mesh_saved()
         window._show_ese_tab()
         assert window._ese_tab._final_mesh is not None
+        assert generate_btn.isEnabled()
     finally:
         window.close()
         app.quit()
@@ -1976,6 +1996,58 @@ def test_mesh_autosave_holds_off_after_base_regen_offscreen(tmp_path: Path) -> N
         assert (project / "mesh" / "final_mesh.ply").is_file()
         assert "[ok]" in _chip_text(window, "3. Skin")
         assert window._ese_tab._final_mesh is not None
+    finally:
+        window.close()
+        app.quit()
+
+
+def test_overwrite_dialog_invalidates_before_worker_runs_offscreen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Confirming the dialog drops derived artifacts before generation starts."""
+    import time
+
+    from PySide6.QtWidgets import QMessageBox, QPushButton
+
+    from virda.io.importers.scalp_mesh import import_scalp_mesh
+    from virda_gui.tabs import base_generation_tab as bgt
+
+    app = _offscreen_app()
+    prefs = _make_prefs(tmp_path)
+    tri = _write_triangle_ply(tmp_path / "tri.ply")
+    seen: dict[str, bool] = {}
+
+    def fake_generate(source: Path, sealing: object, cleaning: object, voxel_size_mm: float):
+        seen["final_gone_before_worker"] = not (
+            tmp_path / "regen-project" / "mesh" / "final_mesh.ply"
+        ).exists()
+        return import_scalp_mesh(tri)
+
+    monkeypatch.setattr(bgt, "generate_mesh_from_nifti", fake_generate)
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+    window = IdeWindow(prefs=prefs)
+    try:
+        project = tmp_path / "regen-project"
+        _write_full_project(project)
+        window.open_project(project)
+        nifti = sorted((project / "input").glob("*.nii*"))[0]
+        window._base_tab.set_source(nifti)
+
+        generate = [b for b in window._base_tab.findChildren(QPushButton) if "Generate" in b.text()]
+        assert generate
+        generate[0].click()
+
+        tab = window._base_tab
+        start = time.monotonic()
+        while getattr(tab, "_generation_busy", False) and time.monotonic() - start < 10:
+            app.processEvents()
+        assert seen["final_gone_before_worker"], "invalidation must precede the worker"
+
+        assert not (project / "mesh" / "final_mesh.ply").is_file()
+        assert list((project / "ese").glob("*")) == []
+        assert "[ok]" not in _chip_text(window, "3. Skin")
+        assert "[ok]" not in _chip_text(window, "4. Sensor")
+        assert not (project / "mesh" / "final_mesh.ply").is_file()  # auto-save held
     finally:
         window.close()
         app.quit()

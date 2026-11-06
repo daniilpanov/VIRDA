@@ -76,15 +76,15 @@ def pipeline_steps(
     """Build the five pipeline steps from saved and in-memory progress.
 
     Saved files win over memory: a step is ``done`` when its artifact is on
-    disk, ``unsaved`` when it exists only in memory, ``active`` when it is
-    the next actionable step, and ``waiting`` otherwise.  A step is
-    ``enabled`` only when its prerequisites are ready, enforcing the
-    1 -> 2 -> 3 -> 4 -> 5 order: scan, base, mesh, ESE, points.  The points
-    step additionally needs the sensor surface, so dropping the ESE mesh
-    un-dones it while the tables themselves are kept.  Progress is a strict
-    prefix without holes: a step is actionable only when the previous
-    artifact exists, so orphaned files behind a gap (e.g. a final mesh
-    without a base) stay waiting and locked instead of showing a stale [ok].
+    disk, ``unsaved`` when it exists only in memory, ``active`` when the
+    previous step is saved and this one is next in line, and ``waiting``
+    otherwise.  Progress is a strict prefix without holes: a step is
+    actionable only when every step before it is saved on disk, so cascade
+    invalidation (a fresh base, a new scan) walks all steps after the gap
+    instead of freeing only the immediate successor.  Orphaned files behind
+    a gap (e.g. a final mesh without a base) stay waiting and locked instead
+    of showing a stale [ok].  The points step additionally needs the sensor
+    surface, so dropping the ESE mesh un-dones it while the tables are kept.
     """
     base_present = base_saved or base_in_memory
     mesh_present = mesh_saved or mesh_in_memory
@@ -119,8 +119,8 @@ def pipeline_steps(
         mesh_state = "unsaved"
         mesh_detail = "Save the skin surface to continue."
     else:
-        mesh_state = "active"
-        mesh_detail = "Postprocess the base surface."
+        mesh_state = "active" if base_saved else "waiting"
+        mesh_detail = "Postprocess the base surface." if base_saved else "Save the base first."
     mesh_eff = base_present and mesh_present
 
     ese_orphaned = ese_present and not mesh_eff
@@ -139,14 +139,17 @@ def pipeline_steps(
         ese_state = "unsaved"
         ese_detail = "Save the sensor surface to continue."
     else:
-        ese_state = "active"
-        ese_detail = "Set the offset and generate the sensor surface."
-    ese_eff = mesh_eff and ese_present
+        ese_state = "active" if mesh_saved else "waiting"
+        ese_detail = (
+            "Set the offset and generate the sensor surface."
+            if mesh_saved
+            else "Needs the skin surface saved first."
+        )
 
     tables_ready = fiducials_filled >= 3 and measurement_rows >= 1
-    if not ese_eff:
+    if not (mesh_eff and ese_saved):
         points_state = "waiting"
-        points_detail = "Needs the sensor surface first."
+        points_detail = "Needs the sensor surface saved first."
     elif tables_ready:
         points_state = "done"
         points_detail = "Points and measures ready."
@@ -179,7 +182,7 @@ def pipeline_steps(
             title="3. Skin surface (mesh)",
             detail=mesh_detail,
             state=mesh_state,
-            enabled=base_present,
+            enabled=base_saved,
             orphaned=mesh_orphaned,
         ),
         PipelineStep(
@@ -187,7 +190,7 @@ def pipeline_steps(
             title="4. Sensor surface (ESE)",
             detail=ese_detail,
             state=ese_state,
-            enabled=mesh_eff,
+            enabled=mesh_eff and mesh_saved,
             orphaned=ese_orphaned,
         ),
         PipelineStep(
@@ -195,6 +198,6 @@ def pipeline_steps(
             title="5. Points and measures",
             detail=points_detail,
             state=points_state,
-            enabled=ese_eff,
+            enabled=mesh_eff and ese_saved,
         ),
     ]

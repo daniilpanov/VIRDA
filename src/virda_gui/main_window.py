@@ -151,6 +151,7 @@ class IdeWindow(QMainWindow):
         self._base_tab.saved.connect(self._refresh_pipeline)
         self._base_tab.busyChanged.connect(self._mesh_processing_tab.set_locked)
         self._base_tab.busyChanged.connect(self._ese_tab.set_locked)
+        self._base_tab.overwriteAccepted.connect(lambda: self._invalidate_steps_after(2))
         self._base_tab.meshRequested.connect(self._show_mesh_processing_tab)
         self._base_tab.status.connect(self._status)
 
@@ -183,6 +184,7 @@ class IdeWindow(QMainWindow):
         self._sidebar.importFilesRequested.connect(self._on_import_files)
         self._sidebar.fileActivated.connect(self._open_file_tab)
         self._base_tab.busyChanged.connect(self._sidebar.set_busy_locked)
+        self._base_tab.busyChanged.connect(self._set_tabs_locked)
 
         self._tabs = QTabWidget(self)
         self._tabs.setTabsClosable(True)
@@ -491,9 +493,8 @@ class IdeWindow(QMainWindow):
         self._add_tab(self._base_tab, "Base Generation")
 
     def _on_base_generated(self, _mesh: object) -> None:
-        """Reload the mesh tab after the base tab saved; derived meshes went stale."""
-        self._invalidate_derived_meshes(delete_base=False, delete_final=True)
-        self._mesh_processing_tab.set_stale(True)
+        """Reload the mesh tab after the base tab saved; downstream steps stay stale."""
+        self._invalidate_steps_after(2)
         project = self._project
         if project is not None:
             self._mesh_processing_tab.prefill_from_project(project)
@@ -521,6 +522,12 @@ class IdeWindow(QMainWindow):
         pending, self._invalidated_file_tabs = self._invalidated_file_tabs, []
         for key in pending:
             self._open_file_tab(Path(key))
+
+    def _set_tabs_locked(self, locked: bool) -> None:
+        """Disable every tab except the current one while a base generates."""
+        for index in range(self._tabs.count()):
+            enabled = not locked or self._tabs.widget(index) is self._tabs.currentWidget()
+            self._tabs.setTabEnabled(index, enabled)
 
     def _show_ese_tab(self) -> None:
         self._sync_ese_backdrop()
@@ -749,7 +756,7 @@ class IdeWindow(QMainWindow):
         target = self._perform_import(role, source)
         if target is None:
             return
-        self._invalidate_derived_meshes(delete_base=True)
+        self._invalidate_steps_after(1)
         self._show_base_tab()
         self._base_tab.set_source(target)
         self._status("Scan imported. Press Generate base mesh when ready.", 5000)
@@ -762,6 +769,18 @@ class IdeWindow(QMainWindow):
             "Import NIfTI scan",
             "Existing NIfTI is identical to the imported one.",
         )
+
+    def _invalidate_steps_after(self, step: int) -> None:
+        """Invalidate every pipeline step after *step* (1-based, uniform rule).
+
+        1 = brain scan: the base, skin, sensor and points steps go; 2 = base
+        mesh: the skin and sensor steps go.  The artifacts behind the gap are
+        dropped, the in-memory meshes cleared, the localization blocked, and
+        the tabs hold off their work until the steps are re-saved in order.
+        """
+        self._invalidate_derived_meshes(delete_base=step <= 1, delete_final=step <= 2)
+        self._mesh_processing_tab.set_stale(step <= 2)
+        self._ese_tab.set_stale(True)
 
     def _invalidate_derived_meshes(self, *, delete_base: bool, delete_final: bool = False) -> None:
         """Drop derived meshes from disk and memory; tables are always kept.
@@ -1471,6 +1490,8 @@ class IdeWindow(QMainWindow):
 
     def _on_mesh_saved(self) -> None:
         self._mesh_step_invalidated = False
+        self._mesh_processing_tab.set_stale(False)
+        self._ese_tab.set_stale(False)
         self._sync_ese_backdrop()
         if self._state.last_project_dir:
             self._sidebar.set_project(Path(self._state.last_project_dir))

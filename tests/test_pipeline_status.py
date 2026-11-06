@@ -58,7 +58,7 @@ def test_steps_unlock_in_order() -> None:
     assert _enabled(_base(nifti_saved=True, base_in_memory=True)) == [
         ("scan", True),
         ("base", True),
-        ("mesh", True),
+        ("mesh", False),
         ("ese", False),
         ("points", False),
     ]

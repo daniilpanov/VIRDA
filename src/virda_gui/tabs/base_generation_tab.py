@@ -76,6 +76,7 @@ class BaseGenerationTab(QWidget):
     status = Signal(str)  # noqa: N815 - non-blocking log lines
     busyChanged = Signal(bool)  # noqa: N815 - generation running
     meshRequested = Signal()  # noqa: N815 - jump to the Mesh Processing tab
+    overwriteAccepted = Signal()  # noqa: N815 - host may invalidate now, pre-generation
 
     def __init__(self, state: AppState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -305,8 +306,11 @@ class BaseGenerationTab(QWidget):
                 )
                 return
             self.set_source(source)
-        if self._derived_artifacts_exist() and not self._confirm_overwrite():
+        derived_exist = self._derived_artifacts_exist()
+        if derived_exist and not self._confirm_overwrite():
             return
+        if derived_exist:
+            self.overwriteAccepted.emit()
         assert self._source_path is not None
         source = self._source_path
         sealing = SealingOptions(
