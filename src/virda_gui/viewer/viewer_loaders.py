@@ -160,7 +160,7 @@ def intensify_color(color: str) -> str:
 def _load_electrodes(
     path: str,
     cras_offset: np.ndarray | None = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[dict[str, float]], list[str]]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[str]]:
     """Load electrodes from a Stage 3 JSON or a tabular CSV/TSV file.
 
     Dispatches to ``_load_electrodes_from_json`` for ``.json`` files and to
@@ -178,19 +178,18 @@ def _load_electrodes(
 
 def _load_electrodes_from_json(
     path: str,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[dict[str, float]], list[str]]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[str]]:
     """Read ``electrodes.json`` from the Stage 3 output.
 
-    Returns scalp points, residuals, flags, measured distances and display
-    names of the localized electrodes (used to draw fiducial links and ID
-    labels). Non-localized electrodes are skipped.
+    Returns scalp points, residuals, flags and display names of the
+    localized electrodes (used to draw ID labels). Non-localized electrodes
+    are skipped.
     """
     with open(path, encoding="utf-8") as fh:
         data = json.load(fh)
     points: list[np.ndarray] = []
     residuals: list[float] = []
     flags: list[bool] = []
-    measured: list[dict[str, float]] = []
     names: list[str] = []
     for index, item in enumerate(data):
         coords = item.get("coords") or item.get("scalp_coords")
@@ -199,20 +198,13 @@ def _load_electrodes_from_json(
         points.append(np.asarray(coords, dtype=np.float64))
         residuals.append(float(item.get("residual_error") or 0.0))
         flags.append(bool(item.get("flagged", False)))
-        measured.append(
-            {
-                str(fiducial_id): float(distance)
-                for fiducial_id, distance in item.get("measured_distances", {}).items()
-            }
-        )
         names.append(str(item.get("electrode_id") or f"E{index + 1:03d}"))
     if not points:
-        return np.empty((0, 3)), np.empty(0), np.empty(0), [], []
+        return np.empty((0, 3)), np.empty(0), np.empty(0), []
     return (
         np.asarray(points),
         np.asarray(residuals),
         np.asarray(flags, dtype=bool),
-        measured,
         names,
     )
 
@@ -220,13 +212,14 @@ def _load_electrodes_from_json(
 def _load_electrodes_from_csv(
     path: str,
     cras_offset: np.ndarray | None = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[dict[str, float]], list[str]]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[str]]:
     """Read electrodes from a TSV/CSV with columns: name, x, y, z.
 
-    Returns positions with zero residuals, no flags and no fiducial links.
-    Column names are matched case-insensitively.  The delimiter is detected
-    automatically by :class:`csv.Sniffer`.  When ``cras_offset`` is given the
-    positions are treated as FreeSurfer cRAS and shifted into scanner RAS.
+    Returns positions with zero residuals, no flags and generated display
+    names.  Column names are matched case-insensitively.  The delimiter is
+    detected automatically by :class:`csv.Sniffer`.  When ``cras_offset`` is
+    given the positions are treated as FreeSurfer cRAS and shifted into
+    scanner RAS.
     """
     import csv
 
@@ -260,7 +253,7 @@ def _load_electrodes_from_csv(
             names.append(str(raw_name).strip() if raw_name else f"E{index + 1:03d}")
 
     if not points:
-        return np.empty((0, 3)), np.empty(0), np.empty(0, dtype=bool), [], []
+        return np.empty((0, 3)), np.empty(0), np.empty(0, dtype=bool), []
     positions = np.asarray(points)
     if cras_offset is not None:
         positions = positions + cras_offset
@@ -268,25 +261,8 @@ def _load_electrodes_from_csv(
         positions,
         np.zeros(len(points)),
         np.zeros(len(points), dtype=bool),
-        [{} for _ in points],
         names,
     )
-
-
-def build_electrode_links(
-    points: np.ndarray,
-    measured: list[dict[str, float]],
-    fiducial_id_to_point: dict[str, np.ndarray],
-) -> np.ndarray:
-    """Return (N, 2, 3) line segments from each electrode to its measured fiducials."""
-    pairs: list[np.ndarray] = []
-    for point, distances in zip(points, measured, strict=True):
-        for fiducial_id in distances:
-            if fiducial_id in fiducial_id_to_point:
-                pairs.append(np.vstack([point, fiducial_id_to_point[fiducial_id]]))
-    if not pairs:
-        return np.empty((0, 2, 3))
-    return np.asarray(pairs)
 
 
 def _scene_bounds_to_world(bounds: _BOUNDS, transform: np.ndarray) -> _BOUNDS:
@@ -407,7 +383,6 @@ class SceneData:
     hi_clim: tuple[float, float] | None = None
     fiducial_points: np.ndarray | None = None
     fiducial_labels: list[str] = field(default_factory=list)
-    fiducial_id_to_point: dict[str, np.ndarray] = field(default_factory=dict)
     electrode_groups: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -462,17 +437,14 @@ def collect_scene_data(
         fiducial_points, fiducial_labels = load_fiducial_points(fiducials_path)
 
     scene_fiducials = None
-    fiducial_id_to_point: dict[str, np.ndarray] = {}
     if fiducial_points is not None:
         scene_fiducials = fiducial_points
         if not mm_scene:
             scene_fiducials = transform_points(fiducial_points, np.linalg.inv(affine))
-        for label, point in zip(fiducial_labels, scene_fiducials, strict=True):
-            fiducial_id_to_point[label.split(" (")[0]] = point
 
     electrode_groups: list[dict[str, Any]] = []
     for gi, (epath, spec_color) in enumerate(electrode_specs or []):
-        points, _, flags, measured, names = _load_electrodes(epath)
+        points, _, flags, names = _load_electrodes(epath)
         label = epath.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
         if not epath.endswith(".json") and cras_offset is not None and len(points) > 0:
             if electrodes_cras:
@@ -491,7 +463,6 @@ def collect_scene_data(
             {
                 "points": points,
                 "flags": flags,
-                "measured": measured,
                 "names": names,
                 "label": label,
                 "color": _resolve_group_color(spec_color, gi),
@@ -506,6 +477,5 @@ def collect_scene_data(
         hi_clim=hi_clim,
         fiducial_points=scene_fiducials,
         fiducial_labels=fiducial_labels,
-        fiducial_id_to_point=fiducial_id_to_point,
         electrode_groups=electrode_groups,
     )
