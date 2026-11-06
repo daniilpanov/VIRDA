@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "virda-gui-new"
+version = "1.0.1"
+description = "Interactive GUI and viewers for VIRDA electrode localization"
+requires-python = ">=3.14"
+dependencies = [
+    "nibabel>=5.0",
+    "numpy>=2.5.2",
+    "pyvista>=0.44",
+    "pyvistaqt>=0.11.4",
+    "PySide6>=6.6",
+    "trimesh>=5.0.0",
+    "virda",
+]
+
+[project.scripts]
+virda-gui-new = "virda_gui_new.app:main"
+
+[dependency-groups]
+build = ["pyinstaller==6.22.3"]
+
+[tool.uv.sources]
+virda = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/virda_gui"]
