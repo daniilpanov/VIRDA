@@ -70,7 +70,6 @@ class TestCollectSceneData:
         nifti_path = tmp_path / "t1.nii"
         mesh_path = tmp_path / "mesh.ply"
         fiducials_path = tmp_path / "fiducials.json"
-        normals_path = tmp_path / "normals.npy"
         electrodes_path = tmp_path / "electrodes.tsv"
         _write_t1(nifti_path)
         _write_sphere_mesh(mesh_path)
@@ -84,23 +83,16 @@ class TestCollectSceneData:
             "name\tx\ty\tz\nE1\t80.0\t0.0\t0.0\nE2\t0.0\t0.0\t80.0\n",
             encoding="utf-8",
         )
-        # Per-vertex normals: preserve the vertex count for later rendering.
-        mesh = trimesh.load(str(mesh_path), force="mesh")
-        assert isinstance(mesh, trimesh.Trimesh)
-        n_vertices = len(mesh.vertices)
-        np.save(normals_path, np.zeros((n_vertices, 3)))
 
         scene = collect_scene_data(
             nifti_path=str(nifti_path),
             mesh_path=str(mesh_path),
             fiducials_path=str(fiducials_path),
-            normals_path=str(normals_path),
             electrode_specs=[(str(electrodes_path), "yellow")],
         )
 
         assert scene.volume is not None
         assert scene.scene_mesh is not None
-        assert scene.normals_poly is not None
         assert scene.fiducial_points is not None
         assert scene.fiducial_labels == ["Nz (Nasion)"]
         assert len(scene.electrode_groups) == 1

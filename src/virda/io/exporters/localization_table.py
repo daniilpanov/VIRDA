@@ -27,18 +27,26 @@ def export_localization_table(
     world (scanner RAS) and head (centred) frames, the measured distances to
     the fiducials, the residual error and the flag.  The head frame is
     ``world - cras_offset``; when *cras_offset* is missing (no NIfTI loaded)
-    the head columns are left empty.  Returns the written path.
+    the ``head_*`` columns are omitted from the table entirely.  Returns the
+    written path.
     """
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
+    head_offsets = (
+        (
+            "head_x",
+            "head_y",
+            "head_z",
+        )
+        if cras_offset is not None
+        else ()
+    )
     fieldnames = [
         "name",
         "world_x",
         "world_y",
         "world_z",
-        "head_x",
-        "head_y",
-        "head_z",
+        *head_offsets,
         *[fiducial.lower() for fiducial in fiducial_columns],
         "residual_mm",
         "flagged",
@@ -57,9 +65,6 @@ def export_localization_table(
                 "world_x": _coordinate(electrode.ese_coords, 0),
                 "world_y": _coordinate(electrode.ese_coords, 1),
                 "world_z": _coordinate(electrode.ese_coords, 2),
-                "head_x": _coordinate(head_coords, 0),
-                "head_y": _coordinate(head_coords, 1),
-                "head_z": _coordinate(head_coords, 2),
                 "residual_mm": (
                     electrode.residual_error
                     if electrode.is_localized and electrode.residual_error is not None
@@ -67,6 +72,10 @@ def export_localization_table(
                 ),
                 "flagged": "yes" if electrode.flagged else "no",
             }
+            if cras_offset is not None:
+                row["head_x"] = _coordinate(head_coords, 0)
+                row["head_y"] = _coordinate(head_coords, 1)
+                row["head_z"] = _coordinate(head_coords, 2)
             for fiducial in fiducial_columns:
                 row[fiducial.lower()] = _distance(electrode.measured_distances, fiducial)
             writer.writerow(row)

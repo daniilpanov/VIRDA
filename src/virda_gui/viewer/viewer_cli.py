@@ -32,11 +32,8 @@ def show_viewer(
     nifti_path: str | None = None,
     mesh_path: str | None = None,
     fiducials_path: str | None = None,
-    normals_path: str | None = None,
     downsample_stride: int = 1,
     mesh_opacity: float = 0.6,
-    normals_scale: float = 3.0,
-    normals_density: int = 500,
     electrode_specs: list[tuple[str, str | None]] | None = None,
     electrodes_cras: bool = False,
     log: Callable[[str], None] = print,
@@ -70,11 +67,8 @@ def show_viewer(
         nifti_path=nifti_path,
         mesh_path=mesh_path,
         fiducials_path=fiducials_path,
-        normals_path=normals_path,
         downsample_stride=downsample_stride,
         mesh_opacity=mesh_opacity,
-        normals_scale=normals_scale,
-        normals_density=normals_density,
         electrode_specs=electrode_specs,
         electrodes_cras=electrodes_cras,
     )
@@ -103,22 +97,6 @@ def main() -> None:
     parser.add_argument(
         "--fiducials",
         help="Path to fiducials JSON (input/fiducials.json).",
-    )
-    parser.add_argument(
-        "--normals",
-        help="Path to normals file (normals.npy) for visualisation.",
-    )
-    parser.add_argument(
-        "--normals-scale",
-        type=float,
-        default=3.0,
-        help="Visual length of normal arrows in scene units (default: 3.0).",
-    )
-    parser.add_argument(
-        "--normals-density",
-        type=int,
-        default=500,
-        help="Show one normal per N vertices (default: 500).",
     )
     parser.add_argument(
         "--electrodes",
@@ -162,11 +140,8 @@ def main() -> None:
         nifti_path=args.nifti,
         mesh_path=args.mesh,
         fiducials_path=args.fiducials,
-        normals_path=args.normals,
         downsample_stride=args.downsample,
         mesh_opacity=args.mesh_opacity,
-        normals_scale=args.normals_scale,
-        normals_density=args.normals_density,
         electrode_specs=specs,
         electrodes_cras=args.electrodes_cras,
     )

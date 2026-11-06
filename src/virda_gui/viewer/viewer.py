@@ -3,9 +3,10 @@
 :class:`ViewerWidget` renders the scalp mesh on top of a semi-transparent MRI
 volume and places both objects in the same coordinate frame using the NIfTI
 affine, so the mesh overlays the actual scalp in all three views. Qt
-checkboxes toggle the visibility of the mesh, the MRI, the fiducial points,
-the normal glyphs and per-electrode labels, and a "Boost contrast" checkbox
-sharpens the MRI and the mesh.  :class:`ViewerWidget` wraps the same scene
+checkboxes toggle the visibility of each layer; by default the mesh, the
+fiducial points, the electrode groups and the labels are visible, while the
+MRI volume and the sharpened "Boost contrast" view start hidden.
+:class:`ViewerWidget` wraps the same scene
 that the standalone ``virda-gui-viewer`` CLI (module ``virda_gui.viewer.viewer_cli``)
 shows in a blocking window; the GUI embeds it on its 3D Viewer tab.
 """
@@ -26,7 +27,6 @@ from pyvistaqt import QtInteractor
 
 from .viewer_loaders import (
     SceneData,
-    build_electrode_links,
     collect_scene_data,
     intensify_color,
 )
@@ -89,13 +89,11 @@ class ViewerWidget(QWidget):
         self._mesh_actor: Any = None
         self._fiducial_actor: Any = None
         self._fiducial_label_actor: Any = None
-        self._normals_actor: Any = None
         self._electrode_actors_per_group: list[list[Any]] = []
         self._flagged_actors_per_group: list[list[Any]] = []
-        self._link_actors_per_group: list[list[Any]] = []
         self._label_actors_per_group: list[list[Any]] = []
         self._group_states: list[bool] = []
-        self._mri_visible = True
+        self._mri_visible = False
         self._fiducials_visible = True
         self._labels_visible = True
         self._mesh_opacity = 0.6
@@ -247,24 +245,15 @@ class ViewerWidget(QWidget):
                 always_visible=True,
             )
 
-        self._normals_actor = None
-        if scene.normals_poly is not None:
-            self._normals_actor = self._plotter.add_mesh(
-                scene.normals_poly, color="cyan", opacity=0.8, line_width=2
-            )
-
         self._electrode_actors_per_group = []
         self._flagged_actors_per_group = []
-        self._link_actors_per_group = []
         self._label_actors_per_group = []
         for group in scene.electrode_groups:
             pts = group["points"]
             flg = group["flags"]
-            meas = group["measured"]
             color = group["color"]
             e_actors: list[Any] = []
             f_actors: list[Any] = []
-            l_actors: list[Any] = []
             n_actors: list[Any] = []
             if pts is not None and len(pts) > 0:
                 healthy = ~flg
@@ -286,10 +275,6 @@ class ViewerWidget(QWidget):
                             render_points_as_spheres=True,
                         )
                     )
-                links = build_electrode_links(pts, meas, scene.fiducial_id_to_point)
-                if len(links) > 0:
-                    flat = links.reshape(-1, 3)
-                    l_actors.append(self._plotter.add_lines(flat, color=color, width=1))
                 n_actors.append(
                     self._plotter.add_point_labels(
                         pts,
@@ -305,11 +290,10 @@ class ViewerWidget(QWidget):
                 )
             self._electrode_actors_per_group.append(e_actors)
             self._flagged_actors_per_group.append(f_actors)
-            self._link_actors_per_group.append(l_actors)
             self._label_actors_per_group.append(n_actors)
 
         self._group_states = [True] * len(scene.electrode_groups)
-        self._mri_visible = True
+        self._mri_visible = False
         self._fiducials_visible = True
         self._labels_visible = True
         self._build_layers(scene)
@@ -320,21 +304,15 @@ class ViewerWidget(QWidget):
         if self._mesh_actor is not None:
             self._add_layer_check("Show mesh", True, self._set_mesh_visibility)
         if self._mri_actor is not None:
-            self._add_layer_check("Show MRI", True, self._set_mri_visibility)
+            self._add_layer_check("Show MRI", False, self._set_mri_visibility)
         if self._fiducial_actor is not None:
             self._add_layer_check("Show fiducials", True, self._set_fiducials_visibility)
-        if self._normals_actor is not None:
-            self._add_layer_check("Show normals", True, self._set_normals_visibility)
         if self._fiducial_label_actor is not None or any(
             group_actors for group_actors in self._label_actors_per_group
         ):
             self._add_layer_check("Show labels", True, self._set_labels_visibility)
         for gi, group in enumerate(scene.electrode_groups):
-            all_actors = (
-                self._electrode_actors_per_group[gi]
-                + self._flagged_actors_per_group[gi]
-                + self._link_actors_per_group[gi]
-            )
+            all_actors = self._electrode_actors_per_group[gi] + self._flagged_actors_per_group[gi]
             if all_actors or self._label_actors_per_group[gi]:
                 self._add_layer_check(
                     f"Show {group['label']}",
@@ -363,11 +341,7 @@ class ViewerWidget(QWidget):
 
     def _apply_group_visibility(self, gi: int) -> None:
         visible = self._group_states[gi]
-        for actor in (
-            self._electrode_actors_per_group[gi]
-            + self._flagged_actors_per_group[gi]
-            + self._link_actors_per_group[gi]
-        ):
+        for actor in self._electrode_actors_per_group[gi] + self._flagged_actors_per_group[gi]:
             actor.SetVisibility(visible)
         for actor in self._label_actors_per_group[gi]:
             actor.SetVisibility(visible and self._labels_visible)
@@ -386,10 +360,6 @@ class ViewerWidget(QWidget):
         if self._fiducial_actor is not None:
             self._fiducial_actor.SetVisibility(flag)
         self._apply_labels_visibility()
-
-    def _set_normals_visibility(self, flag: bool) -> None:
-        if self._normals_actor is not None:
-            self._normals_actor.SetVisibility(flag)
 
     def _set_labels_visibility(self, flag: bool) -> None:
         self._labels_visible = bool(flag)

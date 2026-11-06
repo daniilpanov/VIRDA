@@ -32,7 +32,6 @@ ROLE_REGISTRY: tuple[ImportRole, ...] = (
         "mesh/scalp_face_adjacency.npy",
     ),
     ImportRole("ese_mesh", "ESE mesh", "ESE", "ese/ese_mesh.ply"),
-    ImportRole("normals", "Normals", "ESE", "ese/normals.npy"),
     ImportRole(
         "electrodes",
         "Localized electrodes",

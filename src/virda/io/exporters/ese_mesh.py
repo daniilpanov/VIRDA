@@ -21,10 +21,10 @@ def export_ese_mesh(path: str | Path, ese_mesh: ESEMesh) -> Path:
 def export_ese_companions(path: str | Path, ese_mesh: ESEMesh) -> Path:
     """Write the ``ese/`` companion files next to the PLY at *path*.
 
-    Writes ``ese_vertices.npy``, ``ese_faces.npy``, ``normals.npy``,
-    ``quality.npy`` and ``point_pairs.json`` so
-    :func:`virda.io.importers.ese_mesh.import_ese_mesh` can rebuild the mesh
-    later.  Returns the directory holding the companions.
+    Writes ``ese_vertices.npy``, ``ese_faces.npy``, ``quality.npy`` and
+    ``point_pairs.json`` (which still embeds the per-vertex normals and
+    quality) so :func:`virda.io.importers.ese_mesh.import_ese_mesh` can
+    rebuild the mesh later.  Returns the directory holding the companions.
     """
     root = Path(path).parent
     root.mkdir(parents=True, exist_ok=True)
@@ -35,7 +35,6 @@ def export_ese_companions(path: str | Path, ese_mesh: ESEMesh) -> Path:
     scalp_vertices = np.asarray(ese_mesh.scalp_vertices, dtype=np.float64)
     np.save(root / "ese_vertices.npy", vertices)
     np.save(root / "ese_faces.npy", faces)
-    np.save(root / "normals.npy", normals)
     np.save(root / "quality.npy", quality)
     pairs = {
         "n_points": int(vertices.shape[0]),
