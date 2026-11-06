@@ -4,16 +4,12 @@ The stage orchestrators (:func:`run_stage1`, :func:`run_stage2`,
 :func:`run_stage3`) compose the plain ``virda.ops`` step functions and the
 ``virda.io.exporters`` writers with explicit arguments and return values —
 there is no pipeline context or store registry anymore.  :class:`PipelineRunner`
-runs them off the GUI thread and streams human-readable progress plus sentinel
-markers over the shared :class:`queue.Queue`; the main thread turns those
-sentinels into Qt signals via :meth:`PipelineRunner.poll`.
+runs them off the GUI thread and reports completion/failure through Qt signals.
 """
 
 import logging
-import queue
 import threading
 import time
-from collections.abc import Callable
 from dataclasses import dataclass
 from logging import Logger
 from pathlib import Path
@@ -23,19 +19,16 @@ from PySide6.QtCore import QObject, Signal
 from virda.config import resolve_stage3_config
 from virda.io.importers.fiducials import load_manual_fiducials
 from virda.io.importers.measurements import load_measurements
-from virda.io.importers.nifti import load_nifti
-from virda.logging_setup import get_stage_logger
+from virda.io.importers.nifti import import_nifti
 from virda.models.config import Config
 from virda.models.coordsystem import Coordsystem
 from virda.models.electrode import Electrodes
 from virda.models.ese_mesh import ESEMesh
 from virda.models.fiducial import (
-    AutoDetectedFiducials,
     Fiducials,
     ManualFiducials,
 )
 from virda.models.scalp_mesh import ScalpMesh
-from virda.ops.auto_detect_fiducials import auto_detect_fiducials
 from virda.ops.build_ese import build_ese
 from virda.ops.clean_mesh import clean_mesh
 from virda.ops.extract_mesh import extract_mesh
@@ -56,25 +49,20 @@ class _Stage1Result:
 
 def _resolve_stage1_fiducials(
     manual: ManualFiducials | None,
-    auto: AutoDetectedFiducials | None,
     coordsystem: Coordsystem | None,
 ) -> Fiducials:
-    """Prefer manual fiducials, then auto-detected ones, then coordsystem defaults."""
+    """Prefer manual fiducials, then coordsystem defaults."""
     for candidate in (
         manual.fiducials if manual is not None else None,
-        auto.fiducials if auto is not None else None,
         coordsystem.to_fiducials() if coordsystem is not None else None,
     ):
         if candidate is not None and candidate.items:
             return candidate
     raise ValueError(
-        "No fiducials available: provide a manual fiducials file,"
-        " enable auto_detect_fiducials, or supply a coordsystem.json config file"
+        "No fiducials available: provide a manual fiducials file"
+        " or supply a coordsystem.json config file"
     )
 
-
-_DONE_SENTINEL = "__DONE__"
-_ERROR_SENTINEL = "__ERROR__"
 
 _ARTIFACT_SIZE_ATTRS = ("shape", "vertices", "locations", "items")
 
@@ -132,13 +120,12 @@ def run_stage1(config: Config) -> _Stage1Result:
             " or add it to an input config file."
         )
 
-    project_dir = Path(resolved_project_dir)
     resolved_fiducials_path = config.fiducials_path
     nifti_path = Path(resolved_nifti_path)
 
-    logger = get_stage_logger(project_dir, "stage_1")
+    logger = logging.getLogger("virda_gui.stage_1")
 
-    volume = load_nifti(nifti_path)
+    volume = import_nifti(nifti_path)
     _log_artifact(logger, volume)
 
     mask = segment_head(
@@ -174,9 +161,8 @@ def run_stage1(config: Config) -> _Stage1Result:
     manual = (
         load_manual_fiducials(Path(resolved_fiducials_path)) if resolved_fiducials_path else None
     )
-    auto = auto_detect_fiducials(mesh) if config.auto_detect_fiducials else None
 
-    fiducials = _resolve_stage1_fiducials(manual, auto, config.coordsystem)
+    fiducials = _resolve_stage1_fiducials(manual, config.coordsystem)
 
     result = _Stage1Result(mesh=mesh, fiducials=fiducials)
     _log_artifact(logger, result)
@@ -186,7 +172,7 @@ def run_stage1(config: Config) -> _Stage1Result:
 
 def run_stage2(config: Config, scalp_mesh: ScalpMesh) -> ESEMesh:
     """Build the ESE surface and export it (Stage 2)."""
-    logger = get_stage_logger(Path(config.project_dir), "stage_2")
+    logger = logging.getLogger("virda_gui.stage_2")
 
     ese_mesh = build_ese(
         scalp_mesh,
@@ -222,7 +208,6 @@ def run_stage3(
             "Project directory path not provided. "
             "Set project_dir in a config file or the PROJECT_DIR environment variable."
         )
-    project = Path(project_dir)
 
     stage3_config = resolve_stage3_config(config)
 
@@ -231,7 +216,7 @@ def run_stage3(
         stage1_result.fiducials,
     )
 
-    logger = get_stage_logger(project, "stage_3")
+    logger = logging.getLogger("virda_gui.stage_3")
     electrodes = localize_electrodes(
         ese_mesh,
         fiducials,
@@ -243,33 +228,11 @@ def run_stage3(
     return electrodes
 
 
-class _QueueLogHandler(logging.Handler):
-    """Forward ``virda.*`` log records into the GUI log queue.
-
-    ``emit`` runs on whatever thread logged the record (pipeline and viewer
-    run in background threads); :class:`queue.Queue` makes the hand-off to
-    the main thread safe.
-    """
-
-    def __init__(self, log_queue: queue.Queue[str | None]) -> None:
-        super().__init__()
-        self._log_queue = log_queue
-        self.setFormatter(logging.Formatter("%(levelname)s | %(name)s | %(message)s"))
-
-    def emit(self, record: logging.LogRecord) -> None:
-        try:
-            self._log_queue.put(self.format(record))
-        except Exception:  # pragma: no cover - logging must never raise
-            self.handleError(record)
-
-
 class PipelineRunner(QObject):
-    """Run the virda pipeline off the GUI thread and stream log messages.
+    """Run the virda pipeline off the GUI thread.
 
     Lives on the main thread so its signals dispatch through the Qt event
-    loop; only :meth:`_run` touches background threads.  The queue is shared
-    with :class:`virda_gui.widgets.LogViewer` via an attached
-    :class:`_QueueLogHandler`.
+    loop; only :meth:`_run` touches background threads.
     """
 
     finished = Signal()
@@ -278,7 +241,6 @@ class PipelineRunner(QObject):
     def __init__(self, state: AppState) -> None:
         super().__init__()
         self._state = state
-        self.log_handler = _QueueLogHandler(state.log_queue)
         self._pipeline_thread: threading.Thread | None = None
         self._closed = False
 
@@ -295,8 +257,7 @@ class PipelineRunner(QObject):
 
         The pipeline thread is a daemon, so the process can exit without it;
         joining for a bounded time handles the common cases (a finished or
-        nearly finished thread) instead of tearing the app down while the
-        worker still writes into the log queue.
+        nearly finished thread) instead of tearing the app down mid-run.
         """
         deadline = time.monotonic() + timeout
         thread = self._pipeline_thread
@@ -309,59 +270,22 @@ class PipelineRunner(QObject):
         self._closed = True
 
     def _run(self, config: Config, measurements_path: str | None) -> None:
-        """Background thread: run the pipeline and post results to the queue."""
+        """Background thread: run the pipeline and report the outcome."""
         try:
-            self._state.log_queue.put("Building configuration...")
             stage1_result, ese_mesh, electrodes = run(config, measurements_path)
-
-            msg = f"Stage 1: mesh with {len(stage1_result.mesh.vertices)} vertices"
-            self._state.log_queue.put(msg)
-
-            if ese_mesh is not None:
-                msg = f"Stage 2: ESE mesh with {len(ese_mesh.vertices)} vertices"
-                self._state.log_queue.put(msg)
 
             if electrodes is not None:
                 items = electrodes.items
                 localized = sum(1 for e in items if e.is_localized)
                 flagged = sum(1 for e in items if e.flagged)
                 shift = electrodes.calibrated_offset_shift_mm
-                msg = f"Stage 3: {localized}/{len(items)} electrodes localized ({flagged} flagged)"
-                if shift is not None:
-                    msg += f", ESE offset shift {shift:.2f} mm"
-                self._state.log_queue.put(msg)
                 self._state.stage3_summary = {
                     "total": len(items),
                     "localized": localized,
                     "flagged": flagged,
                     "offset_shift_mm": shift,
                 }
-            elif measurements_path:
-                self._state.log_queue.put(
-                    "Stage 3 skipped: ESE mesh or measurements are not available."
-                )
+            self.finished.emit()
 
-            self._state.log_queue.put("Pipeline completed successfully.")
-            self._state.log_queue.put(_DONE_SENTINEL)
-
-        except Exception as exc:
-            self._state.log_queue.put(f"ERROR: {exc}")
-            self._state.log_queue.put(_ERROR_SENTINEL)
-
-    def poll(self, append: Callable[[str], None]) -> None:
-        """Main thread: drain the log queue and turn sentinels into signals.
-
-        Plain log lines are handed to ``append``, which writes them to the
-        visible log widget.
-        """
-        try:
-            while True:
-                msg = self._state.log_queue.get_nowait()
-                if msg == _DONE_SENTINEL:
-                    self.finished.emit()
-                elif msg == _ERROR_SENTINEL:
-                    self.failed.emit()
-                else:
-                    append(msg)
-        except queue.Empty:
-            pass
+        except Exception:
+            self.failed.emit()

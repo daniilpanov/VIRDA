@@ -1,4 +1,15 @@
-"""Import a Stage 3 measurements JSON into an :class:`Electrodes` model."""
+"""Import a Stage 3 measurements JSON into :class:`Electrodes` models.
+
+Two callers live here:
+
+* :func:`import_measurements` is the plain reader used by the GUI project
+  loading; it returns only the :class:`Electrodes` set and ignores the
+  file-level ``fiducial_weights`` (fiducial weights live on the
+  :class:`Fiducials` model);
+* :func:`load_measurements` is the legacy entry point used by the old
+  pipeline runner; it also re-weights an optionally provided
+  :class:`Fiducials` copy.
+"""
 
 import json
 from dataclasses import replace
@@ -9,11 +20,8 @@ from virda.models.electrode import Electrode, Electrodes
 from virda.models.fiducial import Fiducials
 
 
-def load_measurements(
-    path: Path,
-    fiducials: Fiducials | None = None,
-) -> tuple[Electrodes, Fiducials | None]:
-    """Load a Stage 3 measurements JSON into an :class:`Electrodes` set.
+def import_measurements(path: str | Path) -> Electrodes:
+    """Read a measurements JSON file into an :class:`Electrodes` model.
 
     Format::
 
@@ -26,15 +34,32 @@ def load_measurements(
 
     ``electrode_id`` is optional; when missing or empty, sequential ids
     (``E001``, ``E002``, ...) are assigned in file order so that downstream
-    consumers always see stable identifiers.  ``fiducial_weights`` is
-    optional; when present it overrides the weights of ``fiducials`` used by
-    the localizer.
+    consumers always see stable identifiers.
+    """
+    data = cast(dict[str, Any], json.loads(Path(path).read_text(encoding="utf-8")))
+    return Electrodes(items=_parse_electrodes(data))
+
+
+def load_measurements(
+    path: Path,
+    fiducials: Fiducials | None = None,
+) -> tuple[Electrodes, Fiducials | None]:
+    """Load a Stage 3 measurements JSON into an :class:`Electrodes` set.
+
+    The document format is the same as for :func:`import_measurements`.
+    ``fiducial_weights`` is optional; when present it overrides the weights of
+    ``fiducials`` used by the localizer.
 
     Returns the electrodes together with the (possibly re-weighted)
     :class:`Fiducials` copy.
     """
     data = cast(dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
-    items = [
+    return Electrodes(items=_parse_electrodes(data)), _apply_weights(fiducials, data)
+
+
+def _parse_electrodes(data: dict[str, Any]) -> list[Electrode]:
+    """Build the electrode list from the parsed measurements document."""
+    return [
         Electrode(
             electrode_id=item.get("electrode_id") or f"E{index + 1:03d}",
             measured_distances={
@@ -44,7 +69,6 @@ def load_measurements(
         )
         for index, item in enumerate(data["electrodes"])
     ]
-    return Electrodes(items=items), _apply_weights(fiducials, data)
 
 
 def _apply_weights(

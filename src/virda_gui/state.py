@@ -5,7 +5,6 @@ scattered ad-hoc instance attributes on ``virda_gui.main_window.IdeWindow``,
 every view/worker touches the same dataclass so ownership is explicit.
 """
 
-import queue
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -22,7 +21,6 @@ class AppState:
     worker).
     """
 
-    log_queue: queue.Queue[str | None] = field(default_factory=queue.Queue)
     viewer_loading: bool = False
     last_project_dir: str | None = None
     advanced: dict[str, str] = field(default_factory=dict)
