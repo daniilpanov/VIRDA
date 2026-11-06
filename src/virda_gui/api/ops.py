@@ -1,11 +1,4 @@
-"""GUI-side facades over the ``virda`` core step functions.
-
-The core stays a flat set of typed functions; the facades bundle their
-keyword arguments into :mod:`virda_gui.options` values so tabs call
-``clean(mesh, CleanOptions())``-shaped APIs instead of raw keyword lists.
-
-No Qt here: these are plain callables, runnable off the GUI thread.
-"""
+"""GUI-side facades over the ``virda`` core step functions."""
 
 from dataclasses import dataclass
 from logging import Logger
@@ -25,7 +18,7 @@ from virda.ops.localize_electrodes import localize_electrodes
 from virda.ops.seal_mask import seal_mask
 from virda.ops.segment_head import segment_head
 from virda.ops.smooth_mesh import smooth_mesh
-from virda_gui.options import (
+from virda_gui.api.options import (
     CleanOptions,
     DecimateOptions,
     EseOptions,
