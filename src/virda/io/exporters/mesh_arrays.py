@@ -1,4 +1,4 @@
-"""Export triangular mesh vertices and faces as NumPy arrays."""
+"""Export triangular mesh vertices, faces and face adjacency as NumPy arrays."""
 
 from pathlib import Path
 
@@ -22,6 +22,21 @@ def export_mesh_faces(path: str | Path, faces: np.ndarray) -> Path:
         integer_array = np.asarray(array, dtype=np.int64)
         if not np.array_equal(array, integer_array):
             raise ValueError("face indices must be integers")
+        array = integer_array
+    else:
+        array = np.asarray(array, dtype=np.int64)
+    return _save_array(path, array)
+
+
+def export_mesh_adjacency(path: str | Path, adjacency: np.ndarray) -> Path:
+    """Write an ``(E, 2)`` int64 face-adjacency array to a NumPy file."""
+    array = np.asarray(adjacency)
+    if array.ndim != 2 or array.shape[1] != 2:
+        raise ValueError(f"expected (E, 2) adjacency, got shape {array.shape}")
+    if not np.issubdtype(array.dtype, np.integer):
+        integer_array = np.asarray(array, dtype=np.int64)
+        if not np.array_equal(array, integer_array):
+            raise ValueError("adjacency pairs must be integers")
         array = integer_array
     else:
         array = np.asarray(array, dtype=np.int64)
