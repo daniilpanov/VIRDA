@@ -40,7 +40,7 @@ from virda.io.importers.nifti import import_nifti
 from virda.models.config import Config
 from virda.models.coordsystem import Coordsystem
 from virda.models.electrode import Electrodes
-from virda.models.ese_mesh import ESEMesh
+from virda.models.ese_mesh import ESEMesh, Normals
 from virda.models.fiducial import (
     Fiducials,
     ManualFiducials,
@@ -114,8 +114,8 @@ def run(
     if config.to_ese_config() is None:
         return stage1_result, None, None
 
-    ese_mesh = run_stage2(config, stage1_result.mesh)
-    electrodes = run_stage3(config, stage1_result, ese_mesh, measurements_path)
+    ese_mesh, normals = run_stage2(config, stage1_result.mesh)
+    electrodes = run_stage3(config, stage1_result, ese_mesh, normals, measurements_path)
     return stage1_result, ese_mesh, electrodes
 
 
@@ -197,11 +197,11 @@ def run_stage1(config: Config) -> _Stage1Result:
     return result
 
 
-def run_stage2(config: Config, scalp_mesh: ScalpMesh) -> ESEMesh:
+def run_stage2(config: Config, scalp_mesh: ScalpMesh) -> tuple[ESEMesh, Normals]:
     """Build the ESE surface and export it (Stage 2)."""
     logger = logging.getLogger("virda_gui.stage_2")
 
-    ese_mesh = build_ese(
+    ese_mesh, normals = build_ese(
         scalp_mesh,
         config=config.to_stage2_config(),
         ese_offset_mm=config.to_ese_config().ese_offset_mm,
@@ -213,13 +213,14 @@ def run_stage2(config: Config, scalp_mesh: ScalpMesh) -> ESEMesh:
     export_ese_mesh(ese_mesh_path, ese_mesh)
     export_ese_companions(ese_mesh_path, ese_mesh)
 
-    return ese_mesh
+    return ese_mesh, normals
 
 
 def run_stage3(
     config: Config,
     stage1_result: _Stage1Result,
     ese_mesh: ESEMesh | None,
+    normals: Normals | None = None,
     measurements_path: str | Path | None = None,
 ) -> Electrodes | None:
     """Localize electrodes from precomputed Stage 1/2 results (Stage 3).
@@ -251,6 +252,7 @@ def run_stage3(
     logger = logging.getLogger("virda_gui.stage_3")
     electrodes = localize_electrodes(
         ese_mesh,
+        normals,
         fiducials,
         electrodes,
         config=stage3_config,

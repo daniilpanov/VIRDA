@@ -12,7 +12,7 @@ from logging import Logger
 
 from virda.mesh.mesh_decimator import decimate_mesh
 from virda.models.electrode import Electrodes
-from virda.models.ese_mesh import ESEMesh
+from virda.models.ese_mesh import ESEMesh, Normals
 from virda.models.fiducial import Fiducials
 from virda.models.mri_volume import MRIVolume
 from virda.models.scalp_mesh import ScalpMesh
@@ -89,7 +89,7 @@ def smooth(mesh: ScalpMesh, options: SmoothOptions) -> ScalpMesh:
     )
 
 
-def generate_ese(mesh: ScalpMesh, options: EseOptions) -> ESEMesh:
+def generate_ese(mesh: ScalpMesh, options: EseOptions) -> tuple[ESEMesh, Normals]:
     """Estimate outward normals and offset the scalp surface into the ESE mesh."""
     return build_ese(
         mesh,
@@ -106,6 +106,7 @@ def generate_ese(mesh: ScalpMesh, options: EseOptions) -> ESEMesh:
 
 def localize(
     ese: ESEMesh,
+    normals: Normals,
     fiducials: Fiducials,
     electrodes: Electrodes,
     options: LocalizeOptions,
@@ -114,6 +115,7 @@ def localize(
     """Localize electrodes on the ESE surface by brute-force search."""
     return localize_electrodes(
         ese,
+        normals,
         fiducials,
         electrodes,
         config=Stage3Config(

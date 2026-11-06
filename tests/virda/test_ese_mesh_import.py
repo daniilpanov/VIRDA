@@ -12,7 +12,6 @@ VERTICES = np.array(
 )
 FACES = np.array([[0, 1, 2], [1, 3, 2]], dtype=np.int64)
 SCALP = VERTICES - np.array([0.0, 0.0, 2.0])
-NORMALS = np.tile(np.array([0.0, 0.0, 1.0]), (4, 1))
 QUALITY = np.array([1.0, 1.0, 1.0, 1.0])
 
 
@@ -21,7 +20,6 @@ def _ese() -> ESEMesh:
         vertices=VERTICES,
         faces=FACES,
         scalp_vertices=SCALP,
-        normals=NORMALS,
         quality=QUALITY,
     )
 
@@ -31,7 +29,6 @@ def _write_companions(root: Path) -> None:
     (root / "mesh.ply").touch()
     np.save(root / "ese_vertices.npy", VERTICES)
     np.save(root / "ese_faces.npy", FACES)
-    np.save(root / "normals.npy", NORMALS)
     np.save(root / "quality.npy", QUALITY)
     (root / "point_pairs.json").write_text(
         json.dumps({"n_points": 4, "scalp_vertices": SCALP.tolist()}), encoding="utf-8"
@@ -48,7 +45,6 @@ class TestImportEseMesh:
         np.testing.assert_array_almost_equal(ese.vertices, VERTICES)
         np.testing.assert_array_equal(ese.faces, FACES)
         np.testing.assert_array_almost_equal(ese.scalp_vertices, SCALP)
-        np.testing.assert_array_almost_equal(ese.normals, NORMALS)
         np.testing.assert_array_almost_equal(ese.quality, QUALITY)
 
 
@@ -76,7 +72,10 @@ class TestImportEseMeshErrors:
     def test_inconsistent_shapes(self, tmp_path: Path) -> None:
         root = tmp_path / "ese"
         _write_companions(root)
-        np.save(root / "normals.npy", NORMALS[:2])
+        pairs_path = root / "point_pairs.json"
+        pairs = json.loads(pairs_path.read_text(encoding="utf-8"))
+        pairs["scalp_vertices"] = pairs["scalp_vertices"][:2]
+        pairs_path.write_text(json.dumps(pairs), encoding="utf-8")
 
         with pytest.raises(ValueError, match="Cannot import ESE mesh"):
             import_ese_mesh(root / "mesh.ply")

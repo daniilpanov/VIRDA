@@ -31,10 +31,11 @@ def _reweighted(fiducials: Fiducials, weights: dict[str, float]) -> Fiducials:
 
 
 def _localize(electrodes: Electrodes, threshold_mm: float = 10.0) -> Electrodes:
-    ese = make_ese()
+    ese, normals = make_ese()
     fiducials = make_fiducials()
     return localize_electrodes(
         ese,
+        normals,
         fiducials,
         electrodes,
         config=Stage3Config(residual_threshold_mm=threshold_mm, calibrate_ese_offset=False),
@@ -43,7 +44,7 @@ def _localize(electrodes: Electrodes, threshold_mm: float = 10.0) -> Electrodes:
 
 class TestLocalizeElectrodes:
     def test_exact_recovery_on_sphere(self):
-        ese = make_ese()
+        ese, _ = make_ese()
         fiducials = make_fiducials()
         true_indices = [0, 42, 100]
         result = _localize(make_electrodes(ese.vertices[true_indices], fiducials))
@@ -61,7 +62,7 @@ class TestLocalizeElectrodes:
             assert electrode.confidence == ese.quality[true_indices[i]]
 
     def test_weighted_fiducial_dominates_when_measurements_conflict(self):
-        ese = make_ese()
+        ese, normals = make_ese()
         fiducials = make_fiducials()
         true_index = 0
         point = ese.vertices[true_index]
@@ -74,6 +75,7 @@ class TestLocalizeElectrodes:
         config = Stage3Config(calibrate_ese_offset=False)
         weighted_result = localize_electrodes(
             ese,
+            normals,
             weighted,
             electrodes,
             config=config,
@@ -90,7 +92,7 @@ class TestLocalizeElectrodes:
         assert unweighted_result.items[0].residual_error > weighted_electrode.residual_error + 30
 
     def test_localizes_with_subset_of_fiducials(self):
-        ese = make_ese()
+        ese, _ = make_ese()
         fiducials = make_fiducials()
         true_index = 7
         point = ese.vertices[true_index]
@@ -119,7 +121,7 @@ class TestLocalizeElectrodes:
         assert result.items[0].residual_error is None
 
     def test_flags_electrode_over_threshold(self):
-        ese = make_ese()
+        ese, _ = make_ese()
         fiducials = make_fiducials()
         point = ese.vertices[0]
         distances = _exact_distances(point, fiducials)
@@ -140,7 +142,7 @@ class TestLocalizeElectrodes:
         identical distance profiles."""
         from virda.ops.localize_electrodes import _mirror_plane_mask
 
-        ese = make_ese()
+        ese, normals = make_ese()
         fiducials = make_fiducials()
         vertices = np.asarray(ese.vertices)
 
@@ -167,27 +169,28 @@ class TestLocalizeElectrodes:
         msg = f"Localized to wrong side of fiducial plane: signed_dist={result_sd:.1f}"
         assert result_sd > 0, msg
 
-        mirror_mask = _mirror_plane_mask(vertices, fiducial_coords, np.asarray(ese.normals))
+        mirror_mask = _mirror_plane_mask(vertices, fiducial_coords, np.asarray(normals))
         assert not mirror_mask[true_index], "The true vertex must not be masked out"
 
 
 class TestOffsetCalibration:
     @staticmethod
-    def _shifted_electrodes(ese, indices, shift_mm):
+    def _shifted_electrodes(ese, normals, indices, shift_mm):
         """Electrodes measured at ``vertices + shift_mm * normals`` points."""
         vertices = np.asarray(ese.vertices)
-        normals = np.asarray(ese.normals)
+        normals = np.asarray(normals)
         points = vertices[list(indices)] + shift_mm * normals[list(indices)]
         return make_electrodes(points, make_fiducials()), points
 
     def test_recovers_offset_shift(self):
-        ese = make_ese()
+        ese, normals = make_ese()
         indices = [0, 42, 100]
         # Measurements taken at the scalp surface while the ESE sits 2 mm out.
-        electrodes, points = self._shifted_electrodes(ese, indices, shift_mm=-2.0)
+        electrodes, points = self._shifted_electrodes(ese, normals, indices, shift_mm=-2.0)
         config = Stage3Config(calibrate_ese_offset=True)
         result = localize_electrodes(
             ese,
+            normals,
             make_fiducials(),
             electrodes,
             config=config,
@@ -204,10 +207,11 @@ class TestOffsetCalibration:
             assert electrode.flagged is False
 
     def test_disabled_when_flag_off(self):
-        ese = make_ese()
-        electrodes, _ = self._shifted_electrodes(ese, [0], shift_mm=-2.0)
+        ese, normals = make_ese()
+        electrodes, _ = self._shifted_electrodes(ese, normals, [0], shift_mm=-2.0)
         result = localize_electrodes(
             ese,
+            normals,
             make_fiducials(),
             electrodes,
             config=Stage3Config(calibrate_ese_offset=False),
@@ -217,7 +221,7 @@ class TestOffsetCalibration:
         assert result.items[0].is_localized
 
     def test_zero_shift_when_measurements_match_ese(self):
-        ese = make_ese()
+        ese, normals = make_ese()
         fiducials = make_fiducials()
 
         vertices = np.asarray(ese.vertices)
@@ -235,6 +239,7 @@ class TestOffsetCalibration:
         config = Stage3Config(calibrate_ese_offset=True)
         result = localize_electrodes(
             ese,
+            normals,
             fiducials,
             electrodes,
             config=config,

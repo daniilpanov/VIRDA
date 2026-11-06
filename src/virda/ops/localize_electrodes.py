@@ -7,7 +7,7 @@ import numpy as np
 from scipy.spatial.distance import cdist
 
 from virda.models.electrode import Electrode, Electrodes
-from virda.models.ese_mesh import ESEMesh
+from virda.models.ese_mesh import ESEMesh, Normals
 from virda.models.fiducial import Fiducial, Fiducials
 from virda.models.stage3_config import Stage3Config
 
@@ -71,6 +71,7 @@ def _mirror_plane_mask(
 
 def localize_electrodes(
     ese: ESEMesh,
+    normals: Normals,
     fiducials: Fiducials,
     electrodes: Electrodes,
     *,
@@ -97,7 +98,7 @@ def localize_electrodes(
     a fallback whenever refinement does not improve the residual.
     """
     vertices = np.asarray(ese.vertices)
-    normals = np.asarray(ese.normals)
+    normals = np.asarray(normals)
     fiducial_coords = np.asarray([fiducial.coordinates for fiducial in fiducials.items])
 
     offset_shift = 0.0

@@ -67,9 +67,6 @@ class TestNpyColumnMap:
     def test_adjacency_mask(self) -> None:
         assert npy_columns_for("scalp_face_adjacency.npy") == ["Face A", "Face B"]
 
-    def test_normals_mask(self) -> None:
-        assert npy_columns_for("normals.npy") == ["NX", "NY", "NZ"]
-
     def test_quality_mask(self) -> None:
         assert npy_columns_for("quality.npy") == ["Quality"]
 

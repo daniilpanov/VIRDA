@@ -5,7 +5,7 @@ from logging import Logger
 import numpy as np
 from scipy.spatial import cKDTree
 
-from virda.models.ese_mesh import ESEMesh
+from virda.models.ese_mesh import ESEMesh, Normals
 from virda.models.scalp_mesh import ScalpMesh
 from virda.models.stage2_config import Stage2Config
 
@@ -53,7 +53,7 @@ def build_ese(
     config: Stage2Config,
     ese_offset_mm: float,
     logger: Logger | None = None,
-) -> ESEMesh:
+) -> tuple[ESEMesh, Normals]:
     """Estimate outward normals for the scalp mesh and offset them by ``ese_offset_mm``.
 
     ``config.k_neighbors`` switches between a fixed k-NN neighborhood and a
@@ -86,13 +86,13 @@ def build_ese(
             float(np.median(quality)),
         )
 
-    return ESEMesh(
+    ese_mesh = ESEMesh(
         vertices=ese_vertices,
         faces=scalp_mesh.faces,
         scalp_vertices=vertices,
-        normals=normals,
         quality=quality,
     )
+    return ese_mesh, normals
 
 
 def _estimate_normals_knn(

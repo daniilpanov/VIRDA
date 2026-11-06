@@ -6,7 +6,7 @@ import numpy as np
 
 from tests.helpers.meshes import make_sphere
 from virda.models.electrode import Electrode, Electrodes
-from virda.models.ese_mesh import ESEMesh
+from virda.models.ese_mesh import ESEMesh, Normals
 from virda.models.fiducial import Fiducial, Fiducials
 from virda.models.scalp_mesh import ScalpMesh
 from virda.models.stage2_config import Stage2Config
@@ -38,7 +38,9 @@ def make_fiducials() -> Fiducials:
     )
 
 
-def make_ese(scalp_mesh: ScalpMesh | None = None, ese_offset_mm: float = 2.0) -> ESEMesh:
+def make_ese(
+    scalp_mesh: ScalpMesh | None = None, ese_offset_mm: float = 2.0
+) -> tuple[ESEMesh, Normals]:
     mesh = scalp_mesh or make_sphere()
     return build_ese(mesh, config=Stage2Config(k_neighbors=20), ese_offset_mm=ese_offset_mm)
 
