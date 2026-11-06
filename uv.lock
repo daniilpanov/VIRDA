@@ -10,6 +10,7 @@ resolution-markers = [
 members = [
     "virda",
     "virda-gui",
+    "virda-gui-new",
 ]
 
 [[package]]
@@ -1722,6 +1723,39 @@ provides-extras = ["dev", "research"]
 name = "virda-gui"
 version = "1.0.1"
 source = { editable = "src/virda_gui" }
+dependencies = [
+    { name = "nibabel" },
+    { name = "numpy" },
+    { name = "pyside6" },
+    { name = "pyvista" },
+    { name = "pyvistaqt" },
+    { name = "trimesh" },
+    { name = "virda" },
+]
+
+[package.dev-dependencies]
+build = [
+    { name = "pyinstaller" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "nibabel", specifier = ">=5.0" },
+    { name = "numpy", specifier = ">=2.5.2" },
+    { name = "pyside6", specifier = ">=6.6" },
+    { name = "pyvista", specifier = ">=0.44" },
+    { name = "pyvistaqt", specifier = ">=0.11.4" },
+    { name = "trimesh", specifier = ">=5.0.0" },
+    { name = "virda", editable = "." },
+]
+
+[package.metadata.requires-dev]
+build = [{ name = "pyinstaller", specifier = "==6.22.3" }]
+
+[[package]]
+name = "virda-gui-new"
+version = "1.0.1"
+source = { editable = "src/virda_gui_new" }
 dependencies = [
     { name = "nibabel" },
     { name = "numpy" },
