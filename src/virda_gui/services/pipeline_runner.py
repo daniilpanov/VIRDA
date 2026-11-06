@@ -20,8 +20,13 @@ from virda.config import resolve_stage3_config
 from virda.io.exporters.ese_mesh import export_ese_companions, export_ese_mesh
 from virda.io.exporters.fiducials import export_fiducials
 from virda.io.exporters.localization_table import export_localization_table
-from virda.io.exporters.mesh_arrays import export_mesh_faces, export_mesh_vertices
+from virda.io.exporters.mesh_arrays import (
+    export_mesh_adjacency,
+    export_mesh_faces,
+    export_mesh_vertices,
+)
 from virda.io.exporters.scalp_mesh import export_scalp_mesh
+from virda.io.exporters.segmentation import export_head_mask
 from virda.io.importers.fiducials import load_manual_fiducials
 from virda.io.importers.measurements import load_measurements
 from virda.io.importers.nifti import import_nifti
@@ -145,6 +150,7 @@ def run_stage1(config: Config) -> _Stage1Result:
     if config.seal_enabled:
         mask = seal_mask(mask, radius=config.seal_radius, logger=logger)
         _log_artifact(logger, mask)
+    export_head_mask(project_dir / "segmentation" / "head_mask.nii.gz", mask, volume)
 
     mesh = extract_mesh(mask, volume)
     _log_artifact(logger, mesh)
@@ -173,6 +179,7 @@ def run_stage1(config: Config) -> _Stage1Result:
     export_scalp_mesh(project_dir / "mesh" / "final_mesh.ply", mesh)
     export_mesh_vertices(project_dir / "mesh" / "scalp_vertices.npy", mesh.vertices)
     export_mesh_faces(project_dir / "mesh" / "scalp_faces.npy", mesh.faces)
+    export_mesh_adjacency(project_dir / "mesh" / "scalp_face_adjacency.npy", mesh.face_adjacency)
     export_fiducials(project_dir / "input" / "fiducials.json", fiducials)
 
     result = _Stage1Result(mesh=mesh, fiducials=fiducials)
