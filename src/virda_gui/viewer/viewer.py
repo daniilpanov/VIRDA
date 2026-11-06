@@ -3,9 +3,10 @@
 :class:`ViewerWidget` renders the scalp mesh on top of a semi-transparent MRI
 volume and places both objects in the same coordinate frame using the NIfTI
 affine, so the mesh overlays the actual scalp in all three views. Qt
-checkboxes toggle the visibility of the mesh, the MRI, the fiducial points and
-per-electrode labels, and a "Boost contrast" checkbox sharpens the MRI and the
-mesh.  :class:`ViewerWidget` wraps the same scene
+checkboxes toggle the visibility of each layer; by default the mesh, the
+fiducial points, the electrode groups and the labels are visible, while the
+MRI volume and the sharpened "Boost contrast" view start hidden.
+:class:`ViewerWidget` wraps the same scene
 that the standalone ``virda-gui-viewer`` CLI (module ``virda_gui.viewer.viewer_cli``)
 shows in a blocking window; the GUI embeds it on its 3D Viewer tab.
 """
@@ -92,7 +93,7 @@ class ViewerWidget(QWidget):
         self._flagged_actors_per_group: list[list[Any]] = []
         self._label_actors_per_group: list[list[Any]] = []
         self._group_states: list[bool] = []
-        self._mri_visible = True
+        self._mri_visible = False
         self._fiducials_visible = True
         self._labels_visible = True
         self._mesh_opacity = 0.6
@@ -292,7 +293,7 @@ class ViewerWidget(QWidget):
             self._label_actors_per_group.append(n_actors)
 
         self._group_states = [True] * len(scene.electrode_groups)
-        self._mri_visible = True
+        self._mri_visible = False
         self._fiducials_visible = True
         self._labels_visible = True
         self._build_layers(scene)
@@ -303,7 +304,7 @@ class ViewerWidget(QWidget):
         if self._mesh_actor is not None:
             self._add_layer_check("Show mesh", True, self._set_mesh_visibility)
         if self._mri_actor is not None:
-            self._add_layer_check("Show MRI", True, self._set_mri_visibility)
+            self._add_layer_check("Show MRI", False, self._set_mri_visibility)
         if self._fiducial_actor is not None:
             self._add_layer_check("Show fiducials", True, self._set_fiducials_visibility)
         if self._fiducial_label_actor is not None or any(
