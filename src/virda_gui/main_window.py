@@ -106,6 +106,7 @@ class IdeWindow(QMainWindow):
         self._electrode_group_widgets: list[ElectrodeGroupRow] = []
         self._file_tabs: dict[str, QWidget] = {}
         self._invalidated_file_tabs: list[str] = []
+        self._mesh_step_invalidated = False
         self._status_history: list[str] = []
         self._prefs = prefs or Preferences()
 
@@ -137,7 +138,7 @@ class IdeWindow(QMainWindow):
             self._state,
             base_provider=lambda: self._mesh_processing_tab.current_scalp_mesh(),
         )
-        self._mesh_processing_tab.previewMesh.connect(self._ese_tab.show_preview)
+        self._mesh_processing_tab.previewMesh.connect(self._push_ese_backdrop)
         self._ese_tab.eseMesh.connect(self._on_ese_mesh)
         self._ese_tab.eseMesh.connect(lambda _m: self._refresh_pipeline())
         self._ese_tab.saved.connect(self._on_ese_saved)
@@ -148,9 +149,10 @@ class IdeWindow(QMainWindow):
         self._base_tab = BaseGenerationTab(self._state)
         self._base_tab.baseMesh.connect(self._on_base_generated)
         self._base_tab.saved.connect(self._refresh_pipeline)
+        self._base_tab.busyChanged.connect(self._mesh_processing_tab.set_locked)
+        self._base_tab.busyChanged.connect(self._ese_tab.set_locked)
         self._base_tab.meshRequested.connect(self._show_mesh_processing_tab)
         self._base_tab.status.connect(self._status)
-        self._base_tab.busyChanged.connect(self._mesh_processing_tab.set_locked)
 
         self._fiducial_overlay_timer = QTimer(self)
         self._fiducial_overlay_timer.setSingleShot(True)
@@ -180,6 +182,7 @@ class IdeWindow(QMainWindow):
         self._sidebar.openViewerRequested.connect(self._on_open_viewer)
         self._sidebar.importFilesRequested.connect(self._on_import_files)
         self._sidebar.fileActivated.connect(self._open_file_tab)
+        self._base_tab.busyChanged.connect(self._sidebar.set_busy_locked)
 
         self._tabs = QTabWidget(self)
         self._tabs.setTabsClosable(True)
@@ -354,6 +357,8 @@ class IdeWindow(QMainWindow):
         self._sidebar.set_project(project)
         self._close_action.setEnabled(True)
         self._state.last_project_dir = str(project)
+        self._mesh_step_invalidated = False
+        self._mesh_processing_tab.set_stale(False)
         self._editors_tab.prefill_from_project(project)
         self._base_tab.prefill_from_project(project)
         self._mesh_processing_tab.prefill_from_project(project)
@@ -486,14 +491,17 @@ class IdeWindow(QMainWindow):
         self._add_tab(self._base_tab, "Base Generation")
 
     def _on_base_generated(self, _mesh: object) -> None:
-        """Reload the mesh tab after the base tab saved; the ESE mesh went stale."""
-        self._invalidate_derived_meshes(delete_base=False)
+        """Reload the mesh tab after the base tab saved; derived meshes went stale."""
+        self._invalidate_derived_meshes(delete_base=False, delete_final=True)
+        self._mesh_processing_tab.set_stale(True)
         project = self._project
         if project is not None:
             self._mesh_processing_tab.prefill_from_project(project)
         self._reopen_invalidated_file_tabs()
         self._reload_viewer_if_open()
         self._refresh_pipeline()
+        self._base_tab.hint_mesh_tab()
+        self._status("Mesh step invalidated — open Mesh Processing to regenerate it.", 8000)
 
     def _reload_viewer_if_open(self) -> None:
         """Reload the open 3D viewer scene so regenerated data reappears."""
@@ -519,10 +527,20 @@ class IdeWindow(QMainWindow):
         self._add_tab(self._ese_tab, "ESE Surface")
 
     def _sync_ese_backdrop(self) -> None:
-        """Push the working scalp mesh into the ESE tab backdrop, if any."""
+        """Push the working scalp mesh into the ESE tab backdrop, if valid.
+
+        Only while the Mesh step is saved: a derived mesh invalidated by a
+        fresh base must not look like live ESE input.
+        """
         working = self._mesh_processing_tab.current_scalp_mesh()
         if working is not None:
-            self._ese_tab.show_preview(working)
+            self._push_ese_backdrop(working)
+
+    def _push_ese_backdrop(self, mesh: ScalpMesh) -> None:
+        """Forward the working scalp mesh unless the Mesh step is invalidated."""
+        if self._mesh_step_invalidated:
+            return
+        self._ese_tab.show_preview(mesh)
 
     def _pipeline_progress(self) -> dict[str, object]:
         """Gather the saved and in-memory inputs of the pipeline step model."""
@@ -745,13 +763,16 @@ class IdeWindow(QMainWindow):
             "Existing NIfTI is identical to the imported one.",
         )
 
-    def _invalidate_derived_meshes(self, *, delete_base: bool) -> None:
+    def _invalidate_derived_meshes(self, *, delete_base: bool, delete_final: bool = False) -> None:
         """Drop derived meshes from disk and memory; tables are always kept.
 
         With *delete_base* the base and final mesh files go too (a new scan
-        arrived); otherwise only the ESE artifacts are dropped (a fresh base
-        was just generated).  Fiducials and measurements survive either way.
+        arrived); with *delete_final* only the final mesh and the ESE
+        artifacts go (a fresh base was just generated); with both off only
+        the ESE artifacts are dropped.  Fiducials and measurements survive
+        either way.
         """
+        self._mesh_step_invalidated = True
         project = self._project
         if project is not None:
             stale: list[Path] = []
@@ -760,6 +781,8 @@ class IdeWindow(QMainWindow):
                 stale.extend(path for path in ese_dir.glob("*") if path.is_file())
             if delete_base:
                 stale.append(project / "mesh" / "base_mesh.ply")
+                stale.append(project / "mesh" / "final_mesh.ply")
+            elif delete_final:
                 stale.append(project / "mesh" / "final_mesh.ply")
             for path in stale:
                 key = str(path)
@@ -1447,6 +1470,8 @@ class IdeWindow(QMainWindow):
         self._viewer_widget.set_extra_mesh(self._mesh_to_scene_poly(ese.vertices, ese.faces), "ese")
 
     def _on_mesh_saved(self) -> None:
+        self._mesh_step_invalidated = False
+        self._sync_ese_backdrop()
         if self._state.last_project_dir:
             self._sidebar.set_project(Path(self._state.last_project_dir))
         self._status("Mesh saved. Re-open the 3D viewer to inspect the persisted surface.", 5000)

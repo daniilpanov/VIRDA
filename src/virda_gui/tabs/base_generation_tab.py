@@ -85,6 +85,7 @@ class BaseGenerationTab(QWidget):
         self._base_mesh: ScalpMesh | None = None
         self._generate_btn: QPushButton | None = None
         self._cancel_btn: QPushButton | None = None
+        self._mesh_next_btn: QPushButton | None = None
         self._generation_thread: QThread | None = None
         self._generation_worker: BackgroundWorker | None = None
         self._generation_seq = 0
@@ -225,6 +226,7 @@ class BaseGenerationTab(QWidget):
         mesh_next_btn.setStyleSheet("font-weight: bold;")
         mesh_next_btn.clicked.connect(self.meshRequested.emit)
         row.addWidget(mesh_next_btn)
+        self._mesh_next_btn = mesh_next_btn
         return box
 
     # ---- source ----
@@ -424,6 +426,11 @@ class BaseGenerationTab(QWidget):
             self._generate_btn.setEnabled(ready)
         if self._cancel_btn is not None:
             self._cancel_btn.setEnabled(not ready)
+
+    def hint_mesh_tab(self) -> None:
+        """Draw attention to the hand-off after the mesh step got invalidated."""
+        if self._mesh_next_btn is not None:
+            self._mesh_next_btn.setFocus()
 
     # ---- preview pane ----
 

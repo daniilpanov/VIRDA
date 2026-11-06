@@ -1852,8 +1852,10 @@ def test_import_same_name_scan_skips_without_sidecar_offscreen(
         app.quit()
 
 
-def test_base_generated_drops_ese_but_keeps_tables_offscreen(tmp_path: Path) -> None:
-    """A fresh base invalidates the ESE step while tables and base survive."""
+def test_base_generated_drops_derived_meshes_but_keeps_tables_offscreen(
+    tmp_path: Path,
+) -> None:
+    """A fresh base drops the final mesh and ESE step; tables and base survive."""
     app = _offscreen_app()
     prefs = _make_prefs(tmp_path)
     window = IdeWindow(prefs=prefs)
@@ -1866,7 +1868,7 @@ def test_base_generated_drops_ese_but_keeps_tables_offscreen(tmp_path: Path) -> 
         window._on_base_generated(object())
 
         assert (project / "mesh" / "base_mesh.ply").is_file()
-        assert (project / "mesh" / "final_mesh.ply").is_file()
+        assert not (project / "mesh" / "final_mesh.ply").is_file()
         assert list((project / "ese").glob("*")) == []
         assert window._ese_tab.current_ese_mesh() is None
         assert window._localized_electrodes is None
@@ -1876,8 +1878,104 @@ def test_base_generated_drops_ese_but_keeps_tables_offscreen(tmp_path: Path) -> 
             "LPA",
             "RPA",
         ]
+        assert "[ok]" not in _chip_text(window, "3. Skin")
         assert "[ok]" not in _chip_text(window, "4. Sensor")
         assert "[ok]" not in _chip_text(window, "5. Points")
+    finally:
+        window.close()
+        app.quit()
+
+
+def test_base_generation_busy_locks_other_pipeline_tabs_offscreen(
+    tmp_path: Path,
+) -> None:
+    """While the base mesh generates, the mesh, ESE and sidebar actions freeze."""
+    app = _offscreen_app()
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
+    try:
+        project = tmp_path / "lock-project"
+        _write_full_project(project)
+        window.open_project(project)
+
+        window._base_tab.busyChanged.emit(True)
+
+        mesh_tab = window._mesh_processing_tab
+        actions_box = mesh_tab._actions_box
+        parameters_box = mesh_tab._parameters_box
+        generate_btn = window._ese_tab._generate_btn
+        assert actions_box is not None
+        assert parameters_box is not None
+        assert generate_btn is not None
+        assert not actions_box.isEnabled()
+        assert not parameters_box.isEnabled()
+        assert not generate_btn.isEnabled()
+        assert not window._sidebar._import_files_btn.isEnabled()
+        assert not window._sidebar._open_viewer_btn.isEnabled()
+
+        window._base_tab.busyChanged.emit(False)
+
+        assert actions_box.isEnabled()
+        assert parameters_box.isEnabled()
+        assert generate_btn.isEnabled()
+        assert window._sidebar._import_files_btn.isEnabled()
+        assert window._sidebar._open_viewer_btn.isEnabled()
+    finally:
+        window.close()
+        app.quit()
+
+
+def test_ese_backdrop_skips_invalidated_mesh_until_saved_offscreen(
+    tmp_path: Path,
+) -> None:
+    """The ESE backdrop stays empty after invalidation until the mesh is saved."""
+    app = _offscreen_app()
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
+    try:
+        project = tmp_path / "backdrop-project"
+        _write_full_project(project)
+        window.open_project(project)
+        assert window._ese_tab._final_mesh is not None
+
+        window._on_base_generated(object())
+        window._show_ese_tab()
+        assert window._ese_tab._final_mesh is None
+
+        window._on_mesh_saved()
+        window._show_ese_tab()
+        assert window._ese_tab._final_mesh is not None
+    finally:
+        window.close()
+        app.quit()
+
+
+def test_mesh_autosave_holds_off_after_base_regen_offscreen(tmp_path: Path) -> None:
+    """The debounced auto-save must not resurrect the invalidated final mesh."""
+    import time
+
+    app = _offscreen_app()
+    prefs = _make_prefs(tmp_path)
+    window = IdeWindow(prefs=prefs)
+    try:
+        project = tmp_path / "hold-project"
+        _write_full_project(project)
+        window.open_project(project)
+
+        window._on_base_generated(object())
+        assert not (project / "mesh" / "final_mesh.ply").is_file()
+
+        start = time.monotonic()
+        app.processEvents()
+        while time.monotonic() - start < 2.5:  # the auto-save debounce is 1 s
+            app.processEvents()
+        assert "[ok]" not in _chip_text(window, "3. Skin")
+        assert window._ese_tab._final_mesh is None
+
+        window._mesh_processing_tab._on_run_all()  # explicit re-save
+        assert (project / "mesh" / "final_mesh.ply").is_file()
+        assert "[ok]" in _chip_text(window, "3. Skin")
+        assert window._ese_tab._final_mesh is not None
     finally:
         window.close()
         app.quit()

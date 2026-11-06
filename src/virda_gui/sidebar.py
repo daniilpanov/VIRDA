@@ -36,6 +36,7 @@ class ProjectSidebar(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._project: Path | None = None
+        self._busy_locked = False
 
         self._hint = QLabel(
             "No project selected.\n\nCreate or open a project to populate the file list."
@@ -87,11 +88,18 @@ class ProjectSidebar(QWidget):
         """Re-scan the current project folder."""
         self.set_project(self._project)
 
+    def set_busy_locked(self, locked: bool) -> None:
+        """Freeze the action buttons while the base mesh generates."""
+        self._busy_locked = locked
+        enabled = self._project is not None and not locked
+        self._open_viewer_btn.setEnabled(enabled)
+        self._import_files_btn.setEnabled(enabled)
+
     def set_project(self, project: Path | None) -> None:
         """Populate the tree from *project* or clear it when None."""
         self._project = project
         self._tree.clear()
-        enabled = project is not None
+        enabled = project is not None and not self._busy_locked
         self._open_viewer_btn.setEnabled(enabled)
         self._import_files_btn.setEnabled(enabled)
         if project is None:

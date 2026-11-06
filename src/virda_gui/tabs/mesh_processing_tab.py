@@ -101,6 +101,7 @@ class MeshProcessingTab(QWidget):
         self._generation_worker: BackgroundWorker | None = None
         self._generation_seq = 0
         self._generation_busy = False
+        self._stale = False
         self._pending_kind: str | None = None
         self._mesh_source_path: Path | None = None
         self._interactor: QtInteractor | None = None
@@ -603,8 +604,21 @@ class MeshProcessingTab(QWidget):
         self.previewMesh.emit(preview)
         self._save_timer.start()
 
+    def set_stale(self, stale: bool) -> None:
+        """Flag the saved final mesh as invalidated by the host.
+
+        While stale, the debounced auto-save holds off: the invalidated file
+        must not quietly reappear.  An explicit 'Run all postprocessings'
+        clears the flag and saves again.
+        """
+        self._stale = stale
+        if stale:
+            self._save_timer.stop()
+
     def _autosave_final(self) -> None:
         """Write the current preview to final_mesh.ply (debounced postprocessing)."""
+        if self._stale:
+            return
         project = self._state.last_project_dir
         preview = self._preview_mesh
         if not project or preview is None:
@@ -623,6 +637,7 @@ class MeshProcessingTab(QWidget):
 
     def _on_run_all(self) -> None:
         """Recompute postprocessing now and flush the auto-save immediately."""
+        self._stale = False
         self._save_timer.stop()
         self._recompute_preview()
         self._autosave_final()

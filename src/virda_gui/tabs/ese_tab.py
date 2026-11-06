@@ -75,6 +75,7 @@ class EseTab(QWidget):
         self._generation_worker: BackgroundWorker | None = None
         self._generation_seq = 0
         self._generation_busy = False
+        self._busy_locked = False
         self._interactor: QtInteractor | None = None
         self._final_actor: Any | None = None
         self._ese_actor: Any | None = None
@@ -371,10 +372,15 @@ class EseTab(QWidget):
         self.saved.emit()
 
     def _update_buttons(self) -> None:
-        ready = not self._generation_busy
+        ready = not self._generation_busy and not self._busy_locked
         if self._generate_btn is not None:
             self._generate_btn.setEnabled(ready)
         self._update_export_controls()
+
+    def set_locked(self, locked: bool) -> None:
+        """Freeze step controls while the base mesh generates in the host."""
+        self._busy_locked = locked
+        self._update_buttons()
 
     # ---- export ----
 
