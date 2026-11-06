@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QColorDialog,
     QComboBox,
+    QDialog,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -233,6 +234,12 @@ class LabeledField(QFrame):
             return "true" if self._check.isChecked() else "false"
         return self._entry.text()
 
+    def entry(self) -> QLineEdit:
+        """The underlying line edit of an ``entry`` field."""
+        if self._widget_type != "entry":
+            raise RuntimeError(f"{self._widget_type!r} field has no line edit")
+        return self._entry
+
     def set(self, value: str) -> None:
         if self._widget_type == "combo":
             self._combo.setCurrentText(value)
@@ -249,6 +256,8 @@ class ElectrodeGroupRow(QFrame):
     (Stage 3 ``electrodes.json`` or tabular TSV/CSV tables) in the 3D viewer,
     each with its own color.
     """
+
+    pathChanged = Signal(str)  # noqa: N815 - the typed file path
 
     def __init__(
         self,
@@ -268,6 +277,7 @@ class ElectrodeGroupRow(QFrame):
             label="",
             filetypes=[("Electrodes", "*.json *.tsv *.csv *.txt"), ("All files", "*")],
         )
+        self._selector.textChanged.connect(self.pathChanged.emit)
         layout.addWidget(self._selector, 1)
 
         self._swatch = QPushButton()
@@ -287,8 +297,14 @@ class ElectrodeGroupRow(QFrame):
         self._swatch.setStyleSheet(f"background-color: {color.name()};")
 
     def _pick_color(self) -> None:
+        # A non-native dialog: the native backend hangs without opening
+        # a window on some Linux compositors.
         initial = QColor(self._color)
-        color = QColorDialog.getColor(initial, self, "Pick electrode group color")
+        dialog = QColorDialog(initial, self)
+        dialog.setOption(QColorDialog.ColorDialogOption.DontUseNativeDialog, True)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        color = dialog.selectedColor()
         if color.isValid():
             self.set_color(color.name())
 

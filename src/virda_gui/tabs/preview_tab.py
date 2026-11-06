@@ -10,7 +10,9 @@ from pathlib import Path
 
 from PySide6.QtCore import QThread
 from PySide6.QtWidgets import (
+    QHBoxLayout,
     QPlainTextEdit,
+    QPushButton,
     QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -37,10 +39,19 @@ class PreviewTab(QWidget):
         self._stack.addWidget(self._table_view)
         self._stack.setCurrentWidget(self._text_view)
 
+        refresh_btn = QPushButton("Refresh", self)
+        refresh_btn.setToolTip("Re-read the file from disk.")
+        refresh_btn.clicked.connect(self.refresh)
+        bar = QHBoxLayout()
+        bar.addStretch(1)
+        bar.addWidget(refresh_btn)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.addWidget(self._stack)
+        layout.addLayout(bar)
 
+        self._path: Path | None = None
         self._seq = 0
         self._thread = QThread(self)
         self._worker = _PreviewWorker()
@@ -51,10 +62,16 @@ class PreviewTab(QWidget):
 
     def open(self, path: str | Path) -> None:
         """Start previewing *path*; supersedes any in-flight preview."""
+        self._path = Path(path)
         self._seq += 1
         self._text_view.setPlainText(f"Loading {path}...")
         self._stack.setCurrentWidget(self._text_view)
-        self._worker.schedule(self._seq, Path(path))
+        self._worker.schedule(self._seq, self._path)
+
+    def refresh(self) -> None:
+        """Re-read the current file from disk."""
+        if self._path is not None:
+            self.open(self._path)
 
     def _on_ready(self, seq: int, bundle: _PreviewBundle) -> None:
         if seq != self._seq:

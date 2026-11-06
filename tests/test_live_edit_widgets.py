@@ -1,0 +1,570 @@
+"""Unit tests for the live fiducials and measurements editors.
+
+The pure round-trip helpers run without a Qt platform; the offscreen tests
+build the real widgets and the :class:`IdeWindow` to catch signal-wiring
+regressions that pure helpers cannot see.
+"""
+
+import json
+import os
+from pathlib import Path
+
+import numpy as np
+import pytest
+from PySide6.QtCore import QSettings
+
+from tests.helpers.measurements import make_fiducials
+from virda.io.exporters.fiducials import export_fiducials
+from virda.io.importers.fiducials import import_fiducials
+from virda.io.importers.measurements import import_measurements
+from virda.models.electrode import Electrode, Electrodes
+from virda.models.fiducial import Fiducial, Fiducials
+from virda_gui.main_window import IdeWindow
+from virda_gui.preferences import Preferences
+from virda_gui.tabs.editors_tab import (
+    COL_W,
+    COL_X,
+    FIDUCIAL_HEADERS,
+    FiducialRow,
+    FiducialsEditor,
+    LocalizationPreview,
+    MeasurementRow,
+    MeasurementsEditor,
+    fiducials_to_rows,
+    measurements_fiducial_ids,
+    measurements_rows_to_schema,
+    measurements_schema_to_rows,
+    rows_to_fiducials,
+)
+
+
+def _qt_app():
+    """Return a shared QApplication on the offscreen platform (or skip)."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    if os.environ.get("PYVISTA_OFF_SCREEN") is None:
+        os.environ["PYVISTA_OFF_SCREEN"] = "true"
+
+    try:
+        from PySide6.QtWidgets import QApplication
+    except Exception as exc:  # pragma: no cover - depends on local Qt install
+        pytest.skip(f"Qt platform unavailable: {exc}")
+
+    return QApplication.instance() or QApplication([])
+
+
+# ----------------------------------------------------------------------
+# Pure fiducials helpers
+# ----------------------------------------------------------------------
+
+
+def test_fiducials_rows_round_trip_through_file(tmp_path: Path) -> None:
+    fiducials = make_fiducials()
+    target = tmp_path / "fiducials.json"
+    export_fiducials(target, rows_to_fiducials(fiducials_to_rows(fiducials)))
+
+    loaded = import_fiducials(target)
+
+    assert loaded.ids == fiducials.ids
+    for original in fiducials.items:
+        restored = loaded.get(original.fiducial_id)
+        assert restored is not None
+        assert restored.name == original.name
+        assert np.allclose(restored.coordinates, original.coordinates)
+        assert restored.coordinate_system == original.coordinate_system
+        assert restored.definition_method == original.definition_method
+        assert restored.weight == pytest.approx(original.weight)
+
+
+def test_fiducials_rows_preserve_voxel_and_auto_method() -> None:
+    fiducials = Fiducials(
+        items=[
+            Fiducial(
+                fiducial_id="F1",
+                name="Fiducial 1",
+                coordinates=np.array([1.0, 2.0, 3.0]),
+                coordinate_system="voxel",
+                definition_method="auto",
+                weight=2.5,
+            )
+        ]
+    )
+
+    restored = rows_to_fiducials(fiducials_to_rows(fiducials)).items[0]
+
+    assert restored.coordinate_system == "voxel"
+    assert restored.definition_method == "auto"
+    assert restored.weight == pytest.approx(2.5)
+
+
+def test_rows_to_fiducials_rejects_duplicate_ids() -> None:
+    rows = [
+        FiducialRow("NAS", "a", (0.0, 0.0, 0.0), "world", "manual", 1.0),
+        FiducialRow("NAS", "b", (1.0, 0.0, 0.0), "world", "manual", 1.0),
+    ]
+
+    with pytest.raises(ValueError, match="must be unique"):
+        rows_to_fiducials(rows)
+
+
+# ----------------------------------------------------------------------
+# Pure measurements helpers
+# ----------------------------------------------------------------------
+
+
+def test_measurements_rows_empty_ids_generate_electrode_ids(tmp_path: Path) -> None:
+    schema = measurements_rows_to_schema(
+        [
+            MeasurementRow(electrode_id="", measured_distances={"NAS": 1.0}),
+            MeasurementRow(electrode_id="Fz", measured_distances={"NAS": 2.0}),
+            MeasurementRow(electrode_id="", measured_distances={"NAS": 3.0}),
+        ]
+    )
+    target = tmp_path / "measurements.json"
+    target.write_text(json.dumps(schema), encoding="utf-8")
+
+    loaded = import_measurements(target)
+
+    assert [electrode.electrode_id for electrode in loaded.items] == ["E001", "Fz", "E003"]
+
+
+def test_measurements_rows_ignore_weights_through_loader(tmp_path: Path) -> None:
+    schema = measurements_rows_to_schema(
+        [MeasurementRow(electrode_id="Fz", measured_distances={"NAS": 1.0, "LPA": 2.0})]
+    )
+    schema["fiducial_weights"] = {"NAS": 3.0}
+    target = tmp_path / "measurements.json"
+    target.write_text(json.dumps(schema), encoding="utf-8")
+
+    loaded = import_measurements(target)
+
+    assert [electrode.electrode_id for electrode in loaded.items] == ["Fz"]
+
+
+def test_measurements_schema_to_rows_and_back() -> None:
+    data = {
+        "electrodes": [
+            {"electrode_id": "Fz", "measured_distances": {"NAS": 120.5, "LPA": 131.2}},
+            {"electrode_id": "", "measured_distances": {"NAS": 140.0}},
+        ],
+        "fiducial_weights": {"NAS": 2.0},
+    }
+
+    rows = measurements_schema_to_rows(data)
+    schema = measurements_rows_to_schema(rows)
+
+    assert rows == [
+        MeasurementRow(electrode_id="Fz", measured_distances={"NAS": 120.5, "LPA": 131.2}),
+        MeasurementRow(electrode_id="", measured_distances={"NAS": 140.0}),
+    ]
+    assert schema == {
+        "electrodes": [
+            {"electrode_id": "Fz", "measured_distances": {"NAS": 120.5, "LPA": 131.2}},
+            {"electrode_id": "", "measured_distances": {"NAS": 140.0}},
+        ]
+    }
+
+
+def test_measurements_fiducial_ids_unions_distances_and_weights() -> None:
+    rows = [
+        MeasurementRow(electrode_id="E0", measured_distances={"NAS": 1.0}),
+        MeasurementRow(electrode_id="E1", measured_distances={"RPA": 2.0}),
+    ]
+
+    assert measurements_fiducial_ids(rows, {"LPA": 1.5}) == ["NAS", "RPA", "LPA"]
+    assert measurements_fiducial_ids(rows) == ["NAS", "RPA"]
+
+
+# ----------------------------------------------------------------------
+# Offscreen widget tests
+# ----------------------------------------------------------------------
+
+
+def test_fiducials_editor_saves_loaded_rows_offscreen(tmp_path: Path) -> None:
+    app = _qt_app()
+    fiducials = make_fiducials()
+    editor = FiducialsEditor()
+    try:
+        editor.set_rows(fiducials_to_rows(fiducials))
+        assert editor.fiducial_ids() == fiducials.ids
+
+        target = tmp_path / "out.json"
+        assert editor.save_to(target) is True
+        loaded = import_fiducials(target)
+        assert loaded.ids == fiducials.ids
+
+        item = editor._table.item(0, COL_X)
+        assert item is not None
+        item.setText("abc")
+        with pytest.raises(ValueError, match="X must be a number"):
+            editor.fiducial_rows()
+    finally:
+        editor.close()
+        app.quit()
+
+
+def test_fiducials_editor_weight_column_round_trip_offscreen() -> None:
+    app = _qt_app()
+    editor = FiducialsEditor()
+    try:
+        assert FIDUCIAL_HEADERS == ["ID", "X", "Y", "Z", "Weight"]
+        assert editor._table.columnCount() == len(FIDUCIAL_HEADERS)
+
+        editor.set_rows(
+            [
+                FiducialRow(
+                    fiducial_id="NAS",
+                    name="Nasion",
+                    coordinates=(0.0, 1.0, 2.0),
+                    coordinate_system="world",
+                    definition_method="auto",
+                    weight=2.5,
+                )
+            ]
+        )
+        (row,) = editor.fiducial_rows()
+        assert row.name == "Nasion"
+        assert row.coordinate_system == "world"
+        assert row.definition_method == "auto"
+        assert row.weight == 2.5
+
+        weight_item = editor._table.item(0, COL_W)
+        assert weight_item is not None
+        weight_item.setText("3.0")
+        assert editor.fiducial_rows()[0].weight == 3.0
+        weight_item.setText("0")
+        with pytest.raises(ValueError, match="Weight must be positive"):
+            editor.fiducial_rows()
+        weight_item.setText("abc")
+        with pytest.raises(ValueError, match="Weight must be a number"):
+            editor.fiducial_rows()
+    finally:
+        editor.close()
+        app.quit()
+
+
+def test_localization_preview_frame_selector_offscreen() -> None:
+    app = _qt_app()
+    preview = LocalizationPreview()
+    try:
+        electrodes = Electrodes(
+            items=[
+                Electrode(
+                    electrode_id="E1",
+                    measured_distances={"NAS": 10.0},
+                    ese_coords=np.array([11.0, 0.0, 0.0]),
+                    scalp_coords=np.array([10.0, 0.0, 0.0]),
+                    residual_error=0.5,
+                )
+            ]
+        )
+
+        def _cell(row: int, col: int) -> str:
+            item = preview._table.item(row, col)
+            assert item is not None
+            return item.text()
+
+        preview.set_result(electrodes, np.array([1.0, 0.0, 0.0]), np.eye(4))
+        assert preview._table.columnCount() == 6
+        assert _cell(0, 1) == "11.000"  # world X
+
+        preview._frame_combo.setCurrentIndex(1)  # Head
+        assert _cell(0, 1) == "10.000"
+
+        preview._frame_combo.setCurrentIndex(2)  # Voxel
+        assert _cell(0, 1) == "11.000"
+
+        preview._frame_combo.setCurrentIndex(3)  # Fiducial distances
+
+        def _header(col: int) -> str:
+            item = preview._table.horizontalHeaderItem(col)
+            assert item is not None
+            return item.text()
+
+        assert _header(1) == "NAS"
+        assert _header(2) == "LPA"
+        assert _header(3) == "RPA"
+        assert _cell(0, 1) == "10.000"
+        assert _cell(0, 2) == ""
+        assert _cell(0, 3) == ""
+
+        preview.set_result(electrodes, np.array([1.0, 0.0, 0.0]), None)
+        preview._frame_combo.setCurrentIndex(2)  # Voxel unavailable: no coords
+        assert _cell(0, 1) == ""
+    finally:
+        preview.close()
+        app.quit()
+
+
+def test_measurements_editor_saves_round_trip_offscreen(tmp_path: Path) -> None:
+    app = _qt_app()
+    editor = MeasurementsEditor()
+    try:
+        editor.set_measurement_rows(
+            [
+                MeasurementRow(
+                    electrode_id="E0",
+                    measured_distances={"NAS": 1.0, "LPA": 2.0, "RPA": 3.0},
+                )
+            ]
+        )
+
+        schema = editor.collected_schema()
+        assert schema == {
+            "electrodes": [
+                {"electrode_id": "E0", "measured_distances": {"NAS": 1.0, "LPA": 2.0, "RPA": 3.0}}
+            ]
+        }
+
+        target = tmp_path / "out.json"
+        assert editor.save_to(target) is True
+        loaded = import_measurements(target)
+        assert loaded.items[0].measured_distances == {"NAS": 1.0, "LPA": 2.0, "RPA": 3.0}
+    finally:
+        editor.close()
+        app.quit()
+
+
+def test_fiducials_editor_load_invalid_file_returns_false(tmp_path: Path) -> None:
+    app = _qt_app()
+    editor = FiducialsEditor()
+    try:
+        bad = tmp_path / "bad.json"
+        bad.write_text(
+            json.dumps({"fiducials": [{"id": {"nas": [0.0, 0.0]}, "name": None}]}), encoding="utf-8"
+        )
+        assert editor.load(bad, interactive=False) is False
+
+        not_json = tmp_path / "garbage.json"
+        not_json.write_text("{not json", encoding="utf-8")
+        assert editor.load(not_json, interactive=False) is False
+    finally:
+        editor.close()
+        app.quit()
+
+
+def test_measurements_editor_load_invalid_schema_returns_false(tmp_path: Path) -> None:
+    app = _qt_app()
+    editor = MeasurementsEditor()
+    try:
+        bad = tmp_path / "bad.json"
+        bad.write_text(json.dumps({"electrodes": [{"electrode_id": "E0"}]}), encoding="utf-8")
+        assert editor.load(bad, interactive=False) is False
+
+        non_dict = tmp_path / "list.json"
+        non_dict.write_text("[1, 2]", encoding="utf-8")
+        assert editor.load(non_dict, interactive=False) is False
+    finally:
+        editor.close()
+        app.quit()
+
+
+def test_measurements_editor_load_empty_file_warns_offscreen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A measurements file without rows warns instead of loading silence."""
+    from PySide6.QtWidgets import QMessageBox
+
+    app = _qt_app()
+    editor = MeasurementsEditor()
+    try:
+        shown: list[str] = []
+
+        def _info(*args: object, **_kwargs: object) -> object:
+            shown.append(str(args[2]))
+            return QMessageBox.StandardButton.Ok
+
+        monkeypatch.setattr(QMessageBox, "information", _info)
+        empty = tmp_path / "empty.json"
+        empty.write_text(json.dumps({"electrodes": []}), encoding="utf-8")
+        assert editor.load(empty) is False
+        assert len(shown) == 1
+        assert "No electrode rows" in shown[0]
+        assert editor.measurement_rows() == []
+    finally:
+        editor.close()
+        app.quit()
+
+
+def test_editors_clear_resets_rows_and_path_offscreen(tmp_path: Path) -> None:
+    app = _qt_app()
+    fiducials_editor = FiducialsEditor()
+    measurements_editor = MeasurementsEditor()
+    from virda_gui.tabs.editors_tab import MEASUREMENT_HEADERS
+
+    try:
+        fiducials_editor.set_rows(fiducials_to_rows(make_fiducials()))
+        fiducials_editor.save_to(tmp_path / "f.json")
+        measurements_editor.set_measurement_rows(
+            [MeasurementRow(electrode_id="E0", measured_distances={"NAS": 1.0})]
+        )
+        measurements_editor._path = tmp_path / "m.json"
+
+        fiducials_editor.clear()
+        measurements_editor.clear()
+
+        assert fiducials_editor.fiducial_ids() == []
+        assert fiducials_editor._table.rowCount() == 0
+        assert fiducials_editor._path is None
+        assert measurements_editor._table.rowCount() == 0
+        assert measurements_editor._table.columnCount() == len(MEASUREMENT_HEADERS)
+        assert measurements_editor._path is None
+    finally:
+        fiducials_editor.close()
+        measurements_editor.close()
+        app.quit()
+
+
+def test_editors_tab_seeds_blank_canonical_rows_offscreen() -> None:
+    app = _qt_app()
+    from virda_gui.state import AppState
+    from virda_gui.tabs.editors_tab import EditorsTab
+
+    tab = EditorsTab(AppState())
+    try:
+        assert tab.fiducials.fiducial_ids() == ["LPA", "RPA", "NAS"]
+        assert tab.fiducials.filled_rows() == []
+        assert tab.measurements.fiducial_ready is True
+        assert tab.fiducials.is_dirty() is False
+    finally:
+        tab.close()
+        app.quit()
+
+
+def test_fiducials_clear_all_reseeds_blanks_offscreen(monkeypatch: pytest.MonkeyPatch) -> None:
+    from PySide6.QtWidgets import QMessageBox
+
+    from virda_gui.state import AppState
+    from virda_gui.tabs.editors_tab import EditorsTab
+
+    app = _qt_app()
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+    tab = EditorsTab(AppState())
+    try:
+        tab.fiducials.append_point("NAS", (1.0, 2.0, 3.0))
+        assert tab.fiducials.filled_rows() != []
+        tab.fiducials.clear_all()
+        assert tab.fiducials.fiducial_ids() == ["LPA", "RPA", "NAS"]
+        assert tab.fiducials.filled_rows() == []
+    finally:
+        tab.close()
+        app.quit()
+
+
+def test_ide_window_opens_live_editing_tab_offscreen(tmp_path: Path) -> None:
+    app = _qt_app()
+    prefs = Preferences(QSettings(str(tmp_path / "prefs.ini"), QSettings.Format.IniFormat))
+    window = IdeWindow(prefs=prefs)
+    try:
+        project = tmp_path / "recorded-project"
+        inputs = project / "input"
+        inputs.mkdir(parents=True)
+        export_fiducials(inputs / "fiducials.json", make_fiducials())
+        (inputs / "measurements.json").write_text(
+            json.dumps(
+                measurements_rows_to_schema(
+                    [
+                        MeasurementRow(
+                            electrode_id="E0",
+                            measured_distances={"NAS": 120.0, "LPA": 131.0, "RPA": 134.0},
+                        ),
+                        MeasurementRow(
+                            electrode_id="E1",
+                            measured_distances={"NAS": 121.0, "LPA": 130.0, "RPA": 135.0},
+                        ),
+                    ]
+                )
+            ),
+            encoding="utf-8",
+        )
+
+        window.open_project(project)
+        window._show_editors_tab()
+        assert window._tabs.count() == 1  # no mesh/nifti -> standalone tab, no viewer HUD
+        assert window._tabs.widget(0) is window._editors_tab
+        assert window._editors_tab._fiducials.fiducial_ids() == ["NAS", "LPA", "RPA"]
+        assert window._editors_tab._measurements._table.rowCount() == 2
+        assert window._editors_tab._localization._table.rowCount() == 0
+        assert window._viewer_hud_panel is None  # the HUD exists only while the 3D viewer is open
+        assert window.project() is project
+
+        window.close_project()
+        assert window.project() is None
+    finally:
+        window._on_close()
+        app.quit()
+
+
+def test_measurements_editor_lock_unlock_offscreen() -> None:
+    app = _qt_app()
+    editor = MeasurementsEditor()
+    try:
+        assert editor.fiducial_ready is False
+        assert not editor._table.isEnabled()
+
+        editor.set_fiducial_ready(True)
+        assert editor.fiducial_ready is True
+        assert editor._table.isEnabled()
+        for control in editor._controls:
+            assert control.isEnabled()
+
+        editor.set_fiducial_ready(False)
+        assert editor.fiducial_ready is False
+        assert not editor._table.isEnabled()
+    finally:
+        editor.close()
+        app.quit()
+
+
+def test_measurements_rows_emit_canonical_keys_offscreen() -> None:
+    app = _qt_app()
+    editor = MeasurementsEditor()
+    try:
+        editor.set_measurement_rows(
+            [
+                MeasurementRow(
+                    electrode_id="E0",
+                    measured_distances={"nas": 1.0, "LPA": 2.0, "RPA": 3.0},
+                )
+            ]
+        )
+        rows = editor.measurement_rows()
+        assert rows == [
+            MeasurementRow(
+                electrode_id="E0", measured_distances={"LPA": 2.0, "RPA": 3.0, "NAS": 1.0}
+            )
+        ]
+    finally:
+        editor.close()
+        app.quit()
+
+
+def test_editors_tab_has_no_localize_button_but_keeps_advanced_offscreen() -> None:
+    app = _qt_app()
+    from PySide6.QtTest import QSignalSpy
+    from PySide6.QtWidgets import QPushButton
+
+    from virda_gui.state import AppState
+    from virda_gui.tabs.editors_tab import EditorsTab
+
+    tab = EditorsTab(AppState())
+    try:
+        labels = [button.text() for button in tab.findChildren(QPushButton)]
+        assert "Localize measurements" not in labels
+        assert "Advanced settings..." in labels
+
+        spy = QSignalSpy(tab.advancedRequested)
+        tab._on_advanced_clicked()
+        assert spy.count() == 1
+    finally:
+        tab.close()
+        app.quit()
+
+
+def test_localization_csv_export_defaults_to_csv_offscreen(tmp_path: Path) -> None:
+    app = _qt_app()
+    preview = LocalizationPreview(default_dir=lambda: str(tmp_path))
+    try:
+        assert preview._start_path() == str(tmp_path / "input" / "localization.csv")
+    finally:
+        preview.close()
+        app.quit()
