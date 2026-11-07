@@ -39,7 +39,7 @@ research = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/virda"]
+packages = ["src/virda", "src/lib"]
 
 [tool.uv.workspace]
 members = ["src/virda_gui"]
