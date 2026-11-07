@@ -1,10 +1,4 @@
-"""Options for the GUI calls into the ``virda`` core steps.
-
-Pure parameter bundles: the tabs and dialogs fill them from settings and
-hand them to the facades in :mod:`virda_gui.ops`.  Defaults follow the
-pipeline ``Config`` defaults so a tab without settings matches the
-command-line-configured pipeline.
-"""
+"""Options for the GUI calls into the ``virda`` core steps."""
 
 from dataclasses import dataclass
 from typing import Literal

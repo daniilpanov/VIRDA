@@ -1,0 +1,1 @@
+"""max_steps: 5, steps: Forward-linked list, invalidation=remove n-node with links to n+1..m nodes"""

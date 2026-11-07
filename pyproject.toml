@@ -42,7 +42,7 @@ research = [
 packages = ["src/virda"]
 
 [tool.uv.workspace]
-members = ["src/virda_gui"]
+members = ["src/virda_gui", "src/virda_gui_new"]
 
 [tool.black]
 line-length = 100
