@@ -5,24 +5,29 @@ from collections.abc import Sequence
 from PySide6.QtWidgets import QMessageBox, QWidget
 
 from virda_gui_new.dto.steps import STEPS
+from virda_gui_new.services.step_seeding import StepChainIncompleteError
 
 
 def confirm_partial_import(
     parent: QWidget | None,
     failures: Sequence[str],
     stop_step: int,
+    incomplete: StepChainIncompleteError | None = None,
 ) -> bool:
-    """Ask whether to open a project whose artifact files partially failed.
+    """Ask whether to open a project whose import was partial.
 
-    ``failures`` holds one ``"<path>: <reason>"`` string per dropped file;
+    ``failures`` holds one ``"<path>: <reason>"`` string per dropped file.
     ``stop_step`` is the step the pipeline continues from (``-1`` when
-    nothing was restored). ``True`` means "open it anyway".
+    nothing was restored). ``incomplete`` describes the gap that stopped
+    the chain, when there is one. ``True`` means "open it anyway".
     """
     parts: list[str] = []
     if failures:
         listed = "\n".join(f"- {item}" for item in failures)
         parts.append(f"Some project files could not be imported:\n{listed}")
-    if 0 <= stop_step < len(STEPS):
+    if incomplete is not None:
+        parts.append(incomplete.explanation())
+    elif 0 <= stop_step < len(STEPS):
         parts.append(f"The pipeline continues from step {stop_step} ({STEPS[stop_step].name}).")
     if not parts:
         return True
