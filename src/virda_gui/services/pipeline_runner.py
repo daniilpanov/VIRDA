@@ -253,6 +253,7 @@ def run_stage3(
     electrodes = localize_electrodes(
         ese_mesh,
         normals,
+        stage1_result.mesh,
         fiducials,
         electrodes,
         config=stage3_config,

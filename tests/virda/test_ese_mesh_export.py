@@ -12,7 +12,7 @@ from virda.models.ese_mesh import ESEMesh
 
 class TestExportEseMesh:
     def test_round_trip_through_surface_reader(self, tmp_path: Path) -> None:
-        ese, _ = make_ese()
+        ese, _, _ = make_ese()
 
         path = export_ese_mesh(tmp_path / "out" / "mesh.ply", ese)
         loaded = import_scalp_mesh(path)
@@ -27,7 +27,7 @@ class TestExportEseMesh:
         assert path.is_file()
 
     def test_ply_carries_triangular_surface(self, tmp_path: Path) -> None:
-        ese, _ = make_ese()
+        ese, _, _ = make_ese()
 
         path = export_ese_mesh(tmp_path / "mesh.ply", ese)
 
@@ -41,9 +41,6 @@ class TestExportEseMesh:
                 [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=np.float64
             ),
             faces=np.array([[0, 1, 2]], dtype=np.int64),
-            scalp_vertices=np.array(
-                [[0.0, 0.0, -2.0], [1.0, 0.0, -2.0], [0.0, 1.0, -2.0]], dtype=np.float64
-            ),
             quality=np.ones(3),
         )
 
@@ -56,7 +53,7 @@ class TestExportEseMesh:
 
 class TestExportEseCompanions:
     def test_writes_the_expected_files(self, tmp_path: Path) -> None:
-        ese, _ = make_ese()
+        ese, _, _ = make_ese()
 
         root = export_ese_companions(tmp_path / "ese" / "mesh.ply", ese)
 
@@ -77,5 +74,4 @@ class TestExportEseCompanions:
 
         np.testing.assert_array_almost_equal(restored.vertices, ese.vertices)
         np.testing.assert_array_equal(restored.faces, ese.faces)
-        np.testing.assert_array_almost_equal(restored.scalp_vertices, ese.scalp_vertices)
         np.testing.assert_array_almost_equal(restored.quality, ese.quality)

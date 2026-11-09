@@ -107,6 +107,7 @@ def generate_ese(mesh: ScalpMesh, options: EseOptions) -> tuple[ESEMesh, Normals
 def localize(
     ese: ESEMesh,
     normals: Normals,
+    scalp_mesh: ScalpMesh,
     fiducials: Fiducials,
     electrodes: Electrodes,
     options: LocalizeOptions,
@@ -116,6 +117,7 @@ def localize(
     return localize_electrodes(
         ese,
         normals,
+        scalp_mesh,
         fiducials,
         electrodes,
         config=Stage3Config(

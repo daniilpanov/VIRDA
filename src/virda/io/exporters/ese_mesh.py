@@ -20,8 +20,7 @@ def export_ese_mesh(path: str | Path, ese_mesh: ESEMesh) -> Path:
 def export_ese_companions(path: str | Path, ese_mesh: ESEMesh) -> Path:
     """Write the ``ese/`` companion files next to the PLY at *path*.
 
-    Writes ``ese_vertices.npy``, ``ese_faces.npy``, ``quality.npy``,
-    ``scalp_vertices.npy`` and ``scalp_faces.npy`` so
+    Writes ``ese_vertices.npy``, ``ese_faces.npy`` and ``quality.npy`` so
     :func:`virda.io.importers.ese_mesh.import_ese_mesh` can rebuild the mesh
     later.  Returns the directory holding the companions.
     """

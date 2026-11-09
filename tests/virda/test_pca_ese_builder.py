@@ -18,9 +18,10 @@ def run_builder(config: Stage2Config, mesh: ScalpMesh) -> tuple[ESEMesh, np.ndar
 class TestBuildEse:
     def test_flat_plane_normals_along_z(self) -> None:
         config = Stage2Config(k_neighbors=20)
-        ese, normals = run_builder(config, make_plane())
+        mesh = make_plane()
+        ese, normals = run_builder(config, mesh)
 
-        assert ese.vertices.shape == ese.scalp_vertices.shape
+        assert ese.vertices.shape == mesh.vertices.shape
         assert np.mean(np.abs(normals[:, 2])) > 0.9
 
     def test_sphere_normals_radial_outward(self) -> None:

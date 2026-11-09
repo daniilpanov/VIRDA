@@ -40,9 +40,10 @@ def make_fiducials() -> Fiducials:
 
 def make_ese(
     scalp_mesh: ScalpMesh | None = None, ese_offset_mm: float = 2.0
-) -> tuple[ESEMesh, Normals]:
+) -> tuple[ESEMesh, Normals, ScalpMesh]:
     mesh = scalp_mesh or make_sphere()
-    return build_ese(mesh, config=Stage2Config(k_neighbors=20), ese_offset_mm=ese_offset_mm)
+    ese, normals = build_ese(mesh, config=Stage2Config(k_neighbors=20), ese_offset_mm=ese_offset_mm)
+    return ese, normals, mesh
 
 
 def make_electrodes(points: np.ndarray, fiducials: Fiducials) -> Electrodes:

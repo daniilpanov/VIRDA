@@ -10,7 +10,6 @@ VERTICES = np.array(
     [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0]], dtype=np.float64
 )
 FACES = np.array([[0, 1, 2], [1, 3, 2]], dtype=np.int64)
-SCALP = VERTICES - np.array([0.0, 0.0, 2.0])
 QUALITY = np.array([1.0, 1.0, 1.0, 1.0])
 
 
@@ -20,7 +19,6 @@ def _write_companions(root: Path) -> None:
     np.save(root / "ese_vertices.npy", VERTICES)
     np.save(root / "ese_faces.npy", FACES)
     np.save(root / "quality.npy", QUALITY)
-    np.save(root / "scalp_vertices.npy", SCALP)
 
 
 class TestImportEseMesh:
@@ -32,7 +30,6 @@ class TestImportEseMesh:
         assert isinstance(ese, ESEMesh)
         np.testing.assert_array_almost_equal(ese.vertices, VERTICES)
         np.testing.assert_array_equal(ese.faces, FACES)
-        np.testing.assert_array_almost_equal(ese.scalp_vertices, SCALP)
         np.testing.assert_array_almost_equal(ese.quality, QUALITY)
 
 
@@ -52,7 +49,7 @@ class TestImportEseMeshErrors:
     def test_inconsistent_shapes(self, tmp_path: Path) -> None:
         root = tmp_path / "ese"
         _write_companions(root)
-        np.save(root / "scalp_vertices.npy", SCALP[:2])
+        np.save(root / "quality.npy", QUALITY[:2])
 
         with pytest.raises(ValueError, match="Cannot import ESE mesh"):
             import_ese_mesh(root / "mesh.ply")

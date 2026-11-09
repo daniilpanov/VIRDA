@@ -9,6 +9,7 @@ from scipy.spatial.distance import cdist
 from virda.models.electrode import Electrode, Electrodes
 from virda.models.ese_mesh import ESEMesh, Normals
 from virda.models.fiducial import Fiducial, Fiducials
+from virda.models.scalp_mesh import ScalpMesh
 from virda.models.stage3_config import Stage3Config
 
 _OFFSET_SEARCH_MIN_MM = -30.0
@@ -72,6 +73,7 @@ def _mirror_plane_mask(
 def localize_electrodes(
     ese: ESEMesh,
     normals: Normals,
+    scalp_mesh: ScalpMesh,
     fiducials: Fiducials,
     electrodes: Electrodes,
     *,
@@ -99,6 +101,7 @@ def localize_electrodes(
     """
     vertices = np.asarray(ese.vertices)
     normals = np.asarray(normals)
+    scalp_vertices = np.asarray(scalp_mesh.vertices)
     fiducial_coords = np.asarray([fiducial.coordinates for fiducial in fiducials.items])
 
     offset_shift = 0.0
@@ -120,6 +123,7 @@ def localize_electrodes(
                 ese,
                 config,
                 logger,
+                scalp_vertices,
                 fiducial_coords,
                 search_vertices,
                 distances_to_fiducials,
@@ -154,6 +158,7 @@ def _localize_one(
     ese: ESEMesh,
     config: Stage3Config,
     logger: Logger | None,
+    scalp_vertices: np.ndarray,
     fiducial_coords: np.ndarray,
     search_vertices: np.ndarray,
     distances_to_fiducials: np.ndarray,
@@ -203,7 +208,7 @@ def _localize_one(
     return replace(
         electrode,
         ese_coords=np.asarray(search_vertices)[best_index],
-        scalp_coords=np.asarray(ese.scalp_vertices)[best_index],
+        scalp_coords=scalp_vertices[best_index],
         residual_error=residual_error,
         confidence=float(ese.quality[best_index]),
         flagged=residual_error > config.residual_threshold_mm,

@@ -89,7 +89,6 @@ def build_ese(
     ese_mesh = ESEMesh(
         vertices=ese_vertices,
         faces=scalp_mesh.faces,
-        scalp_vertices=vertices,
         quality=quality,
     )
     return ese_mesh, normals

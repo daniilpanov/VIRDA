@@ -31,11 +31,12 @@ def _reweighted(fiducials: Fiducials, weights: dict[str, float]) -> Fiducials:
 
 
 def _localize(electrodes: Electrodes, threshold_mm: float = 10.0) -> Electrodes:
-    ese, normals = make_ese()
+    ese, normals, scalp_mesh = make_ese()
     fiducials = make_fiducials()
     return localize_electrodes(
         ese,
         normals,
+        scalp_mesh,
         fiducials,
         electrodes,
         config=Stage3Config(residual_threshold_mm=threshold_mm, calibrate_ese_offset=False),
@@ -44,7 +45,7 @@ def _localize(electrodes: Electrodes, threshold_mm: float = 10.0) -> Electrodes:
 
 class TestLocalizeElectrodes:
     def test_exact_recovery_on_sphere(self):
-        ese, _ = make_ese()
+        ese, _, scalp_mesh = make_ese()
         fiducials = make_fiducials()
         true_indices = [0, 42, 100]
         result = _localize(make_electrodes(ese.vertices[true_indices], fiducials))
@@ -56,13 +57,13 @@ class TestLocalizeElectrodes:
             assert electrode.scalp_coords is not None
             assert electrode.residual_error is not None
             assert np.array_equal(electrode.ese_coords, ese.vertices[true_indices[i]])
-            assert np.array_equal(electrode.scalp_coords, ese.scalp_vertices[true_indices[i]])
+            assert np.array_equal(electrode.scalp_coords, scalp_mesh.vertices[true_indices[i]])
             assert electrode.residual_error < 1e-6
             assert electrode.flagged is False
             assert electrode.confidence == ese.quality[true_indices[i]]
 
     def test_weighted_fiducial_dominates_when_measurements_conflict(self):
-        ese, normals = make_ese()
+        ese, normals, scalp_mesh = make_ese()
         fiducials = make_fiducials()
         true_index = 0
         point = ese.vertices[true_index]
@@ -76,6 +77,7 @@ class TestLocalizeElectrodes:
         weighted_result = localize_electrodes(
             ese,
             normals,
+            scalp_mesh,
             weighted,
             electrodes,
             config=config,
@@ -92,7 +94,7 @@ class TestLocalizeElectrodes:
         assert unweighted_result.items[0].residual_error > weighted_electrode.residual_error + 30
 
     def test_localizes_with_subset_of_fiducials(self):
-        ese, _ = make_ese()
+        ese, _, _ = make_ese()
         fiducials = make_fiducials()
         true_index = 7
         point = ese.vertices[true_index]
@@ -121,7 +123,7 @@ class TestLocalizeElectrodes:
         assert result.items[0].residual_error is None
 
     def test_flags_electrode_over_threshold(self):
-        ese, _ = make_ese()
+        ese, _, _ = make_ese()
         fiducials = make_fiducials()
         point = ese.vertices[0]
         distances = _exact_distances(point, fiducials)
@@ -142,7 +144,7 @@ class TestLocalizeElectrodes:
         identical distance profiles."""
         from virda.ops.localize_electrodes import _mirror_plane_mask
 
-        ese, normals = make_ese()
+        ese, normals, scalp_mesh = make_ese()
         fiducials = make_fiducials()
         vertices = np.asarray(ese.vertices)
 
@@ -183,7 +185,7 @@ class TestOffsetCalibration:
         return make_electrodes(points, make_fiducials()), points
 
     def test_recovers_offset_shift(self):
-        ese, normals = make_ese()
+        ese, normals, scalp_mesh = make_ese()
         indices = [0, 42, 100]
         # Measurements taken at the scalp surface while the ESE sits 2 mm out.
         electrodes, points = self._shifted_electrodes(ese, normals, indices, shift_mm=-2.0)
@@ -191,6 +193,7 @@ class TestOffsetCalibration:
         result = localize_electrodes(
             ese,
             normals,
+            scalp_mesh,
             make_fiducials(),
             electrodes,
             config=config,
@@ -207,11 +210,12 @@ class TestOffsetCalibration:
             assert electrode.flagged is False
 
     def test_disabled_when_flag_off(self):
-        ese, normals = make_ese()
+        ese, normals, scalp_mesh = make_ese()
         electrodes, _ = self._shifted_electrodes(ese, normals, [0], shift_mm=-2.0)
         result = localize_electrodes(
             ese,
             normals,
+            scalp_mesh,
             make_fiducials(),
             electrodes,
             config=Stage3Config(calibrate_ese_offset=False),
@@ -221,7 +225,7 @@ class TestOffsetCalibration:
         assert result.items[0].is_localized
 
     def test_zero_shift_when_measurements_match_ese(self):
-        ese, normals = make_ese()
+        ese, normals, scalp_mesh = make_ese()
         fiducials = make_fiducials()
 
         vertices = np.asarray(ese.vertices)
@@ -240,6 +244,7 @@ class TestOffsetCalibration:
         result = localize_electrodes(
             ese,
             normals,
+            scalp_mesh,
             fiducials,
             electrodes,
             config=config,
