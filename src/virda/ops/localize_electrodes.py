@@ -7,9 +7,8 @@ import numpy as np
 from scipy.spatial.distance import cdist
 
 from virda.models.electrode import Electrode, Electrodes
-from virda.models.ese_mesh import ESEMesh, Normals
 from virda.models.fiducial import Fiducial, Fiducials
-from virda.models.scalp_mesh import ScalpMesh
+from virda.models.mesh import Mesh, Normals
 from virda.models.stage3_config import Stage3Config
 
 _OFFSET_SEARCH_MIN_MM = -30.0
@@ -71,9 +70,9 @@ def _mirror_plane_mask(
 
 
 def localize_electrodes(
-    ese: ESEMesh,
+    ese: Mesh,
     normals: Normals,
-    scalp_mesh: ScalpMesh,
+    scalp_mesh: Mesh,
     fiducials: Fiducials,
     electrodes: Electrodes,
     *,

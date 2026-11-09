@@ -5,15 +5,15 @@ from typing import cast
 import numpy as np
 import trimesh
 
-from virda.models.scalp_mesh import ScalpMesh
+from virda.models.mesh import Mesh
 
 
 def clean_mesh(
-    mesh: ScalpMesh,
+    mesh: Mesh,
     *,
     min_component_vertices: int = 100,
     merge_digits: int = 6,
-) -> ScalpMesh:
+) -> Mesh:
     """Merge near-coincident vertices, split into components and keep the main body."""
     trimesh_mesh = trimesh.Trimesh(vertices=mesh.vertices, faces=mesh.faces)
     trimesh_mesh.merge_vertices(merge_tex=True, merge_norm=True, digits_vertex=merge_digits)
@@ -22,11 +22,11 @@ def clean_mesh(
     components = trimesh_mesh.split(only_watertight=False)
     if len(components) > 1:
         main_body = _keep_largest_component(components)
-        return ScalpMesh(
+        return Mesh(
             vertices=np.asarray(main_body.vertices, dtype=np.float64),
             faces=np.asarray(main_body.faces, dtype=np.int64),
         )
-    return ScalpMesh(
+    return Mesh(
         vertices=np.asarray(trimesh_mesh.vertices, dtype=np.float64),
         faces=np.asarray(trimesh_mesh.faces, dtype=np.int64),
     )

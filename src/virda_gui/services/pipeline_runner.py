@@ -36,12 +36,11 @@ from virda.io.importers.nifti import import_nifti
 from virda.models.config import Config
 from virda.models.coordsystem import Coordsystem
 from virda.models.electrode import Electrodes
-from virda.models.ese_mesh import ESEMesh, Normals
 from virda.models.fiducial import (
     Fiducials,
     ManualFiducials,
 )
-from virda.models.scalp_mesh import ScalpMesh
+from virda.models.mesh import Mesh, Normals
 from virda.ops.build_ese import build_ese
 from virda.ops.clean_mesh import clean_mesh
 from virda.ops.extract_mesh import extract_mesh
@@ -56,7 +55,7 @@ from virda_gui.state import AppState
 class _Stage1Result:
     """GUI-side view of Stage 1: the scalp mesh and the resolved fiducials."""
 
-    mesh: ScalpMesh
+    mesh: Mesh
     fiducials: Fiducials
 
 
@@ -100,7 +99,7 @@ def _log_artifact(logger: Logger | None, artifact) -> None:
 
 def run(
     config: Config, measurements_path: str | Path | None = None
-) -> tuple[_Stage1Result, ESEMesh | None, Electrodes | None]:
+) -> tuple[_Stage1Result, Mesh | None, Electrodes | None]:
     """Run the VIRDA pipeline: Stage 1 -> 2 -> 3.
 
     Returns the Stage 1 result, the ESE surface when ESE is configured,
@@ -192,7 +191,7 @@ def run_stage1(config: Config) -> _Stage1Result:
     return result
 
 
-def run_stage2(config: Config, scalp_mesh: ScalpMesh) -> tuple[ESEMesh, Normals]:
+def run_stage2(config: Config, scalp_mesh: Mesh) -> tuple[Mesh, Normals]:
     """Build the ESE surface and export it (Stage 2)."""
     logger = logging.getLogger("virda_gui.stage_2")
 
@@ -214,7 +213,7 @@ def run_stage2(config: Config, scalp_mesh: ScalpMesh) -> tuple[ESEMesh, Normals]
 def run_stage3(
     config: Config,
     stage1_result: _Stage1Result,
-    ese_mesh: ESEMesh | None,
+    ese_mesh: Mesh | None,
     normals: Normals | None = None,
     measurements_path: str | Path | None = None,
 ) -> Electrodes | None:

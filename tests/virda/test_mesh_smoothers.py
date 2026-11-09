@@ -1,8 +1,8 @@
 import numpy as np
 import pytest
 
+from virda.models.mesh import Mesh
 from virda.models.mri_volume import MRIVolume
-from virda.models.scalp_mesh import ScalpMesh
 from virda.models.segmentation_mask import SegmentationMask
 from virda.ops.smooth_mesh import smooth_mesh
 
@@ -33,7 +33,7 @@ def sphere_volume() -> MRIVolume:
 
 
 @pytest.fixture
-def sphere_mesh(sphere_volume: MRIVolume) -> ScalpMesh:
+def sphere_mesh(sphere_volume: MRIVolume) -> Mesh:
     grid = np.indices((20, 20, 20))
     center = np.array([10, 10, 10])
     squared_distance = np.sum((grid - center.reshape(-1, 1, 1, 1)) ** 2, axis=0)
@@ -45,15 +45,15 @@ def sphere_mesh(sphere_volume: MRIVolume) -> ScalpMesh:
 
 
 class TestLaplacianSmoother:
-    def test_smooth_preserves_mesh_structure(self, sphere_mesh: ScalpMesh) -> None:
+    def test_smooth_preserves_mesh_structure(self, sphere_mesh: Mesh) -> None:
         smoothed = smooth_mesh(sphere_mesh, iterations=3, lamb=0.5)
 
-        assert isinstance(smoothed, ScalpMesh)
+        assert isinstance(smoothed, Mesh)
         assert smoothed.vertices.shape == sphere_mesh.vertices.shape
         assert smoothed.faces.shape == sphere_mesh.faces.shape
         assert np.array_equal(smoothed.faces, sphere_mesh.faces)
 
-    def test_smooth_moves_vertices(self, sphere_mesh: ScalpMesh) -> None:
+    def test_smooth_moves_vertices(self, sphere_mesh: Mesh) -> None:
         smoothed = smooth_mesh(sphere_mesh, iterations=5, lamb=0.5)
 
         vertex_displacement = np.abs(smoothed.vertices - sphere_mesh.vertices).max()
@@ -62,17 +62,17 @@ class TestLaplacianSmoother:
 
 
 class TestTaubinSmoother:
-    def test_smooth_preserves_mesh_structure(self, sphere_mesh: ScalpMesh) -> None:
+    def test_smooth_preserves_mesh_structure(self, sphere_mesh: Mesh) -> None:
         smoothed = smooth_mesh(
             sphere_mesh, smoother_type="taubin", iterations=3, lamb=0.5, nu=-0.53
         )
 
-        assert isinstance(smoothed, ScalpMesh)
+        assert isinstance(smoothed, Mesh)
         assert smoothed.vertices.shape == sphere_mesh.vertices.shape
         assert smoothed.faces.shape == sphere_mesh.faces.shape
         assert np.array_equal(smoothed.faces, sphere_mesh.faces)
 
-    def test_smooth_moves_vertices(self, sphere_mesh: ScalpMesh) -> None:
+    def test_smooth_moves_vertices(self, sphere_mesh: Mesh) -> None:
         smoothed = smooth_mesh(
             sphere_mesh, smoother_type="taubin", iterations=5, lamb=0.5, nu=-0.53
         )

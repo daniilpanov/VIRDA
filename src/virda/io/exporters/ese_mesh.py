@@ -1,14 +1,14 @@
-"""Export an :class:`ESEMesh` to a PLY file plus project companions."""
+"""Export an :class:`Mesh` to a PLY file plus project companions."""
 
 from pathlib import Path
 
 import numpy as np
 import trimesh
 
-from virda.models.ese_mesh import ESEMesh
+from virda.models.mesh import Mesh
 
 
-def export_ese_mesh(path: str | Path, ese_mesh: ESEMesh) -> Path:
+def export_ese_mesh(path: str | Path, ese_mesh: Mesh) -> Path:
     """Write *ese_mesh* as a triangular PLY file; returns the written path."""
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -17,7 +17,7 @@ def export_ese_mesh(path: str | Path, ese_mesh: ESEMesh) -> Path:
     return target
 
 
-def export_ese_companions(path: str | Path, ese_mesh: ESEMesh) -> Path:
+def export_ese_companions(path: str | Path, ese_mesh: Mesh) -> Path:
     """Write the ``ese/`` companion files next to the PLY at *path*.
 
     Writes ``ese_vertices.npy`` and ``ese_faces.npy`` so

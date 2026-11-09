@@ -4,11 +4,11 @@ from pathlib import Path
 
 import numpy as np
 
-from virda.models.ese_mesh import ESEMesh
+from virda.models.mesh import Mesh
 
 
-def import_ese_mesh(path: str | Path) -> ESEMesh:
-    """Rebuild an :class:`ESEMesh` from ``mesh.ply`` companion files.
+def import_ese_mesh(path: str | Path) -> Mesh:
+    """Rebuild an :class:`Mesh` from ``mesh.ply`` companion files.
 
     Reads ``ese_vertices.npy`` and ``ese_faces.npy`` next to *path* (the
     project ``ese/`` layout); the PLY itself only carries the surface geometry
@@ -26,7 +26,7 @@ def import_ese_mesh(path: str | Path) -> ESEMesh:
     except (OSError, ValueError, KeyError) as exc:
         raise ValueError(f"Cannot import ESE mesh from {ply_path}: {exc}") from exc
     try:
-        return ESEMesh(
+        return Mesh(
             vertices=vertices,
             faces=faces,
         )

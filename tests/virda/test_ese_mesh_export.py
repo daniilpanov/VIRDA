@@ -7,7 +7,7 @@ from tests.helpers.measurements import make_ese
 from virda.io.exporters.ese_mesh import export_ese_companions, export_ese_mesh
 from virda.io.importers.ese_mesh import import_ese_mesh
 from virda.io.importers.scalp_mesh import import_scalp_mesh
-from virda.models.ese_mesh import ESEMesh
+from virda.models.mesh import Mesh
 
 
 class TestExportEseMesh:
@@ -36,7 +36,7 @@ class TestExportEseMesh:
         assert raw.faces.shape == ese.faces.shape
 
     def test_custom_mesh(self, tmp_path: Path) -> None:
-        ese = ESEMesh(
+        ese = Mesh(
             vertices=np.array(
                 [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=np.float64
             ),

@@ -5,8 +5,7 @@ from logging import Logger
 import numpy as np
 from scipy.spatial import cKDTree
 
-from virda.models.ese_mesh import ESEMesh, Normals
-from virda.models.scalp_mesh import ScalpMesh
+from virda.models.mesh import Mesh, Normals
 from virda.models.stage2_config import Stage2Config
 
 _FALLBACK_K_NEIGHBORS = 20
@@ -43,12 +42,12 @@ def _orient_outward(normals: np.ndarray, vertices: np.ndarray) -> np.ndarray:
 
 
 def build_ese(
-    scalp_mesh: ScalpMesh,
+    scalp_mesh: Mesh,
     *,
     config: Stage2Config,
     ese_offset_mm: float,
     logger: Logger | None = None,
-) -> tuple[ESEMesh, Normals]:
+) -> tuple[Mesh, Normals]:
     """Estimate outward normals for the scalp mesh and offset them by ``ese_offset_mm``.
 
     ``config.k_neighbors`` switches between a fixed k-NN neighborhood and a
@@ -76,7 +75,7 @@ def build_ese(
     if logger:
         logger.info("ESE estimated: %d vertices, %s", vertices.shape[0], mode)
 
-    ese_mesh = ESEMesh(
+    ese_mesh = Mesh(
         vertices=ese_vertices,
         faces=scalp_mesh.faces,
     )

@@ -3,8 +3,8 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
+from virda.models.mesh import Mesh
 from virda.models.mri_volume import MRIVolume
-from virda.models.scalp_mesh import ScalpMesh
 from virda.models.segmentation_mask import SegmentationMask
 from virda.ops.extract_mesh import extract_mesh
 
@@ -51,7 +51,7 @@ class TestMeshExtractor:
     ) -> None:
         mesh = extract_mesh(sphere_mask, sphere_volume)
 
-        assert isinstance(mesh, ScalpMesh)
+        assert isinstance(mesh, Mesh)
         assert mesh.vertices.ndim == 2
         assert mesh.vertices.shape[1] == 3
         assert mesh.faces.ndim == 2

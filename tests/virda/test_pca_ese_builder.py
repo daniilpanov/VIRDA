@@ -2,15 +2,14 @@ import numpy as np
 import pytest
 
 from tests.helpers.meshes import make_plane, make_sphere
-from virda.models.ese_mesh import ESEMesh
-from virda.models.scalp_mesh import ScalpMesh
+from virda.models.mesh import Mesh
 from virda.models.stage2_config import Stage2Config
 from virda.ops.build_ese import build_ese
 
 ESE_OFFSET_MM = 1.0
 
 
-def run_builder(config: Stage2Config, mesh: ScalpMesh) -> tuple[ESEMesh, np.ndarray]:
+def run_builder(config: Stage2Config, mesh: Mesh) -> tuple[Mesh, np.ndarray]:
     """Build the ESE surface and return it together with its normals."""
     return build_ese(mesh, config=config, ese_offset_mm=ESE_OFFSET_MM)
 

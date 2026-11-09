@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from virda.io.importers.ese_mesh import import_ese_mesh
-from virda.models.ese_mesh import ESEMesh
+from virda.models.mesh import Mesh
 
 VERTICES = np.array(
     [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0]], dtype=np.float64
@@ -25,7 +25,7 @@ class TestImportEseMesh:
 
         ese = import_ese_mesh(tmp_path / "ese" / "mesh.ply")
 
-        assert isinstance(ese, ESEMesh)
+        assert isinstance(ese, Mesh)
         np.testing.assert_array_almost_equal(ese.vertices, VERTICES)
         np.testing.assert_array_equal(ese.faces, FACES)
 
