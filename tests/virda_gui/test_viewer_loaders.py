@@ -5,6 +5,8 @@ import numpy as np
 import pytest
 import pyvista as pv
 
+from virda.io.exporters.electrodes import export_electrodes
+from virda.models.electrode import Electrode, Electrodes
 from virda_gui.viewer.viewer_loaders import (
     _cras_decision_message,
     _cras_to_scanner_ras_offset,
@@ -121,6 +123,29 @@ class TestTabularCrasConversion:
         _, _, _, _, names = _load_electrodes(str(path))
 
         assert names == ["E001", "Cz"]
+
+    def test_pipeline_export_loads_scalp_points_and_flags(self, tmp_path: Path) -> None:
+        electrodes = Electrodes(
+            items=[
+                Electrode(
+                    electrode_id="Fz",
+                    measured_distances={"NAS": 110.5},
+                    ese_coords=np.array([1.0, 2.0, 3.0]),
+                    scalp_coords=np.array([1.0, 2.0, 2.5]),
+                    residual_error=1.25,
+                    flagged=True,
+                )
+            ]
+        )
+        path = export_electrodes(tmp_path / "electrodes.json", electrodes)
+
+        points, residuals, flags, measured, names = _load_electrodes(str(path))
+
+        np.testing.assert_allclose(points, [[1.0, 2.0, 2.5]])
+        assert residuals == pytest.approx([1.25])
+        assert flags.tolist() == [True]
+        assert measured == [{"NAS": 110.5}]
+        assert names == ["Fz"]
 
 
 class TestCrasAutoDetection:

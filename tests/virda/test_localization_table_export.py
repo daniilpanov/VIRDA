@@ -41,14 +41,16 @@ class TestExportLocalizationTable:
         assert row["residual_mm"] == "1.25"
         assert row["flagged"] == "no"
 
-    def test_without_offset_head_columns_empty(self, tmp_path: Path) -> None:
+    def test_without_offset_omits_head_columns(self, tmp_path: Path) -> None:
         electrodes = Electrodes(items=[_localized_electrode()])
 
         path = export_localization_table(tmp_path / "table.csv", electrodes)
 
-        row = next(csv.DictReader(path.open(newline="", encoding="utf-8")))
-        assert row["head_x"] == ""
-        assert row["head_y"] == ""
+        rows = list(csv.DictReader(path.open(newline="", encoding="utf-8")))
+        header = rows[0].keys()
+        assert "head_x" not in header
+        assert "head_y" not in header
+        assert "head_z" not in header
 
     def test_unlocalized_electrodes_left_blank(self, tmp_path: Path) -> None:
         electrodes = Electrodes(
