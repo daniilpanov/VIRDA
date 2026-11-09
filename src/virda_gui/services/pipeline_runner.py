@@ -24,7 +24,6 @@ from virda.io.exporters.electrodes import (
 )
 from virda.io.exporters.ese_mesh import export_ese_companions, export_ese_mesh
 from virda.io.exporters.fiducials import export_fiducials
-from virda.io.exporters.localization_table import export_localization_table
 from virda.io.exporters.mesh_arrays import export_mesh_faces, export_mesh_vertices
 from virda.io.exporters.nifti_copy import export_nifti_copy
 from virda.io.exporters.pipeline_config import export_pipeline_config
@@ -256,11 +255,9 @@ def run_stage3(
     _log_artifact(logger, electrodes)
 
     localization_dir = Path(project_dir) / "localization"
-    export_localization_table(localization_dir / "electrode_coords.csv", electrodes)
-    electrodes_path = localization_dir / "electrodes.json"
-    export_electrodes(electrodes_path, electrodes)
-    export_electrodes_scalp(localization_dir / "electrodes_scalp.json", electrodes)
-    export_electrodes_ese(localization_dir / "electrodes_ese.json", electrodes)
+    export_electrodes(localization_dir / "electrodes.csv", electrodes)
+    export_electrodes_scalp(localization_dir / "electrodes_scalp.csv", electrodes)
+    export_electrodes_ese(localization_dir / "electrodes_ese.csv", electrodes)
 
     return electrodes
 

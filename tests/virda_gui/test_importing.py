@@ -20,7 +20,7 @@ def test_import_target_fixed_names(tmp_path: Path) -> None:
     source = tmp_path / "whatever.ply"
     assert import_target(_role("mesh"), project, source) == project / "mesh" / "final_mesh.ply"
     assert import_target(_role("electrodes"), project, source) == (
-        project / "localization" / "electrodes.json"
+        project / "localization" / "electrodes.csv"
     )
 
 

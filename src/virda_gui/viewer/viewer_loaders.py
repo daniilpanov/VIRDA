@@ -2,14 +2,13 @@
 
 Everything that reads a file or resolves coordinates into the scene frame
 lives here so it can be tested without a display: mesh loading, MRI volume
-loading and downsampling, fiducial points, electrode loading (Stage 3 JSON or
+loading and downsampling, fiducial points, electrode loading (Stage 3 CSV or
 tabular cRAS files) with automatic frame detection, and the QC report.
 :class:`SceneData` is the plain-data result consumed by
 :class:`virda_gui.viewer.viewer.ViewerWidget` on the GUI thread.
 """
 
 import colorsys
-import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -161,65 +160,29 @@ def _load_electrodes(
     path: str,
     cras_offset: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[str]]:
-    """Load electrodes from a Stage 3 JSON or a tabular CSV/TSV file.
+    """Load electrodes from a tabular CSV/TSV file.
 
-    Dispatches to ``_load_electrodes_from_json`` for ``.json`` files and to
-    ``_load_electrodes_from_csv`` for everything else (``.tsv``, ``.csv``,
-    ``.txt``).  ``cras_offset`` applies only to tabular files: Stage 3 JSON
-    output is already in scanner RAS, while TSV/CSV electrode tables may
-    store FreeSurfer cRAS coordinates that need converting first.  Returns
-    per-electrode display names (the ``electrode_id``/``name`` field, or a
-    generated ``E001``-style fallback).
+    ``cras_offset`` applies to files that store FreeSurfer cRAS coordinates
+    instead of scanner RAS ones; Stage 3 project output (``electrodes.csv``,
+    ``electrodes_scalp.csv``, ``electrodes_ese.csv``) is already scanner RAS,
+    so no offset is needed there.  Returns per-electrode display names (the
+    ``electrode_id``/``name`` field, or a generated ``E001``-style fallback).
     """
-    if path.endswith(".json"):
-        return _load_electrodes_from_json(path)
     return _load_electrodes_from_csv(path, cras_offset=cras_offset)
-
-
-def _load_electrodes_from_json(
-    path: str,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[str]]:
-    """Read ``electrodes.json`` from the Stage 3 output.
-
-    Returns scalp points, residuals, flags and display names of the
-    localized electrodes (used to draw ID labels). Non-localized electrodes
-    are skipped.
-    """
-    with open(path, encoding="utf-8") as fh:
-        data = json.load(fh)
-    points: list[np.ndarray] = []
-    residuals: list[float] = []
-    flags: list[bool] = []
-    names: list[str] = []
-    for index, item in enumerate(data):
-        coords = item.get("coords") or item.get("scalp_coords")
-        if coords is None:
-            continue
-        points.append(np.asarray(coords, dtype=np.float64))
-        residuals.append(float(item.get("residual_error") or 0.0))
-        flags.append(bool(item.get("flagged", False)))
-        names.append(str(item.get("electrode_id") or f"E{index + 1:03d}"))
-    if not points:
-        return np.empty((0, 3)), np.empty(0), np.empty(0), []
-    return (
-        np.asarray(points),
-        np.asarray(residuals),
-        np.asarray(flags, dtype=bool),
-        names,
-    )
 
 
 def _load_electrodes_from_csv(
     path: str,
     cras_offset: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[str]]:
-    """Read electrodes from a TSV/CSV with columns: name, x, y, z.
+    """Read electrodes from a tabular file with columns: name, x, y, z.
 
-    Returns positions with zero residuals, no flags and generated display
-    names.  Column names are matched case-insensitively.  The delimiter is
-    detected automatically by :class:`csv.Sniffer`.  When ``cras_offset`` is
-    given the positions are treated as FreeSurfer cRAS and shifted into
-    scanner RAS.
+    Returns positions, residuals, flags and display names.  Column names
+    are matched case-insensitively; ``electrode_id``, ``residual_mm`` and
+    ``flagged`` columns are used when present (Stage 3 project output).
+    The delimiter is detected automatically by :class:`csv.Sniffer`.  When
+    ``cras_offset`` is given the positions are treated as FreeSurfer cRAS
+    and shifted into scanner RAS.
     """
     import csv
 
@@ -241,14 +204,23 @@ def _load_electrodes_from_csv(
                     f"found: {list(reader.fieldnames)}"
                 )
 
-        name_col = col_map.get("name")
+        name_col = col_map.get("name") or col_map.get("electrode_id")
+        residual_col = col_map.get("residual_mm")
+        flag_col = col_map.get("flagged")
         points: list[np.ndarray] = []
+        residuals: list[float] = []
+        flags: list[bool] = []
         names: list[str] = []
         for index, row in enumerate(reader):
-            x = float(row[col_map["x"]])
-            y = float(row[col_map["y"]])
-            z = float(row[col_map["z"]])
-            points.append(np.array([x, y, z]))
+            points.append(
+                np.array(
+                    [float(row[col_map["x"]]), float(row[col_map["y"]]), float(row[col_map["z"]])]
+                )
+            )
+            residuals.append(
+                float(row[residual_col]) if residual_col and row[residual_col] else 0.0
+            )
+            flags.append(str(row[flag_col]).strip().lower() == "yes" if flag_col else False)
             raw_name = row.get(name_col) if name_col is not None else None
             names.append(str(raw_name).strip() if raw_name else f"E{index + 1:03d}")
 
@@ -257,12 +229,7 @@ def _load_electrodes_from_csv(
     positions = np.asarray(points)
     if cras_offset is not None:
         positions = positions + cras_offset
-    return (
-        positions,
-        np.zeros(len(points)),
-        np.zeros(len(points), dtype=bool),
-        names,
-    )
+    return positions, np.asarray(residuals), np.asarray(flags, dtype=bool), names
 
 
 def _scene_bounds_to_world(bounds: _BOUNDS, transform: np.ndarray) -> _BOUNDS:
@@ -446,7 +413,7 @@ def collect_scene_data(
     for gi, (epath, spec_color) in enumerate(electrode_specs or []):
         points, _, flags, names = _load_electrodes(epath)
         label = epath.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
-        if not epath.endswith(".json") and cras_offset is not None and len(points) > 0:
+        if cras_offset is not None and len(points) > 0:
             if electrodes_cras:
                 points = points + cras_offset
                 log(f"{label}: cRAS conversion forced by --electrodes-cras")

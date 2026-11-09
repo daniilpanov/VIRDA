@@ -9,14 +9,14 @@ Usage examples::
     virda-gui-viewer --nifti <scan.nii.gz> --mesh <final_mesh.ply> \\
         --electrodes <electrodes.tsv>
     virda-gui-viewer --nifti <scan.nii.gz> --mesh <final_mesh.ply> \\
-        --electrodes <electrodes_scalp.json> --electrodes <electrodes.tsv>
+        --electrodes <electrodes_scalp.csv> --electrodes <electrodes.tsv>
 
 At least one of ``--nifti`` or ``--mesh`` is required.  ``--electrodes``
-accepts Stage 3 JSON or a tabular file with ``name``, ``x``, ``y``, ``z``
-columns, optionally followed by a color for the whole group.  May be repeated
-to overlay multiple electrode groups.  Tabular files are treated as
-FreeSurfer cRAS; the frame is detected automatically or forced with
-``--electrodes-cras`` (requires ``--nifti``).
+accepts Stage 3 project CSV or a tabular file with ``name``, ``x``, ``y``,
+``z`` columns, optionally followed by a color for the whole group.  May be
+repeated to overlay multiple electrode groups.  Generic tabular files are
+treated as FreeSurfer cRAS; the frame is detected automatically or forced
+with ``--electrodes-cras`` (requires ``--nifti``).
 """
 
 import argparse

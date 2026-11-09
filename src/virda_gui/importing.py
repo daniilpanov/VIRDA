@@ -26,12 +26,7 @@ ROLE_REGISTRY: tuple[ImportRole, ...] = (
     ImportRole("scalp_vertices", "Scalp vertices", "Mesh", "mesh/scalp_vertices.npy"),
     ImportRole("scalp_faces", "Scalp faces", "Mesh", "mesh/scalp_faces.npy"),
     ImportRole("ese_mesh", "ESE mesh", "ESE", "ese/ese_mesh.ply"),
-    ImportRole(
-        "electrodes",
-        "Localized electrodes",
-        "Localization",
-        "localization/electrodes.json",
-    ),
+    ImportRole("electrodes", "Localized electrodes", "Localization", "localization/electrodes.csv"),
     ImportRole("nifti", "NIfTI scan", "Input", None),
     ImportRole("fiducials", "Fiducials", "Input", "input/fiducials.json"),
     ImportRole("config", "Pipeline config", "Input", "input/config.json"),

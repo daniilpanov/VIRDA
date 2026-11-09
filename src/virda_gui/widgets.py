@@ -246,8 +246,8 @@ class ElectrodeGroupRow(QFrame):
     """One electrode overlay group row: file selector + color picker + remove.
 
     Used by the main window to let the user overlay several electrode files
-    (Stage 3 ``electrodes.json`` or tabular TSV/CSV tables) in the 3D viewer,
-    each with its own color.
+    (Stage 3 ``electrodes.csv`` or generic tabular TSV/CSV tables) in the 3D
+    viewer, each with its own color.
     """
 
     def __init__(

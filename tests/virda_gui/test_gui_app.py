@@ -104,9 +104,9 @@ def test_ensure_stage3_group_without_output_file(tmp_path) -> None:
 
 
 def test_ensure_stage3_group_already_present(tmp_path) -> None:
-    electrodes = tmp_path / "stage3" / "electrodes.json"
+    electrodes = tmp_path / "stage3" / "electrodes.csv"
     electrodes.parent.mkdir()
-    electrodes.write_text("[]", encoding="utf-8")
+    electrodes.write_text("electrode_id,x,y,z\n", encoding="utf-8")
     rows = [_FakeRow(str(electrodes), "yellow")]
     state = SimpleNamespace(last_project_dir=str(tmp_path), electrode_rows=rows)
     stub = SimpleNamespace(_state=state)

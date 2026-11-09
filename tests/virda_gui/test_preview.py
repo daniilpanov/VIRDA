@@ -20,7 +20,7 @@ def _write(path: Path, text: str) -> Path:
 
 class TestParseCsvTsv:
     def test_parse_comma_separated(self, tmp_path: Path) -> None:
-        path = _write(tmp_path / "electrode_coords.csv", "id,x,y,z\nE1,1,2,3\nE2,4,5,6\n")
+        path = _write(tmp_path / "electrodes.csv", "id,x,y,z\nE1,1,2,3\nE2,4,5,6\n")
         headers, rows = parse_csv_tsv(path)
         assert headers == ["id", "x", "y", "z"]
         assert rows == [["E1", "1", "2", "3"], ["E2", "4", "5", "6"]]

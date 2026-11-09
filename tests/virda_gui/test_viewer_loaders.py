@@ -1,11 +1,10 @@
-import json
 from pathlib import Path
 
 import numpy as np
 import pytest
 import pyvista as pv
 
-from virda.io.exporters.electrodes import export_electrodes
+from virda.io.exporters.electrodes import export_electrodes_scalp
 from virda.models.electrode import Electrode, Electrodes
 from virda_gui.viewer.viewer_loaders import (
     _cras_decision_message,
@@ -83,45 +82,34 @@ class TestTabularCrasConversion:
 
         assert names == ["E001"]
 
-    def test_json_group_ignores_cras_offset(self, tmp_path: Path) -> None:
-        path = tmp_path / "electrodes.json"
+    def test_scalp_table_is_treated_as_tabular(self, tmp_path: Path) -> None:
+        path = tmp_path / "electrodes_scalp.csv"
         path.write_text(
-            json.dumps(
-                [
-                    {
-                        "electrode_id": "E1",
-                        "coords": [1.0, 2.0, 3.0],
-                        "residual_error": 0.5,
-                        "flagged": False,
-                    }
-                ]
-            ),
+            "electrode_id\tx\ty\tz\tresidual_mm\tflagged\nFz\t1.0\t2.0\t3.5\t\t\n",
             encoding="utf-8",
         )
-        offset = np.array([100.0, 100.0, 100.0])
+        offset = np.array([10.0, -1.0, 0.5])
 
         points, residuals, flags, names = _load_electrodes(str(path), cras_offset=offset)
 
-        assert np.asarray(points) == pytest.approx(np.array([[1.0, 2.0, 3.0]]))
-        assert residuals == pytest.approx([0.5])
+        assert np.asarray(points) == pytest.approx(np.array([[11.0, 1.0, 4.0]]))
+        assert residuals == pytest.approx([0.0])
         assert not flags.any()
-        assert names == ["E1"]
+        assert names == ["Fz"]
 
-    def test_json_without_ids_generates_names(self, tmp_path: Path) -> None:
-        path = tmp_path / "electrodes.json"
+    def test_flag_column_parses_yes_and_no(self, tmp_path: Path) -> None:
+        path = tmp_path / "electrodes.csv"
         path.write_text(
-            json.dumps(
-                [
-                    {"coords": [1.0, 2.0, 3.0]},
-                    {"coords": [4.0, 5.0, 6.0], "electrode_id": "Cz"},
-                ]
-            ),
+            "electrode_id,x,y,z,residual_mm,flagged\nFz,1,2,3,0.5,yes\nCz,4,5,6,,no\n",
             encoding="utf-8",
         )
 
-        _, _, _, names = _load_electrodes(str(path))
+        points, residuals, flags, names = _load_electrodes(str(path))
 
-        assert names == ["E001", "Cz"]
+        assert np.asarray(points) == pytest.approx(np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]))
+        assert residuals == pytest.approx([0.5, 0.0])
+        assert flags.tolist() == [True, False]
+        assert names == ["Fz", "Cz"]
 
     def test_pipeline_export_loads_scalp_points_and_flags(self, tmp_path: Path) -> None:
         electrodes = Electrodes(
@@ -136,7 +124,7 @@ class TestTabularCrasConversion:
                 )
             ]
         )
-        path = export_electrodes(tmp_path / "electrodes.json", electrodes)
+        path = export_electrodes_scalp(tmp_path / "electrodes_scalp.csv", electrodes)
 
         points, residuals, flags, names = _load_electrodes(str(path))
 
