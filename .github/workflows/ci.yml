@@ -5,6 +5,11 @@ on:
     branches: [master]
   pull_request:
     branches: [master]
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
   workflow_dispatch:
 
 # Reject all old actions
@@ -19,6 +24,7 @@ jobs:
   lint:
     name: Lint and Format Check
     runs-on: ubuntu-latest
+    if: ${{ !github.event.pull_request.draft }}
 
     steps:
       - name: Checkout code
@@ -56,6 +62,7 @@ jobs:
   test:
     name: Test (Python 3.14)
     runs-on: ubuntu-latest
+    if: ${{ !github.event.pull_request.draft }}
 
     steps:
       - name: Checkout code
