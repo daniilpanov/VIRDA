@@ -338,8 +338,6 @@ class AdvancedViewer3D(QWidget):
                 ese_points=ese_points,
             )
 
-    # ---- public API ----
-
     def set_scene(
         self,
         *,
@@ -393,8 +391,6 @@ class AdvancedViewer3D(QWidget):
         self.shutdown()
         super().closeEvent(event)
 
-    # ---- scene result handling (GUI thread) ----
-
     def _on_scene_done(self, seq: int, scene: Any) -> None:
         if seq != self._loader.seq:
             return
@@ -421,8 +417,6 @@ class AdvancedViewer3D(QWidget):
         self._mesh_actors = {}
         self._mesh_points_actors = {}
         self._mesh_label_actors = {}
-
-    # ---- actor building ----
 
     def _build_scene(self, scene: ViewerScene) -> None:
         self._plotter.clear()
@@ -482,8 +476,6 @@ class AdvancedViewer3D(QWidget):
         self._plotter.reset_camera()
         self._plotter.render()
 
-    # ---- right panel ----
-
     def _build_panel(self) -> None:
         _clear_layout(self._panel_layout)
         scene = self._scene
@@ -535,8 +527,6 @@ class AdvancedViewer3D(QWidget):
         check.toggled.connect(slot)
         self._panel_layout.addWidget(check)
 
-    # ---- visibility control ----
-
     def _set_nifti_visible(self, flag: bool) -> None:
         self._nifti_visible = bool(flag)
         self._apply_visibility()
@@ -564,6 +554,7 @@ class AdvancedViewer3D(QWidget):
     def _apply_visibility(self) -> None:
         if self._scene is None:
             return
+
         if self._volume_actor is not None:
             self._volume_actor.SetVisibility(self._nifti_visible)
 
@@ -580,8 +571,10 @@ class AdvancedViewer3D(QWidget):
             label_actor = self._mesh_label_actors.get(key)
             if label_actor is not None:
                 label_actor.SetVisibility(visible and self._labels_visible)
+
         if self._fid_points_actor is not None:
             self._fid_points_actor.SetVisibility(self._fiducials_visible)
         if self._fid_labels_actor is not None:
             self._fid_labels_actor.SetVisibility(self._fiducials_visible and self._labels_visible)
+
         self._plotter.render()
