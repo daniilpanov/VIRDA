@@ -2,8 +2,13 @@
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
+import pyvista as pv
+
+VolumeSource = Any  # MRIVolume | (data, affine)
+MeshSource = Any  # PolyData | (vertices, faces) | ScalpMesh | ESEMesh
 
 
 @dataclass(frozen=True)
@@ -43,3 +48,38 @@ class LabeledPoints:
     def from_arrays(cls, points: np.ndarray, labels: Sequence[str] | None = None) -> LabeledPoints:
         """Build the DTO from already-loaded data (no I/O)."""
         return cls(points, tuple(labels) if labels is not None else None)
+
+
+PointSource = LabeledPoints  # ready display DTO
+
+
+@dataclass(frozen=True)
+class MeshWithPoints:
+    """A mesh together with labeled points lying on it (``points`` optional)."""
+
+    mesh: MeshSource
+    points: PointSource | None = None
+
+
+@dataclass
+class MeshBundle:
+    mesh: pv.PolyData | None
+    points: LabeledPoints | None
+
+
+@dataclass
+class ViewerScene:
+    """Fully resolved advanced-viewer scene, ready to be rendered.
+
+    Everything is already placed in the scene frame: in a world-millimeter
+    scene (``mm_scene``) the volume keeps its spacing/origin from the affine,
+    otherwise every array was moved into voxel index space.
+    """
+
+    volume: pv.ImageData | None = None
+    mm_scene: bool = True
+    fiducials: LabeledPoints | None = None
+    scalp_mesh: pv.PolyData | None = None
+    scalp_points: LabeledPoints | None = None
+    ese_mesh: pv.PolyData | None = None
+    ese_points: LabeledPoints | None = None

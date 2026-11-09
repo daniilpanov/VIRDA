@@ -28,7 +28,6 @@ is ready or the load failed.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -47,11 +46,15 @@ from pyvistaqt import QtInteractor
 from virda.models.ese_mesh import ESEMesh
 from virda.models.mri_volume import MRIVolume
 from virda.models.scalp_mesh import ScalpMesh
-from virda_gui_new.dto.viewer3d import LabeledPoints
-
-VolumeSource = Any  # MRIVolume | (data, affine)
-MeshSource = Any  # PolyData | (vertices, faces) | ScalpMesh | ESEMesh
-PointSource = LabeledPoints  # ready display DTO
+from virda_gui_new.dto.viewer3d import (
+    LabeledPoints,
+    MeshBundle,
+    MeshSource,
+    MeshWithPoints,
+    PointSource,
+    ViewerScene,
+    VolumeSource,
+)
 
 _FIDUCIAL_COLOR = "red"
 _MESH_COLOR = "salmon"
@@ -67,17 +70,13 @@ _MESH_POINTS_POINT_SIZE = 10
 
 
 def downsample(data: np.ndarray, affine: np.ndarray, stride: int) -> tuple[np.ndarray, np.ndarray]:
-    """Take every *stride*-th voxel and scale the affine accordingly.
-
-    A rendering-only optimization (level of detail): a (256, 256, 208) volume
-    becomes (64, 64, 52) with ``stride=4`` — 64x fewer voxels to upload to the
-    GPU — while the scaled affine keeps voxel indices mapping to the same
-    world millimeter coordinates, so the overlay alignment is unchanged.
-    """
+    """Take every *stride*-th voxel and scale the affine accordingly"""
     if stride < 1:
         raise ValueError(f"downsample must be >= 1, got {stride}")
+
     if stride == 1:
         return data, affine
+
     sampled = data[::stride, ::stride, ::stride]
     scaled = affine @ np.diag([stride, stride, stride, 1.0])
     return sampled, scaled
@@ -86,38 +85,26 @@ def downsample(data: np.ndarray, affine: np.ndarray, stride: int) -> tuple[np.nd
 def is_axis_aligned(affine: np.ndarray) -> bool:
     """True when the affine is a positive diagonal (no rotation or flip)."""
     linear = affine[:3, :3]
-    if not np.allclose(linear, np.diag(np.diag(linear))):
-        return False
-    return bool(np.all(np.diag(linear) > 0))
+    return np.allclose(linear, np.diag(np.diag(linear))) and bool(np.all(np.diag(linear) > 0))
 
 
 def scene_placement(affine: np.ndarray | None) -> tuple[np.ndarray, np.ndarray, np.ndarray, bool]:
-    """Return ``(spacing, origin, transform, mm_scene)`` for placing a scene.
-
-    An axis-aligned affine keeps the scene in world millimeters: the volume
-    gets its spacing and origin from the affine diagonal and translation, and
-    the mesh data stays in its world coordinates.  Any other affine (rotation,
-    flip) moves the mesh and the labeled points into voxel index space with
-    the inverse affine, so the overlay stays correct.  ``transform`` maps
-    world coordinates into the scene frame (the identity when ``mm_scene``).
-    """
+    """Return ``(spacing, origin, transform, mm_scene)`` for placing a scene"""
     if affine is not None and is_axis_aligned(affine):
         spacing = np.asarray(np.diag(affine)[:3], dtype=float)
         origin = np.asarray(affine[:3, 3], dtype=float)
         return spacing, origin, np.eye(4), True
-    if affine is None:
-        return np.ones(3), np.zeros(3), np.eye(4), True
-    return np.ones(3), np.zeros(3), np.linalg.inv(affine), False
+
+    return (
+        (np.ones(3), np.zeros(3), np.eye(4), True)
+        if affine is None
+        else (np.ones(3), np.zeros(3), np.linalg.inv(affine), False)
+    )
 
 
 def transform_points(points: np.ndarray, transform: np.ndarray) -> np.ndarray:
     """Apply a 4x4 affine ``transform`` to an (N, 3) array of points."""
     return np.asarray(points @ transform[:3, :3].T + transform[:3, 3], dtype=np.float64)
-
-
-# ---------------------------------------------------------------------------
-# Input normalization (in-memory data only; no I/O)
-# ---------------------------------------------------------------------------
 
 
 def _faces_to_cells(faces: np.ndarray) -> np.ndarray:
@@ -145,26 +132,15 @@ def as_polydata(source: MeshSource) -> pv.PolyData:
     """
     if isinstance(source, pv.PolyData):
         return source.copy()
+
     if isinstance(source, (ScalpMesh, ESEMesh)):
         return polydata_from_triangles(source.vertices, source.faces)
+
     if isinstance(source, (tuple, list)) and len(source) == 2:
         vertices, faces = source
         return polydata_from_triangles(vertices, faces)
+
     raise ValueError(f"Unsupported mesh source: {type(source).__name__}")
-
-
-@dataclass(frozen=True)
-class MeshWithPoints:
-    """A mesh together with labeled points lying on it (``points`` optional)."""
-
-    mesh: MeshSource
-    points: PointSource | None = None
-
-
-@dataclass
-class _MeshBundle:
-    mesh: pv.PolyData | None
-    points: LabeledPoints | None
 
 
 def _load_points(source: PointSource | None) -> LabeledPoints | None:
@@ -175,7 +151,7 @@ def _load_points(source: PointSource | None) -> LabeledPoints | None:
     return source if len(source) > 0 else None
 
 
-def _load_mesh_bundle(source: Any, points: PointSource | None = None) -> _MeshBundle:
+def _load_mesh_bundle(source: Any, points: PointSource | None = None) -> MeshBundle:
     """Split a mesh source (which may bundle its own points) into mesh + points.
 
     An explicit ``points`` argument wins over the points bundled inside a
@@ -183,8 +159,8 @@ def _load_mesh_bundle(source: Any, points: PointSource | None = None) -> _MeshBu
     """
     if isinstance(source, MeshWithPoints):
         points = source.points if points is None else points
-        return _MeshBundle(as_polydata(source.mesh), _load_points(points))
-    return _MeshBundle(as_polydata(source), _load_points(points))
+        return MeshBundle(as_polydata(source.mesh), _load_points(points))
+    return MeshBundle(as_polydata(source), _load_points(points))
 
 
 def _load_volume_source(
@@ -218,24 +194,6 @@ def _load_volume_source(
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class ViewerScene:
-    """Fully resolved advanced-viewer scene, ready to be rendered.
-
-    Everything is already placed in the scene frame: in a world-millimeter
-    scene (``mm_scene``) the volume keeps its spacing/origin from the affine,
-    otherwise every array was moved into voxel index space.
-    """
-
-    volume: pv.ImageData | None = None
-    mm_scene: bool = True
-    fiducials: LabeledPoints | None = None
-    scalp_mesh: pv.PolyData | None = None
-    scalp_points: LabeledPoints | None = None
-    ese_mesh: pv.PolyData | None = None
-    ese_points: LabeledPoints | None = None
-
-
 def _build_volume(data: np.ndarray, affine: np.ndarray, mm_scene: bool) -> pv.ImageData:
     volume = pv.ImageData(dimensions=data.shape)
     volume.point_data["intensity"] = data.ravel(order="F")
@@ -251,9 +209,12 @@ def _place_labeled_points(
     """Move labeled points into the scene frame; ``None`` for empty sets."""
     if len(points) == 0:
         return None
-    if not mm_scene:
-        return LabeledPoints(transform_points(points.points, transform), points.labels)
-    return points
+
+    return (
+        points
+        if mm_scene
+        else LabeledPoints(transform_points(points.points, transform), points.labels)
+    )
 
 
 def collect_viewer_scene(
@@ -292,11 +253,11 @@ def collect_viewer_scene(
     fiducial_scene = (
         _place_labeled_points(fiducials, mm_scene, transform) if fiducials is not None else None
     )
-
     scalp_bundle = (
-        _load_mesh_bundle(scalp, scalp_points) if scalp is not None else _MeshBundle(None, None)
+        _load_mesh_bundle(scalp, scalp_points) if scalp is not None else MeshBundle(None, None)
     )
-    ese_bundle = _load_mesh_bundle(ese, ese_points) if ese is not None else _MeshBundle(None, None)
+    ese_bundle = _load_mesh_bundle(ese, ese_points) if ese is not None else MeshBundle(None, None)
+
     if not mm_scene:
         for bundle in (scalp_bundle, ese_bundle):
             if bundle.mesh is not None:
@@ -323,7 +284,7 @@ def collect_volume_scene(source: VolumeSource, downsample_stride: int = 1) -> pv
 
 def collect_mesh_scene(
     source: MeshSource | MeshWithPoints, points: PointSource | None = None
-) -> _MeshBundle:
+) -> MeshBundle:
     """Resolve a single mesh source (optionally with labeled points)."""
     return _load_mesh_bundle(source, points)
 
@@ -568,7 +529,7 @@ class BaseViewer3D(QWidget):
                     mapper="smart",
                 )
             )
-        elif self._kind == "mesh" and isinstance(scene, _MeshBundle):
+        elif self._kind == "mesh" and isinstance(scene, MeshBundle):
             self._apply_mesh_bundle(scene, props)
         elif self._kind == "points" and isinstance(scene, LabeledPoints) and len(scene) > 0:
             self._actors.append(
@@ -585,7 +546,7 @@ class BaseViewer3D(QWidget):
         plotter.reset_camera()
         plotter.render()
 
-    def _apply_mesh_bundle(self, bundle: _MeshBundle, props: dict[str, Any]) -> None:
+    def _apply_mesh_bundle(self, bundle: MeshBundle, props: dict[str, Any]) -> None:
         if bundle.mesh is not None:
             self._actors.append(
                 self._plotter.add_mesh(
