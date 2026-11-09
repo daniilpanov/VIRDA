@@ -106,7 +106,6 @@ _NPY_COLUMN_MAP = [
     ("*vertices*", ["X", "Y", "Z"]),
     ("*faces*", ["A", "B", "C"]),
     ("*adjacency*", ["Face A", "Face B"]),
-    ("*quality*", ["Quality"]),
 ]
 
 

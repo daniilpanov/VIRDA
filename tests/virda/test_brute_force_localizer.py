@@ -60,7 +60,6 @@ class TestLocalizeElectrodes:
             assert np.array_equal(electrode.scalp_coords, scalp_mesh.vertices[true_indices[i]])
             assert electrode.residual_error < 1e-6
             assert electrode.flagged is False
-            assert electrode.confidence == ese.quality[true_indices[i]]
 
     def test_weighted_fiducial_dominates_when_measurements_conflict(self):
         ese, normals, scalp_mesh = make_ese()

@@ -10,9 +10,9 @@ from virda.models.ese_mesh import ESEMesh
 def import_ese_mesh(path: str | Path) -> ESEMesh:
     """Rebuild an :class:`ESEMesh` from ``mesh.ply`` companion files.
 
-    Reads ``ese_vertices.npy``, ``ese_faces.npy`` and ``quality.npy`` next to
-    *path* (the project ``ese/`` layout); the PLY itself only carries the
-    surface geometry and is not parsed.
+    Reads ``ese_vertices.npy`` and ``ese_faces.npy`` next to *path* (the
+    project ``ese/`` layout); the PLY itself only carries the surface geometry
+    and is not parsed.
 
     Raises :class:`ValueError` when a companion file is missing or malformed.
     """
@@ -23,14 +23,12 @@ def import_ese_mesh(path: str | Path) -> ESEMesh:
     try:
         vertices = np.asarray(np.load(root / "ese_vertices.npy"), dtype=np.float64)
         faces = np.asarray(np.load(root / "ese_faces.npy"), dtype=np.int64)
-        quality = np.asarray(np.load(root / "quality.npy"), dtype=np.float64)
     except (OSError, ValueError, KeyError) as exc:
         raise ValueError(f"Cannot import ESE mesh from {ply_path}: {exc}") from exc
     try:
         return ESEMesh(
             vertices=vertices,
             faces=faces,
-            quality=quality,
         )
     except ValueError as exc:
         raise ValueError(f"Cannot import ESE mesh from {ply_path}: {exc}") from exc

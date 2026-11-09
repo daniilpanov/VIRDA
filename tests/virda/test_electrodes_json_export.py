@@ -18,7 +18,6 @@ def _localized() -> Electrode:
         ese_coords=np.array([1.0, 2.0, 3.0]),
         scalp_coords=np.array([1.0, 2.0, 2.5]),
         residual_error=1.25,
-        confidence=0.9,
         flagged=False,
     )
 
@@ -44,7 +43,6 @@ class TestExportElectrodes:
             "ese_coords": [1.0, 2.0, 3.0],
             "scalp_coords": [1.0, 2.0, 2.5],
             "residual_error": 1.25,
-            "confidence": 0.9,
             "flagged": False,
         }
         # Non-localized electrodes keep null coordinates and metrics.
@@ -82,7 +80,7 @@ class TestExportElectrodesEse:
 
         entry = json.loads(path.read_text(encoding="utf-8"))[0]
         assert entry["coords"] == [1.0, 2.0, 3.0]
-        assert entry["confidence"] == 0.9
+        assert "confidence" not in entry
 
     def test_unlocalized_electrode_has_null_coords(self, tmp_path: Path) -> None:
         path = export_electrodes_ese(

@@ -120,7 +120,6 @@ def localize_electrodes(
             _localize_one(
                 electrode,
                 fiducials,
-                ese,
                 config,
                 logger,
                 scalp_vertices,
@@ -155,7 +154,6 @@ def localize_electrodes(
 def _localize_one(
     electrode: Electrode,
     fiducials: Fiducials,
-    ese: ESEMesh,
     config: Stage3Config,
     logger: Logger | None,
     scalp_vertices: np.ndarray,
@@ -210,7 +208,6 @@ def _localize_one(
         ese_coords=np.asarray(search_vertices)[best_index],
         scalp_coords=scalp_vertices[best_index],
         residual_error=residual_error,
-        confidence=float(ese.quality[best_index]),
         flagged=residual_error > config.residual_threshold_mm,
     )
 

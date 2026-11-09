@@ -10,7 +10,6 @@ VERTICES = np.array(
     [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0]], dtype=np.float64
 )
 FACES = np.array([[0, 1, 2], [1, 3, 2]], dtype=np.int64)
-QUALITY = np.array([1.0, 1.0, 1.0, 1.0])
 
 
 def _write_companions(root: Path) -> None:
@@ -18,7 +17,6 @@ def _write_companions(root: Path) -> None:
     (root / "mesh.ply").touch()
     np.save(root / "ese_vertices.npy", VERTICES)
     np.save(root / "ese_faces.npy", FACES)
-    np.save(root / "quality.npy", QUALITY)
 
 
 class TestImportEseMesh:
@@ -30,7 +28,6 @@ class TestImportEseMesh:
         assert isinstance(ese, ESEMesh)
         np.testing.assert_array_almost_equal(ese.vertices, VERTICES)
         np.testing.assert_array_equal(ese.faces, FACES)
-        np.testing.assert_array_almost_equal(ese.quality, QUALITY)
 
 
 class TestImportEseMeshErrors:
@@ -41,15 +38,15 @@ class TestImportEseMeshErrors:
     def test_missing_companion_file(self, tmp_path: Path) -> None:
         root = tmp_path / "ese"
         _write_companions(root)
-        (root / "quality.npy").unlink()
+        (root / "ese_faces.npy").unlink()
 
         with pytest.raises(ValueError, match="Cannot import ESE mesh"):
             import_ese_mesh(root / "mesh.ply")
 
-    def test_inconsistent_shapes(self, tmp_path: Path) -> None:
+    def test_out_of_range_face_index(self, tmp_path: Path) -> None:
         root = tmp_path / "ese"
         _write_companions(root)
-        np.save(root / "quality.npy", QUALITY[:2])
+        np.save(root / "ese_faces.npy", np.array([[0, 1, 4]], dtype=np.int64))
 
         with pytest.raises(ValueError, match="Cannot import ESE mesh"):
             import_ese_mesh(root / "mesh.ply")

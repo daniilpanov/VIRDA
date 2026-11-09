@@ -20,7 +20,7 @@ def export_ese_mesh(path: str | Path, ese_mesh: ESEMesh) -> Path:
 def export_ese_companions(path: str | Path, ese_mesh: ESEMesh) -> Path:
     """Write the ``ese/`` companion files next to the PLY at *path*.
 
-    Writes ``ese_vertices.npy``, ``ese_faces.npy`` and ``quality.npy`` so
+    Writes ``ese_vertices.npy`` and ``ese_faces.npy`` so
     :func:`virda.io.importers.ese_mesh.import_ese_mesh` can rebuild the mesh
     later.  Returns the directory holding the companions.
     """
@@ -28,5 +28,4 @@ def export_ese_companions(path: str | Path, ese_mesh: ESEMesh) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     np.save(root / "ese_vertices.npy", np.asarray(ese_mesh.vertices, dtype=np.float64))
     np.save(root / "ese_faces.npy", np.asarray(ese_mesh.faces, dtype=np.int64))
-    np.save(root / "quality.npy", np.asarray(ese_mesh.quality, dtype=np.float64))
     return root

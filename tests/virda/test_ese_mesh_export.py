@@ -41,7 +41,6 @@ class TestExportEseMesh:
                 [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=np.float64
             ),
             faces=np.array([[0, 1, 2]], dtype=np.int64),
-            quality=np.ones(3),
         )
 
         path = export_ese_mesh(tmp_path / "mesh.ply", ese)
@@ -61,7 +60,6 @@ class TestExportEseCompanions:
         for name in (
             "ese_vertices.npy",
             "ese_faces.npy",
-            "quality.npy",
         ):
             assert (root / name).is_file()
 
@@ -74,4 +72,3 @@ class TestExportEseCompanions:
 
         np.testing.assert_array_almost_equal(restored.vertices, ese.vertices)
         np.testing.assert_array_equal(restored.faces, ese.faces)
-        np.testing.assert_array_almost_equal(restored.quality, ese.quality)

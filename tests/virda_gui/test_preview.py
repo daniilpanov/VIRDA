@@ -67,9 +67,6 @@ class TestNpyColumnMap:
     def test_adjacency_mask(self) -> None:
         assert npy_columns_for("scalp_face_adjacency.npy") == ["Face A", "Face B"]
 
-    def test_quality_mask(self) -> None:
-        assert npy_columns_for("quality.npy") == ["Quality"]
-
     def test_mask_is_case_insensitive(self) -> None:
         assert npy_columns_for("Scalp_Vertices.npy") == ["X", "Y", "Z"]
 
@@ -86,7 +83,7 @@ class TestLoadNpyTable:
         assert array.shape == (2, 3)
 
     def test_1d_array_gets_value_column(self, tmp_path: Path) -> None:
-        path = tmp_path / "quality.npy"
+        path = tmp_path / "custom_data.npy"
         np.save(path, np.array([0.1, 0.2]))
         headers, array = load_npy_table(path)
         assert headers == ["Value"]

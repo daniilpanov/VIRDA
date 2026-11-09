@@ -32,7 +32,6 @@ class TestBuildEse:
         radial = mesh.vertices / np.linalg.norm(mesh.vertices, axis=1, keepdims=True)
         dots = np.sum(normals * radial, axis=1)
         assert np.mean(dots) > 0.8
-        assert np.median(ese.quality) < 0.1
 
     def test_ese_offset_distance(self) -> None:
         config = Stage2Config(k_neighbors=30)
@@ -41,12 +40,6 @@ class TestBuildEse:
 
         offsets = np.linalg.norm(ese.vertices - mesh.vertices, axis=1)
         assert np.allclose(offsets, ESE_OFFSET_MM, atol=1e-9)
-
-    def test_quality_in_unit_interval(self) -> None:
-        config = Stage2Config(k_neighbors=30)
-        ese, _ = run_builder(config, make_sphere())
-
-        assert np.all((ese.quality >= 0.0) & (ese.quality <= 1.0))
 
     def test_faces_mirror_scalp_mesh(self) -> None:
         config = Stage2Config(k_neighbors=30)
@@ -69,12 +62,11 @@ class TestBuildEse:
     def test_sphere_normals_radial_outward_radius(self) -> None:
         config = Stage2Config(neighborhood_radius_mm=20.0, k_neighbors=None, min_neighbors=5)
         mesh = make_sphere()
-        ese, normals = run_builder(config, mesh)
+        _, normals = run_builder(config, mesh)
 
         radial = mesh.vertices / np.linalg.norm(mesh.vertices, axis=1, keepdims=True)
         dots = np.sum(normals * radial, axis=1)
         assert np.mean(dots) > 0.8
-        assert np.median(ese.quality) < 0.1
 
     def test_radius_and_knn_consistency(self) -> None:
         _, radius_normals = run_builder(
@@ -88,24 +80,22 @@ class TestBuildEse:
     def test_radius_falls_back_to_knn(self) -> None:
         config = Stage2Config(neighborhood_radius_mm=1.0, k_neighbors=None, min_neighbors=5)
         mesh = make_sphere()
-        ese, normals = run_builder(config, mesh)
+        _, normals = run_builder(config, mesh)
 
         radial = mesh.vertices / np.linalg.norm(mesh.vertices, axis=1, keepdims=True)
         dots = np.sum(normals * radial, axis=1)
         assert np.allclose(np.linalg.norm(normals, axis=1), 1.0)
-        assert np.all(np.isfinite(ese.quality))
         assert np.mean(dots) > 0.8
 
     def test_weighted_pca_knn_consistent(self) -> None:
         _, unweighted_normals = run_builder(Stage2Config(k_neighbors=30), make_sphere())
-        weighted_ese, weighted_normals = run_builder(
+        _, weighted_normals = run_builder(
             Stage2Config(k_neighbors=30, use_weighted_pca=True, pca_sigma_mm=10.0),
             make_sphere(),
         )
 
         dots = np.sum(unweighted_normals * weighted_normals, axis=1)
         assert np.mean(dots) > 0.99
-        assert np.all(np.isfinite(weighted_ese.quality))
 
     def test_weighted_pca_radius_mode(self) -> None:
         config = Stage2Config(
@@ -115,9 +105,8 @@ class TestBuildEse:
             pca_sigma_mm=10.0,
         )
         mesh = make_sphere()
-        ese, normals = run_builder(config, mesh)
+        _, normals = run_builder(config, mesh)
 
         radial = mesh.vertices / np.linalg.norm(mesh.vertices, axis=1, keepdims=True)
         dots = np.sum(normals * radial, axis=1)
         assert np.mean(dots) > 0.8
-        assert np.all(np.isfinite(ese.quality))

@@ -13,7 +13,7 @@ def export_electrodes(path: str | Path, electrodes: Electrodes) -> Path:
 
     Every entry carries the electrode id, the measured fiducial distances,
     both the ESE body-center and scalp contact coordinates, the residual
-    error, the confidence and the flag; non-localized electrodes carry
+    error and the flag; non-localized electrodes carry
     ``null`` coordinates.  Returns the written path.
     """
     target = Path(path)
@@ -25,7 +25,6 @@ def export_electrodes(path: str | Path, electrodes: Electrodes) -> Path:
             "ese_coords": _to_list(electrode.ese_coords),
             "scalp_coords": _to_list(electrode.scalp_coords),
             "residual_error": electrode.residual_error,
-            "confidence": electrode.confidence,
             "flagged": electrode.flagged,
         }
         for electrode in electrodes.items
@@ -52,7 +51,6 @@ def _export_coords_variant(path: str | Path, electrodes: Electrodes, attr: str) 
             "electrode_id": electrode.electrode_id,
             "coords": _to_list(getattr(electrode, attr)),
             "residual_error": electrode.residual_error,
-            "confidence": electrode.confidence,
             "flagged": electrode.flagged,
         }
         for electrode in electrodes.items
