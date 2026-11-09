@@ -2,17 +2,17 @@
 
 Two widgets share the same core:
 
-* :class:`BaseViewer3D` — renders a single scene object (a NIfTI volume, a
+* :class:`BaseViewer3D` - renders a single scene object (a NIfTI volume, a
   mesh, or labeled points) with no controls;
-* :class:`AdvancedViewer3D` — full VIRDA viewer: NIfTI volume, fiducials,
-  scalp mesh and ESE mesh, each of which may carry labeled points.  Its right
+* :class:`AdvancedViewer3D` - full VIRDA viewer: NIfTI volume, fiducials,
+  scalp mesh and ESE mesh, each of which may carry labeled points. Its right
   panel holds checkboxes to toggle the NIfTI, the fiducials, the points and
   their labels, plus a Scalp <-> ESE surface switcher when both meshes are
   present.
 
 The widgets are pure display components: they accept only ready, already
 loaded data (:class:`~virda_gui_new.dto.viewer3d.LabeledPoints`, PyVista
-meshes, ``virda`` models, NumPy arrays) — never file paths — and they never
+meshes, ``virda`` models, NumPy arrays) - never file paths - and they never
 read, import or modify source data themselves.  Scene collection is
 outsourced to :mod:`virda_gui_new.services.viewer_scene` and runs on a
 worker thread through :class:`virda_gui_new.services.task_runner.TaskRunner`;
@@ -21,8 +21,6 @@ thread.  The :attr:`AdvancedViewer3D.sceneLoaded` /
 :attr:`AdvancedViewer3D.sceneFailed` signals notify embedders when the scene
 is ready or the load failed.
 """
-
-from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any
@@ -107,12 +105,10 @@ def _add_point_actor(
 class BaseViewer3D(QWidget):
     """Minimal embeddable 3D viewer that renders a single scene object.
 
-    Shows one thing at a time — a NIfTI volume (:meth:`show_nifti`), a mesh
+    Shows one thing at a time - a NIfTI volume (:meth:`show_nifti`), a mesh
     (:meth:`show_mesh`, optionally with labeled points on it), or a labeled
-    point set (:meth:`show_points`) — with no panels or checkboxes.  Calling
-    another ``show_*`` replaces the current content.  Inputs must be ready
-    data (the widget performs no I/O); rendering preparation runs on a worker
-    thread, and :attr:`sceneLoaded` / :attr:`sceneFailed` report the outcome.
+    point set (:meth:`show_points`) - with no panels or checkboxes.  Calling
+    another ``show_*`` replaces the current content.
     """
 
     sceneLoaded = Signal(object)  # noqa: N815
@@ -140,8 +136,6 @@ class BaseViewer3D(QWidget):
         self._kind: str | None = None
         self._props: dict[str, Any] = {}
         self._actors: list[Any] = []
-
-    # ---- public API ----
 
     def show_nifti(
         self,
@@ -195,8 +189,6 @@ class BaseViewer3D(QWidget):
         self.shutdown()
         super().closeEvent(event)
 
-    # ---- internals ----
-
     def _start_load(self, kind: str, fn: Callable[[], Any], props: dict[str, Any]) -> None:
         self._kind = kind
         self._props = props
@@ -219,6 +211,7 @@ class BaseViewer3D(QWidget):
         self._plotter.clear()
         self._actors = []
         plotter, props = self._plotter, self._props
+
         if self._kind == "volume" and isinstance(scene, pv.ImageData):
             self._actors.append(
                 plotter.add_volume(
@@ -239,6 +232,7 @@ class BaseViewer3D(QWidget):
             )
             if scene.labels is not None:
                 self._actors.append(_build_label_actor(plotter, scene))
+
         plotter.add_axes(interactive=False)
         plotter.reset_camera()
         plotter.render()
@@ -254,6 +248,7 @@ class BaseViewer3D(QWidget):
                     edge_color="gray",
                 )
             )
+
         if bundle.points is not None:
             self._actors.append(
                 _add_point_actor(
@@ -270,16 +265,14 @@ class BaseViewer3D(QWidget):
 class AdvancedViewer3D(QWidget):
     """Full VIRDA 3D viewer: NIfTI + fiducials + scalp/ESE meshes with points.
 
-    Accepts four optional ready-data sources — *nifti*, *fiducials*, *scalp*
+    Accepts four optional ready-data sources - *nifti*, *fiducials*, *scalp*
     and *ese*, where each mesh may bundle its labeled points via
     :class:`MeshWithPoints` or take them through ``scalp_points`` /
-    ``ese_points``.  By default only the fiducials plus the scalp mesh with
+    ``ese_points``. By default, only the fiducials plus the scalp mesh with
     its points and labels are shown; the right panel hosts checkboxes for the
     NIfTI, the fiducials, the points and the labels, and a Scalp <-> ESE
-    switcher when both meshes are loaded.  Scenes with a single meaningful
-    object (mesh-only, volume-only) render directly with no panel.  The
-    widget performs no I/O: the embedder supplies data prepared by the import
-    layer (``virda`` core ops behind the ``virda_gui_new.api`` facades).
+    switcher when both meshes are loaded. Scenes with a single meaningful
+    object (mesh-only, volume-only) render directly with no panel.
     """
 
     sceneLoaded = Signal(object)  # noqa: N815
