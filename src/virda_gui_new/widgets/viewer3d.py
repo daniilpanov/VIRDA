@@ -12,15 +12,12 @@ Two widgets share the same core:
 
 The widgets are pure display components: they accept only ready, already
 loaded data (:class:`~virda_gui_new.dto.viewer3d.LabeledPoints`, PyVista
-meshes, ``virda`` models, NumPy arrays) — never file paths, and they never
-read, import or modify source data themselves.  Turning project files into
-these DTOs is the job of the import layer (``virda`` core ops behind the
-``virda_gui_new.api`` facades) and happens in the embedder.  Every input is
-optional: a mesh-only or a volume-only scene renders directly without any
-extra checkboxes.  The scene placement into one common coordinate frame (see
-:func:`collect_viewer_scene`) and voxel downsampling (a rendering
-optimization) happen on a worker thread, then VTK actors are built on the
-GUI thread.  The :attr:`AdvancedViewer3D.sceneLoaded` /
+meshes, ``virda`` models, NumPy arrays) — never file paths — and they never
+read, import or modify source data themselves.  Scene collection is
+outsourced to :mod:`virda_gui_new.services.viewer_scene` and runs on a
+worker thread through :class:`virda_gui_new.services.task_runner.TaskRunner`;
+here only VTK actors are built and layer visibility is managed on the GUI
+thread.  The :attr:`AdvancedViewer3D.sceneLoaded` /
 :attr:`AdvancedViewer3D.sceneFailed` signals notify embedders when the scene
 is ready or the load failed.
 """
@@ -30,9 +27,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-import numpy as np
 import pyvista as pv
-from PySide6.QtCore import QObject, QThread, Signal, Slot
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QGroupBox,
@@ -43,9 +39,6 @@ from PySide6.QtWidgets import (
 )
 from pyvistaqt import QtInteractor
 
-from virda.models.ese_mesh import ESEMesh
-from virda.models.mri_volume import MRIVolume
-from virda.models.scalp_mesh import ScalpMesh
 from virda_gui_new.dto.viewer3d import (
     LabeledPoints,
     MeshBundle,
@@ -54,6 +47,13 @@ from virda_gui_new.dto.viewer3d import (
     PointSource,
     ViewerScene,
     VolumeSource,
+)
+from virda_gui_new.services.task_runner import TaskRunner
+from virda_gui_new.services.viewer_scene import (
+    collect_mesh_scene,
+    collect_points_scene,
+    collect_viewer_scene,
+    collect_volume_scene,
 )
 
 _FIDUCIAL_COLOR = "red"
@@ -65,318 +65,7 @@ _MESH_POINTS_POINT_SIZE = 10
 
 
 # ---------------------------------------------------------------------------
-# Frame placement: NIfTI affine <-> one shared scene frame
-# ---------------------------------------------------------------------------
-
-
-def downsample(data: np.ndarray, affine: np.ndarray, stride: int) -> tuple[np.ndarray, np.ndarray]:
-    """Take every *stride*-th voxel and scale the affine accordingly"""
-    if stride < 1:
-        raise ValueError(f"downsample must be >= 1, got {stride}")
-
-    if stride == 1:
-        return data, affine
-
-    sampled = data[::stride, ::stride, ::stride]
-    scaled = affine @ np.diag([stride, stride, stride, 1.0])
-    return sampled, scaled
-
-
-def is_axis_aligned(affine: np.ndarray) -> bool:
-    """True when the affine is a positive diagonal (no rotation or flip)."""
-    linear = affine[:3, :3]
-    return np.allclose(linear, np.diag(np.diag(linear))) and bool(np.all(np.diag(linear) > 0))
-
-
-def scene_placement(affine: np.ndarray | None) -> tuple[np.ndarray, np.ndarray, np.ndarray, bool]:
-    """Return ``(spacing, origin, transform, mm_scene)`` for placing a scene"""
-    if affine is not None and is_axis_aligned(affine):
-        spacing = np.asarray(np.diag(affine)[:3], dtype=float)
-        origin = np.asarray(affine[:3, 3], dtype=float)
-        return spacing, origin, np.eye(4), True
-
-    return (
-        (np.ones(3), np.zeros(3), np.eye(4), True)
-        if affine is None
-        else (np.ones(3), np.zeros(3), np.linalg.inv(affine), False)
-    )
-
-
-def transform_points(points: np.ndarray, transform: np.ndarray) -> np.ndarray:
-    """Apply a 4x4 affine ``transform`` to an (N, 3) array of points."""
-    return np.asarray(points @ transform[:3, :3].T + transform[:3, 3], dtype=np.float64)
-
-
-def _faces_to_cells(faces: np.ndarray) -> np.ndarray:
-    """Convert (M, 3) triangle indices into a PyVista ravelled face array."""
-    faces = np.asarray(faces, dtype=np.int64)
-    if faces.shape[0] == 0:
-        return np.empty(0, dtype=np.int64)
-    cells = np.empty((faces.shape[0], 4), dtype=np.int64)
-    cells[:, 0] = 3
-    cells[:, 1:] = faces
-    return cells.ravel()
-
-
-def polydata_from_triangles(vertices: np.ndarray, faces: np.ndarray) -> pv.PolyData:
-    """Build a :class:`pyvista.PolyData` from (N, 3) vertices and (M, 3) faces."""
-    return pv.PolyData(np.asarray(vertices, dtype=np.float64), _faces_to_cells(faces))
-
-
-def as_polydata(source: MeshSource) -> pv.PolyData:
-    """Normalize an in-memory mesh source into :class:`pyvista.PolyData`.
-
-    Accepts a :class:`pyvista.PolyData`, a ``(vertices, faces)`` pair, a
-    :class:`virda.models.scalp_mesh.ScalpMesh` or
-    :class:`virda.models.ese_mesh.ESEMesh` model.
-    """
-    if isinstance(source, pv.PolyData):
-        return source.copy()
-
-    if isinstance(source, (ScalpMesh, ESEMesh)):
-        return polydata_from_triangles(source.vertices, source.faces)
-
-    if isinstance(source, (tuple, list)) and len(source) == 2:
-        vertices, faces = source
-        return polydata_from_triangles(vertices, faces)
-
-    raise ValueError(f"Unsupported mesh source: {type(source).__name__}")
-
-
-def _load_points(source: PointSource | None) -> LabeledPoints | None:
-    if source is None:
-        return None
-    if not isinstance(source, LabeledPoints):
-        raise ValueError("Points must be a ready LabeledPoints DTO from the import layer")
-    return source if len(source) > 0 else None
-
-
-def _load_mesh_bundle(source: Any, points: PointSource | None = None) -> MeshBundle:
-    """Split a mesh source (which may bundle its own points) into mesh + points.
-
-    An explicit ``points`` argument wins over the points bundled inside a
-    :class:`MeshWithPoints` source.
-    """
-    if isinstance(source, MeshWithPoints):
-        points = source.points if points is None else points
-        return MeshBundle(as_polydata(source.mesh), _load_points(points))
-    return MeshBundle(as_polydata(source), _load_points(points))
-
-
-def _load_volume_source(
-    source: VolumeSource, downsample_stride: int
-) -> tuple[np.ndarray, np.ndarray]:
-    """Read an in-memory volume source into ``(data (float32, 3D), affine)``.
-
-    Accepts a :class:`virda.models.mri_volume.MRIVolume` model or an
-    already-loaded ``(data, affine)`` pair.  ``downsample_stride`` reduces the
-    voxel count for rendering only (see :func:`downsample`).
-    """
-    if isinstance(source, MRIVolume):
-        data = np.asarray(source.data, dtype=np.float32)
-        affine = np.asarray(source.affine, dtype=np.float64)
-    elif isinstance(source, (tuple, list)) and len(source) == 2:
-        data = np.asarray(source[0], dtype=np.float32)
-        affine = np.asarray(source[1], dtype=np.float64)
-    else:
-        raise ValueError(f"Unsupported volume source: {type(source).__name__}")
-    if data.ndim == 4:
-        data = data[..., 0]
-    if data.ndim != 3:
-        raise ValueError(f"Volume data must be 3D, got {data.ndim}D")
-    if downsample_stride > 1:
-        data, affine = downsample(data, affine, downsample_stride)
-    return data, affine
-
-
-# ---------------------------------------------------------------------------
-# Scene construction (no Qt, no I/O; safe to run on a worker thread)
-# ---------------------------------------------------------------------------
-
-
-def _build_volume(data: np.ndarray, affine: np.ndarray, mm_scene: bool) -> pv.ImageData:
-    volume = pv.ImageData(dimensions=data.shape)
-    volume.point_data["intensity"] = data.ravel(order="F")
-    if mm_scene:
-        volume.spacing = tuple(np.asarray(np.diag(affine)[:3], dtype=float))
-        volume.origin = tuple(np.asarray(affine[:3, 3], dtype=float))
-    return volume
-
-
-def _place_labeled_points(
-    points: LabeledPoints, mm_scene: bool, transform: np.ndarray
-) -> LabeledPoints | None:
-    """Move labeled points into the scene frame; ``None`` for empty sets."""
-    if len(points) == 0:
-        return None
-
-    return (
-        points
-        if mm_scene
-        else LabeledPoints(transform_points(points.points, transform), points.labels)
-    )
-
-
-def collect_viewer_scene(
-    nifti: VolumeSource | None = None,
-    fiducials: PointSource | None = None,
-    scalp: MeshSource | MeshWithPoints | None = None,
-    scalp_points: PointSource | None = None,
-    ese: MeshSource | MeshWithPoints | None = None,
-    ese_points: PointSource | None = None,
-    downsample_stride: int = 1,
-) -> ViewerScene:
-    """Resolve a full advanced-viewer scene from in-memory sources.
-
-    Normalizes meshes and labeled points and places everything into one
-    coordinate frame using the volume affine; at least one source must be
-    given.  This is pure data preparation — safe to run on a worker thread.
-    """
-    if (
-        nifti is None
-        and fiducials is None
-        and scalp is None
-        and ese is None
-        and scalp_points is None
-        and ese_points is None
-    ):
-        raise ValueError("no scene sources given: pass at least one of nifti/fiducials/scalp/ese")
-
-    mm_scene = True
-    volume: pv.ImageData | None = None
-    transform: np.ndarray = np.eye(4)
-    if nifti is not None:
-        data, affine = _load_volume_source(nifti, downsample_stride)
-        _, _, transform, mm_scene = scene_placement(affine)
-        volume = _build_volume(data, affine, mm_scene)
-
-    fiducial_scene = (
-        _place_labeled_points(fiducials, mm_scene, transform) if fiducials is not None else None
-    )
-    scalp_bundle = (
-        _load_mesh_bundle(scalp, scalp_points) if scalp is not None else MeshBundle(None, None)
-    )
-    ese_bundle = _load_mesh_bundle(ese, ese_points) if ese is not None else MeshBundle(None, None)
-
-    if not mm_scene:
-        for bundle in (scalp_bundle, ese_bundle):
-            if bundle.mesh is not None:
-                bundle.mesh.transform(transform, inplace=True)
-            if bundle.points is not None:
-                bundle.points = _place_labeled_points(bundle.points, mm_scene, transform)
-
-    return ViewerScene(
-        volume=volume,
-        mm_scene=mm_scene,
-        fiducials=fiducial_scene,
-        scalp_mesh=scalp_bundle.mesh,
-        scalp_points=scalp_bundle.points,
-        ese_mesh=ese_bundle.mesh,
-        ese_points=ese_bundle.points,
-    )
-
-
-def collect_volume_scene(source: VolumeSource, downsample_stride: int = 1) -> pv.ImageData:
-    """Resolve a single volume source into a renderable :class:`pv.ImageData`."""
-    data, affine = _load_volume_source(source, downsample_stride)
-    return _build_volume(data, affine, scene_placement(affine)[3])
-
-
-def collect_mesh_scene(
-    source: MeshSource | MeshWithPoints, points: PointSource | None = None
-) -> MeshBundle:
-    """Resolve a single mesh source (optionally with labeled points)."""
-    return _load_mesh_bundle(source, points)
-
-
-# ---------------------------------------------------------------------------
-# Background rendering preparation: a collection callable on a dedicated thread
-# ---------------------------------------------------------------------------
-
-
-class _SceneLoaderWorker(QObject):
-    """Runs a ``fn()`` collection callable; results come back to the GUI thread."""
-
-    done = Signal(int, object)
-    failed = Signal(int, str)
-
-    def __init__(self, fn: Callable[[], Any], seq: int) -> None:
-        super().__init__()
-        self._fn = fn
-        self._seq = seq
-
-    @Slot()
-    def run(self) -> None:
-        try:
-            result = self._fn()
-        except Exception as exc:  # noqa: BLE001 - surfaced to the embedder as a signal
-            self.failed.emit(self._seq, str(exc))
-        else:
-            self.done.emit(self._seq, result)
-
-
-class _SceneLoaderRunner(QObject):
-    """Thread lifecycle for scene collection, shared by both viewer widgets.
-
-    :meth:`start` launches ``fn()`` on a fresh worker thread; a newer start
-    cancels the still-running previous load, and :meth:`stop` tears everything
-    down (call from application teardown for embedded widgets whose
-    ``closeEvent`` is never delivered).
-    """
-
-    done = Signal(int, object)
-    failed = Signal(int, str)
-
-    def __init__(self, parent: QObject | None = None) -> None:
-        super().__init__(parent)
-        self._seq = 0
-        self._thread: QThread | None = None
-        self._worker: _SceneLoaderWorker | None = None
-
-    @property
-    def seq(self) -> int:
-        """Sequence number of the last requested load."""
-        return self._seq
-
-    def start(self, fn: Callable[[], Any]) -> None:
-        self._seq += 1
-        self.stop()
-        thread = QThread(self)
-        worker = _SceneLoaderWorker(fn, self._seq)
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
-        worker.done.connect(self.done)
-        worker.failed.connect(self.failed)
-        thread.finished.connect(worker.deleteLater)
-        self._thread = thread
-        self._worker = worker
-        thread.start()
-
-    def stop(self) -> None:
-        """Retire a running load so nothing stale is delivered afterwards."""
-        thread = self._thread
-        if thread is None:
-            return
-        worker = self._worker
-        if worker is not None:
-            worker.done.disconnect(self.done)
-            worker.failed.disconnect(self.failed)
-            # deleteLater() must be posted while the worker's event loop is
-            # still live, otherwise the DeferredDelete event is never processed.
-            worker.deleteLater()
-        thread.quit()
-        thread.wait(3000)
-        # Never delete a thread that is still running (wait timed out);
-        # destroying a live QThread is undefined behaviour.  In that case the
-        # thread keeps running under its parent until it finishes.
-        if thread.isFinished():
-            thread.deleteLater()
-        self._thread = None
-        self._worker = None
-
-
-# ---------------------------------------------------------------------------
-# Widgets
+# Widget-level rendering helpers
 # ---------------------------------------------------------------------------
 
 
@@ -404,6 +93,17 @@ def _build_label_actor(plotter: QtInteractor, points: LabeledPoints) -> Any:
     )
 
 
+def _add_point_actor(
+    plotter: QtInteractor, points: LabeledPoints, *, color: str, point_size: int
+) -> Any:
+    return plotter.add_points(
+        points.points,
+        color=color,
+        point_size=point_size,
+        render_points_as_spheres=True,
+    )
+
+
 class BaseViewer3D(QWidget):
     """Minimal embeddable 3D viewer that renders a single scene object.
 
@@ -427,7 +127,7 @@ class BaseViewer3D(QWidget):
     ) -> None:
         super().__init__(parent)
         self._log = log
-        self._loader = _SceneLoaderRunner(self)
+        self._loader = TaskRunner(self)
         self._loader.done.connect(self._on_scene_done)
         self._loader.failed.connect(self._on_scene_failed)
 
@@ -477,7 +177,7 @@ class BaseViewer3D(QWidget):
 
     def show_points(self, source: PointSource, *, color: str = _FIDUCIAL_COLOR) -> None:
         """Show a labeled point set (fiducials, contact points, ...)."""
-        self._start_load("points", lambda: _load_points(source), props={"color": color})
+        self._start_load("points", lambda: collect_points_scene(source), props={"color": color})
 
     def clear_scene(self) -> None:
         """Remove the current content and cancel any in-flight load."""
@@ -533,11 +233,8 @@ class BaseViewer3D(QWidget):
             self._apply_mesh_bundle(scene, props)
         elif self._kind == "points" and isinstance(scene, LabeledPoints) and len(scene) > 0:
             self._actors.append(
-                plotter.add_points(
-                    scene.points,
-                    color=props["color"],
-                    point_size=_FIDUCIAL_POINT_SIZE,
-                    render_points_as_spheres=True,
+                _add_point_actor(
+                    plotter, scene, color=props["color"], point_size=_FIDUCIAL_POINT_SIZE
                 )
             )
             if scene.labels is not None:
@@ -559,11 +256,11 @@ class BaseViewer3D(QWidget):
             )
         if bundle.points is not None:
             self._actors.append(
-                self._plotter.add_points(
-                    bundle.points.points,
+                _add_point_actor(
+                    self._plotter,
+                    bundle.points,
                     color=_FIDUCIAL_COLOR,
                     point_size=_FIDUCIAL_POINT_SIZE,
-                    render_points_as_spheres=True,
                 )
             )
             if bundle.points.labels is not None:
@@ -603,7 +300,7 @@ class AdvancedViewer3D(QWidget):
     ) -> None:
         super().__init__(parent)
         self._log = log
-        self._loader = _SceneLoaderRunner(self)
+        self._loader = TaskRunner(self)
         self._loader.done.connect(self._on_scene_done)
         self._loader.failed.connect(self._on_scene_failed)
 
@@ -749,11 +446,11 @@ class AdvancedViewer3D(QWidget):
         self._mode = "scalp" if scene.scalp_mesh is not None else "ese"
 
         if scene.fiducials is not None:
-            self._fid_points_actor = self._plotter.add_points(
-                scene.fiducials.points,
+            self._fid_points_actor = _add_point_actor(
+                self._plotter,
+                scene.fiducials,
                 color=_FIDUCIAL_COLOR,
                 point_size=_FIDUCIAL_POINT_SIZE,
-                render_points_as_spheres=True,
             )
             if scene.fiducials.labels is not None:
                 self._fid_labels_actor = _build_label_actor(self._plotter, scene.fiducials)
@@ -773,11 +470,8 @@ class AdvancedViewer3D(QWidget):
             if points is not None:
                 points_actor = None
                 if len(points) > 0:
-                    points_actor = self._plotter.add_points(
-                        points.points,
-                        color=color,
-                        point_size=_MESH_POINTS_POINT_SIZE,
-                        render_points_as_spheres=True,
+                    points_actor = _add_point_actor(
+                        self._plotter, points, color=color, point_size=_MESH_POINTS_POINT_SIZE
                     )
                 self._mesh_points_actors[key] = points_actor
                 self._mesh_label_actors[key] = (
