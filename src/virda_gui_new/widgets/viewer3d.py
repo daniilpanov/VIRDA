@@ -10,26 +10,29 @@ Two widgets share the same core:
   their labels, plus a Scalp <-> ESE surface switcher when both meshes are
   present.
 
-Every input may be a file path or already-loaded data (NumPy arrays, PyVista
-meshes, ``virda`` models), and each input is optional: a mesh-only or a
-NIfTI-only scene renders directly without any extra checkboxes.  Sources are
-normalized and placed in one coordinate frame on a worker thread (see
-:func:`collect_viewer_scene`), then VTK actors are built on the GUI thread.
-The :attr:`AdvancedViewer3D.sceneLoaded` / :attr:`AdvancedViewer3D.sceneFailed`
-signals notify embedders when the scene is ready or the load failed.
+The widgets are pure display components: they accept only ready, already
+loaded data (:class:`~virda_gui_new.dto.viewer3d.LabeledPoints`, PyVista
+meshes, ``virda`` models, NumPy arrays) — never file paths, and they never
+read, import or modify source data themselves.  Turning project files into
+these DTOs is the job of the import layer (``virda`` core ops behind the
+``virda_gui_new.api`` facades) and happens in the embedder.  Every input is
+optional: a mesh-only or a volume-only scene renders directly without any
+extra checkboxes.  The scene placement into one common coordinate frame (see
+:func:`collect_viewer_scene`) and voxel downsampling (a rendering
+optimization) happen on a worker thread, then VTK actors are built on the
+GUI thread.  The :attr:`AdvancedViewer3D.sceneLoaded` /
+:attr:`AdvancedViewer3D.sceneFailed` signals notify embedders when the scene
+is ready or the load failed.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
-import nibabel as nib
 import numpy as np
 import pyvista as pv
-import trimesh
 from PySide6.QtCore import QObject, QThread, Signal, Slot
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -41,15 +44,14 @@ from PySide6.QtWidgets import (
 )
 from pyvistaqt import QtInteractor
 
-from virda.io.fiducial_helpers import load_fiducials
 from virda.models.ese_mesh import ESEMesh
-from virda.models.fiducial import Fiducials
 from virda.models.mri_volume import MRIVolume
 from virda.models.scalp_mesh import ScalpMesh
 from virda_gui_new.dto.viewer3d import LabeledPoints
 
-PointSource = Any  # LabeledPoints | (points, labels) | ndarray | str | Path
-MeshSource = Any  # PolyData | (vertices, faces) | ScalpMesh | ESEMesh | str | Path
+VolumeSource = Any  # MRIVolume | (data, affine)
+MeshSource = Any  # PolyData | (vertices, faces) | ScalpMesh | ESEMesh
+PointSource = LabeledPoints  # ready display DTO
 
 _FIDUCIAL_COLOR = "red"
 _MESH_COLOR = "salmon"
@@ -58,19 +60,6 @@ _ESE_POINTS_COLOR = "magenta"
 _FIDUCIAL_POINT_SIZE = 10
 _MESH_POINTS_POINT_SIZE = 10
 
-_COORD_KEYS = (
-    "coords",
-    "coordinates",
-    "coordinate",
-    "point",
-    "position",
-    "location",
-    "xyz",
-    "scalp_coords",
-    "ese_coords",
-)
-_NAME_KEYS = ("electrode_id", "fiducial_id", "name", "label", "id")
-
 
 # ---------------------------------------------------------------------------
 # Frame placement: NIfTI affine <-> one shared scene frame
@@ -78,7 +67,13 @@ _NAME_KEYS = ("electrode_id", "fiducial_id", "name", "label", "id")
 
 
 def downsample(data: np.ndarray, affine: np.ndarray, stride: int) -> tuple[np.ndarray, np.ndarray]:
-    """Sample ``data`` with a voxel ``stride`` and scale the affine accordingly."""
+    """Take every *stride*-th voxel and scale the affine accordingly.
+
+    A rendering-only optimization (level of detail): a (256, 256, 208) volume
+    becomes (64, 64, 52) with ``stride=4`` — 64x fewer voxels to upload to the
+    GPU — while the scaled affine keeps voxel indices mapping to the same
+    world millimeter coordinates, so the overlay alignment is unchanged.
+    """
     if stride < 1:
         raise ValueError(f"downsample must be >= 1, got {stride}")
     if stride == 1:
@@ -89,59 +84,40 @@ def downsample(data: np.ndarray, affine: np.ndarray, stride: int) -> tuple[np.nd
 
 
 def is_axis_aligned(affine: np.ndarray) -> bool:
-    """True = no rotation or flip (the affine is a positive diagonal)."""
+    """True when the affine is a positive diagonal (no rotation or flip)."""
     linear = affine[:3, :3]
-    return np.allclose(linear, np.diag(np.diag(linear))) and bool(np.all(np.diag(linear) > 0))
+    if not np.allclose(linear, np.diag(np.diag(linear))):
+        return False
+    return bool(np.all(np.diag(linear) > 0))
 
 
 def scene_placement(affine: np.ndarray | None) -> tuple[np.ndarray, np.ndarray, np.ndarray, bool]:
     """Return ``(spacing, origin, transform, mm_scene)`` for placing a scene.
 
-    ``transform`` maps world coordinates into the scene frame: the identity in
-    a world-millimeter scene, the inverse affine in a voxel-index scene.
+    An axis-aligned affine keeps the scene in world millimeters: the volume
+    gets its spacing and origin from the affine diagonal and translation, and
+    the mesh data stays in its world coordinates.  Any other affine (rotation,
+    flip) moves the mesh and the labeled points into voxel index space with
+    the inverse affine, so the overlay stays correct.  ``transform`` maps
+    world coordinates into the scene frame (the identity when ``mm_scene``).
     """
     if affine is not None and is_axis_aligned(affine):
         spacing = np.asarray(np.diag(affine)[:3], dtype=float)
         origin = np.asarray(affine[:3, 3], dtype=float)
         return spacing, origin, np.eye(4), True
-
-    return (
-        (np.ones(3), np.zeros(3), np.eye(4), True)
-        if affine is None
-        else (np.ones(3), np.zeros(3), np.linalg.inv(affine), False)
-    )
+    if affine is None:
+        return np.ones(3), np.zeros(3), np.eye(4), True
+    return np.ones(3), np.zeros(3), np.linalg.inv(affine), False
 
 
 def transform_points(points: np.ndarray, transform: np.ndarray) -> np.ndarray:
     """Apply a 4x4 affine ``transform`` to an (N, 3) array of points."""
-    return points @ transform[:3, :3].T + transform[:3, 3]
+    return np.asarray(points @ transform[:3, :3].T + transform[:3, 3], dtype=np.float64)
 
 
-def as_labeled_points(source: PointSource) -> LabeledPoints:
-    """Normalize any supported point source into :class:`LabeledPoints`.
-
-    Accepts an existing :class:`LabeledPoints`, an ``(N, 3)`` NumPy array
-    (unnamed points), an ``(array, labels)`` pair, or a ``.json`` / ``.csv`` /
-    ``.tsv`` / ``.txt`` file path.
-    """
-    if isinstance(source, LabeledPoints):
-        return source
-    if isinstance(source, (str, Path)):
-        path = Path(source)
-        match path.suffix.lower():
-            case ".json":
-                return LabeledPoints.from_json(path)
-            case ".npy":
-                return LabeledPoints(np.load(path))
-            case _:
-                return LabeledPoints.from_table(path)
-    if isinstance(source, np.ndarray):
-        return LabeledPoints(source)
-    is_pair = isinstance(source, (tuple, list)) and len(source) == 2
-    if is_pair and not isinstance(source[0], (int, float)):
-        points, labels = source
-        return LabeledPoints(points, tuple(labels))
-    raise ValueError(f"Unsupported point source: {type(source).__name__}")
+# ---------------------------------------------------------------------------
+# Input normalization (in-memory data only; no I/O)
+# ---------------------------------------------------------------------------
 
 
 def _faces_to_cells(faces: np.ndarray) -> np.ndarray:
@@ -160,27 +136,17 @@ def polydata_from_triangles(vertices: np.ndarray, faces: np.ndarray) -> pv.PolyD
     return pv.PolyData(np.asarray(vertices, dtype=np.float64), _faces_to_cells(faces))
 
 
-def _load_mesh_poly(mesh_path: str | Path) -> pv.PolyData:
-    loaded = trimesh.load(mesh_path, force="mesh")
-    vertices = np.asarray(loaded.vertices, dtype=np.float64)
-    faces = np.asarray(loaded.faces, dtype=np.int64)
-    return polydata_from_triangles(vertices, faces)
-
-
 def as_polydata(source: MeshSource) -> pv.PolyData:
-    """Normalize any supported mesh source into :class:`pyvista.PolyData`.
+    """Normalize an in-memory mesh source into :class:`pyvista.PolyData`.
 
     Accepts a :class:`pyvista.PolyData`, a ``(vertices, faces)`` pair, a
     :class:`virda.models.scalp_mesh.ScalpMesh` or
-    :class:`virda.models.ese_mesh.ESEMesh` model, or a mesh file path
-    (``.ply`` / ``.stl`` / ``.obj`` / ... via trimesh).
+    :class:`virda.models.ese_mesh.ESEMesh` model.
     """
     if isinstance(source, pv.PolyData):
         return source.copy()
     if isinstance(source, (ScalpMesh, ESEMesh)):
         return polydata_from_triangles(source.vertices, source.faces)
-    if isinstance(source, (str, Path)):
-        return _load_mesh_poly(source)
     if isinstance(source, (tuple, list)) and len(source) == 2:
         vertices, faces = source
         return polydata_from_triangles(vertices, faces)
@@ -201,6 +167,14 @@ class _MeshBundle:
     points: LabeledPoints | None
 
 
+def _load_points(source: PointSource | None) -> LabeledPoints | None:
+    if source is None:
+        return None
+    if not isinstance(source, LabeledPoints):
+        raise ValueError("Points must be a ready LabeledPoints DTO from the import layer")
+    return source if len(source) > 0 else None
+
+
 def _load_mesh_bundle(source: Any, points: PointSource | None = None) -> _MeshBundle:
     """Split a mesh source (which may bundle its own points) into mesh + points.
 
@@ -213,71 +187,34 @@ def _load_mesh_bundle(source: Any, points: PointSource | None = None) -> _MeshBu
     return _MeshBundle(as_polydata(source), _load_points(points))
 
 
-def _load_points(source: PointSource | None) -> LabeledPoints | None:
-    if source is None:
-        return None
-    points = as_labeled_points(source)
-    if len(points) == 0:
-        return None
-    return points
-
-
 def _load_volume_source(
-    source: Any, downsample_stride: int
-) -> tuple[np.ndarray, np.ndarray | None]:
-    """Read a NIfTI volume source into ``(data (float32, 3D), affine)``.
+    source: VolumeSource, downsample_stride: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """Read an in-memory volume source into ``(data (float32, 3D), affine)``.
 
-    Accepts a ``.nii`` / ``.nii.gz`` path, a :class:`virda.models.mri_volume.MRIVolume`
-    model, or an already-loaded ``(data, affine)`` pair.
+    Accepts a :class:`virda.models.mri_volume.MRIVolume` model or an
+    already-loaded ``(data, affine)`` pair.  ``downsample_stride`` reduces the
+    voxel count for rendering only (see :func:`downsample`).
     """
     if isinstance(source, MRIVolume):
         data = np.asarray(source.data, dtype=np.float32)
         affine = np.asarray(source.affine, dtype=np.float64)
-    elif isinstance(source, (str, Path)):
-        image = nib.load(str(source))
-        data = image.get_fdata(dtype=np.float32)
-        affine = image.affine
     elif isinstance(source, (tuple, list)) and len(source) == 2:
         data = np.asarray(source[0], dtype=np.float32)
         affine = np.asarray(source[1], dtype=np.float64)
     else:
-        raise ValueError(f"Unsupported NIfTI source: {type(source).__name__}")
+        raise ValueError(f"Unsupported volume source: {type(source).__name__}")
     if data.ndim == 4:
         data = data[..., 0]
     if data.ndim != 3:
-        raise ValueError(f"NIfTI data must be 3D, got {data.ndim}D")
+        raise ValueError(f"Volume data must be 3D, got {data.ndim}D")
     if downsample_stride > 1:
-        if affine is None:
-            raise ValueError("downsample_stride > 1 requires an affine")
         data, affine = downsample(data, affine, downsample_stride)
     return data, affine
 
 
-def _normalize_fiducials(source: PointSource) -> tuple[LabeledPoints, str]:
-    """Normalize a fiducials source into points plus a coordinate frame.
-
-    Accepts a :class:`virda.models.fiducial.Fiducials` model (its primary
-    coordinate system becomes the returned frame), a fiducials JSON file path
-    (world millimeters per the project format), or anything understood by
-    :func:`as_labeled_points` (assumed to be in world millimeters).  Labels
-    follow the classic ``"ID (name)"`` form when a model or file supplies both.
-    """
-    if isinstance(source, Fiducials):
-        points = np.asarray([item.coordinates for item in source.items], dtype=np.float64)
-        labels = tuple(f"{item.fiducial_id} ({item.name})" for item in source.items)
-        frames = {item.coordinate_system for item in source.items}
-        frame = frames.pop() if len(frames) == 1 else "world"
-        if len(frames):
-            raise ValueError("Fiducials must share a single coordinate system")
-        return LabeledPoints(points, labels), frame
-    if isinstance(source, (str, Path)):
-        fiducials = load_fiducials(Path(source))
-        return _normalize_fiducials(fiducials)
-    return as_labeled_points(source), "world"
-
-
 # ---------------------------------------------------------------------------
-# Scene construction (no Qt; safe to run on a worker thread)
+# Scene construction (no Qt, no I/O; safe to run on a worker thread)
 # ---------------------------------------------------------------------------
 
 
@@ -286,8 +223,8 @@ class ViewerScene:
     """Fully resolved advanced-viewer scene, ready to be rendered.
 
     Everything is already placed in the scene frame: in a world-millimeter
-    scene (``mm_scene``) the volume keeps its spacing/origin from the NIfTI
-    affine, otherwise every array was moved into voxel index space.
+    scene (``mm_scene``) the volume keeps its spacing/origin from the affine,
+    otherwise every array was moved into voxel index space.
     """
 
     volume: pv.ImageData | None = None
@@ -299,38 +236,28 @@ class ViewerScene:
     ese_points: LabeledPoints | None = None
 
 
-def _build_volume(
-    data: np.ndarray | None, affine: np.ndarray | None, placement: tuple[Any, Any, np.ndarray, bool]
-) -> pv.ImageData | None:
-    if data is None:
-        return None
+def _build_volume(data: np.ndarray, affine: np.ndarray, mm_scene: bool) -> pv.ImageData:
     volume = pv.ImageData(dimensions=data.shape)
     volume.point_data["intensity"] = data.ravel(order="F")
-    _, _, _, mm_scene = placement
-    if mm_scene and affine is not None:
+    if mm_scene:
         volume.spacing = tuple(np.asarray(np.diag(affine)[:3], dtype=float))
         volume.origin = tuple(np.asarray(affine[:3, 3], dtype=float))
     return volume
 
 
 def _place_labeled_points(
-    points: LabeledPoints, placement: tuple[Any, Any, np.ndarray, bool], frame: str = "world"
+    points: LabeledPoints, mm_scene: bool, transform: np.ndarray
 ) -> LabeledPoints | None:
     """Move labeled points into the scene frame; ``None`` for empty sets."""
     if len(points) == 0:
         return None
-    _, _, transform, mm_scene = placement
-    if frame == "voxel":
-        if mm_scene:
-            raise ValueError("voxel-coordinate points require a NIfTI with an affine")
-        return points
     if not mm_scene:
         return LabeledPoints(transform_points(points.points, transform), points.labels)
     return points
 
 
 def collect_viewer_scene(
-    nifti: Any | None = None,
+    nifti: VolumeSource | None = None,
     fiducials: PointSource | None = None,
     scalp: MeshSource | MeshWithPoints | None = None,
     scalp_points: PointSource | None = None,
@@ -338,12 +265,11 @@ def collect_viewer_scene(
     ese_points: PointSource | None = None,
     downsample_stride: int = 1,
 ) -> ViewerScene:
-    """Load and resolve a full advanced-viewer scene without touching any display.
+    """Resolve a full advanced-viewer scene from in-memory sources.
 
-    Runs on a worker thread: NIfTI reading (with optional voxel downsampling),
-    mesh and point normalization, and placement of every object into one
-    coordinate frame using the NIfTI affine.  At least one source must be
-    given.
+    Normalizes meshes and labeled points and places everything into one
+    coordinate frame using the volume affine; at least one source must be
+    given.  This is pure data preparation — safe to run on a worker thread.
     """
     if (
         nifti is None
@@ -355,32 +281,28 @@ def collect_viewer_scene(
     ):
         raise ValueError("no scene sources given: pass at least one of nifti/fiducials/scalp/ese")
 
-    data: np.ndarray | None = None
-    affine: np.ndarray | None = None
+    mm_scene = True
+    volume: pv.ImageData | None = None
+    transform: np.ndarray = np.eye(4)
     if nifti is not None:
         data, affine = _load_volume_source(nifti, downsample_stride)
-    placement = scene_placement(affine)
-    volume = _build_volume(data, affine, placement)
+        _, _, transform, mm_scene = scene_placement(affine)
+        volume = _build_volume(data, affine, mm_scene)
 
-    fiducial_scene: LabeledPoints | None = None
-    if fiducials is not None:
-        points, frame = _normalize_fiducials(fiducials)
-        fiducial_scene = _place_labeled_points(points, placement, frame)
+    fiducial_scene = (
+        _place_labeled_points(fiducials, mm_scene, transform) if fiducials is not None else None
+    )
 
     scalp_bundle = (
         _load_mesh_bundle(scalp, scalp_points) if scalp is not None else _MeshBundle(None, None)
     )
     ese_bundle = _load_mesh_bundle(ese, ese_points) if ese is not None else _MeshBundle(None, None)
-    _, _, transform, mm_scene = placement
     if not mm_scene:
         for bundle in (scalp_bundle, ese_bundle):
             if bundle.mesh is not None:
                 bundle.mesh.transform(transform, inplace=True)
-        for bundle in (scalp_bundle, ese_bundle):
             if bundle.points is not None:
-                bundle.points = LabeledPoints(
-                    transform_points(bundle.points.points, transform), bundle.points.labels
-                )
+                bundle.points = _place_labeled_points(bundle.points, mm_scene, transform)
 
     return ViewerScene(
         volume=volume,
@@ -393,17 +315,21 @@ def collect_viewer_scene(
     )
 
 
-def collect_volume_scene(source: Any, downsample_stride: int = 1) -> pv.ImageData:
-    """Read a NIfTI volume source and place it in its own scene frame."""
+def collect_volume_scene(source: VolumeSource, downsample_stride: int = 1) -> pv.ImageData:
+    """Resolve a single volume source into a renderable :class:`pv.ImageData`."""
     data, affine = _load_volume_source(source, downsample_stride)
-    volume = _build_volume(data, affine, scene_placement(affine))
-    if volume is None:  # pragma: no cover - _load_volume_source always returns data
-        raise ValueError("failed to load the volume")
-    return volume
+    return _build_volume(data, affine, scene_placement(affine)[3])
+
+
+def collect_mesh_scene(
+    source: MeshSource | MeshWithPoints, points: PointSource | None = None
+) -> _MeshBundle:
+    """Resolve a single mesh source (optionally with labeled points)."""
+    return _load_mesh_bundle(source, points)
 
 
 # ---------------------------------------------------------------------------
-# Background loading: a scene-collection callable on a dedicated thread
+# Background rendering preparation: a collection callable on a dedicated thread
 # ---------------------------------------------------------------------------
 
 
@@ -523,8 +449,9 @@ class BaseViewer3D(QWidget):
     Shows one thing at a time — a NIfTI volume (:meth:`show_nifti`), a mesh
     (:meth:`show_mesh`, optionally with labeled points on it), or a labeled
     point set (:meth:`show_points`) — with no panels or checkboxes.  Calling
-    another ``show_*`` replaces the current content.  Sources load on a worker
-    thread; :attr:`sceneLoaded` and :attr:`sceneFailed` report the outcome.
+    another ``show_*`` replaces the current content.  Inputs must be ready
+    data (the widget performs no I/O); rendering preparation runs on a worker
+    thread, and :attr:`sceneLoaded` / :attr:`sceneFailed` report the outcome.
     """
 
     sceneLoaded = Signal(object)  # noqa: N815
@@ -557,14 +484,14 @@ class BaseViewer3D(QWidget):
 
     def show_nifti(
         self,
-        source: Any,
+        source: VolumeSource,
         *,
         downsample_stride: int = 1,
         cmap: str = "bone",
         opacity: str = "sigmoid",
         clim: tuple[float, float] | None = None,
     ) -> None:
-        """Show a NIfTI volume: path, MRIVolume model or a (data, affine) pair."""
+        """Show a volume: an MRIVolume model or a ready (data, affine) pair."""
         self._start_load(
             "volume",
             lambda: collect_volume_scene(source, downsample_stride),
@@ -573,19 +500,17 @@ class BaseViewer3D(QWidget):
 
     def show_mesh(
         self,
-        source: Any,
+        source: MeshSource | MeshWithPoints,
+        points: PointSource | None = None,
         *,
         color: str = _MESH_COLOR,
         opacity: float = 1.0,
         wireframe: bool = False,
     ) -> None:
-        """Show a mesh; a :class:`MeshWithPoints` source also draws its points."""
+        """Show a mesh; bundle or pass its labeled points to draw them too."""
         self._start_load(
             "mesh",
-            lambda: _MeshBundle(
-                as_polydata(source),
-                _load_points(source.points if isinstance(source, MeshWithPoints) else None),
-            ),
+            lambda: collect_mesh_scene(source, points),
             props={"color": color, "opacity": opacity, "wireframe": wireframe},
         )
 
@@ -643,47 +568,60 @@ class BaseViewer3D(QWidget):
                     mapper="smart",
                 )
             )
-        elif self._kind == "mesh" and isinstance(scene, _MeshBundle) and scene.mesh is not None:
+        elif self._kind == "mesh" and isinstance(scene, _MeshBundle):
+            self._apply_mesh_bundle(scene, props)
+        elif self._kind == "points" and isinstance(scene, LabeledPoints) and len(scene) > 0:
             self._actors.append(
-                plotter.add_mesh(
-                    scene.mesh,
+                plotter.add_points(
+                    scene.points,
+                    color=props["color"],
+                    point_size=_FIDUCIAL_POINT_SIZE,
+                    render_points_as_spheres=True,
+                )
+            )
+            if scene.labels is not None:
+                self._actors.append(_build_label_actor(plotter, scene))
+        plotter.add_axes(interactive=False)
+        plotter.reset_camera()
+        plotter.render()
+
+    def _apply_mesh_bundle(self, bundle: _MeshBundle, props: dict[str, Any]) -> None:
+        if bundle.mesh is not None:
+            self._actors.append(
+                self._plotter.add_mesh(
+                    bundle.mesh,
                     color=props["color"],
                     opacity=props["opacity"],
                     show_edges=props["wireframe"],
                     edge_color="gray",
                 )
             )
-            if scene.points is not None:
-                self._add_points_actors(scene.points, color=_FIDUCIAL_COLOR)
-        elif self._kind == "points" and isinstance(scene, LabeledPoints) and len(scene) > 0:
-            self._add_points_actors(scene, color=props["color"])
-        plotter.add_axes(interactive=False)
-        plotter.reset_camera()
-        plotter.render()
-
-    def _add_points_actors(self, points: LabeledPoints, color: str) -> None:
-        actor = self._plotter.add_points(
-            points.points,
-            color=color,
-            point_size=_FIDUCIAL_POINT_SIZE,
-            render_points_as_spheres=True,
-        )
-        self._actors.append(actor)
-        if points.labels is not None:
-            self._actors.append(_build_label_actor(self._plotter, points))
+        if bundle.points is not None:
+            self._actors.append(
+                self._plotter.add_points(
+                    bundle.points.points,
+                    color=_FIDUCIAL_COLOR,
+                    point_size=_FIDUCIAL_POINT_SIZE,
+                    render_points_as_spheres=True,
+                )
+            )
+            if bundle.points.labels is not None:
+                self._actors.append(_build_label_actor(self._plotter, bundle.points))
 
 
 class AdvancedViewer3D(QWidget):
     """Full VIRDA 3D viewer: NIfTI + fiducials + scalp/ESE meshes with points.
 
-    Accepts four optional sources (file paths or loaded data) — *nifti*,
-    *fiducials*, *scalp* and *ese*, where each mesh may bundle labeled points
-    via :class:`MeshWithPoints` or take them through ``scalp_points`` /
+    Accepts four optional ready-data sources — *nifti*, *fiducials*, *scalp*
+    and *ese*, where each mesh may bundle its labeled points via
+    :class:`MeshWithPoints` or take them through ``scalp_points`` /
     ``ese_points``.  By default only the fiducials plus the scalp mesh with
     its points and labels are shown; the right panel hosts checkboxes for the
     NIfTI, the fiducials, the points and the labels, and a Scalp <-> ESE
     switcher when both meshes are loaded.  Scenes with a single meaningful
-    object (mesh-only, NIfTI-only) render directly with no panel.
+    object (mesh-only, volume-only) render directly with no panel.  The
+    widget performs no I/O: the embedder supplies data prepared by the import
+    layer (``virda`` core ops behind the ``virda_gui_new.api`` facades).
     """
 
     sceneLoaded = Signal(object)  # noqa: N815
@@ -695,7 +633,7 @@ class AdvancedViewer3D(QWidget):
         *,
         log: Callable[[str], None] = print,
         background_color: str = "black",
-        nifti: Any | None = None,
+        nifti: VolumeSource | None = None,
         fiducials: PointSource | None = None,
         scalp: MeshSource | MeshWithPoints | None = None,
         scalp_points: PointSource | None = None,
@@ -754,7 +692,7 @@ class AdvancedViewer3D(QWidget):
     def set_scene(
         self,
         *,
-        nifti: Any | None = None,
+        nifti: VolumeSource | None = None,
         fiducials: PointSource | None = None,
         scalp: MeshSource | MeshWithPoints | None = None,
         scalp_points: PointSource | None = None,
@@ -764,10 +702,10 @@ class AdvancedViewer3D(QWidget):
         mesh_opacity: float = 1.0,
         wireframe: bool = False,
     ) -> None:
-        """Load a new scene from the given sources (everything is optional).
+        """Load a new scene from the given ready-data sources (all optional).
 
-        The previous scene (and any in-flight load) is replaced; sources load
-        on a worker thread and the result renders once
+        The previous scene (and any in-flight load) is replaced; rendering
+        preparation runs on a worker thread and the result renders once
         :attr:`sceneLoaded` fires.
         """
         self._mesh_opacity = float(mesh_opacity)
@@ -987,18 +925,15 @@ class AdvancedViewer3D(QWidget):
             mesh_actor = self._mesh_actors.get(key)
             if mesh_actor is not None:
                 mesh_actor.SetVisibility(active)
-            self._apply_points_visibility(key, active)
+            visible = active and self._points_visible
+            points_actor = self._mesh_points_actors.get(key)
+            if points_actor is not None:
+                points_actor.SetVisibility(visible)
+            label_actor = self._mesh_label_actors.get(key)
+            if label_actor is not None:
+                label_actor.SetVisibility(visible and self._labels_visible)
         if self._fid_points_actor is not None:
             self._fid_points_actor.SetVisibility(self._fiducials_visible)
         if self._fid_labels_actor is not None:
             self._fid_labels_actor.SetVisibility(self._fiducials_visible and self._labels_visible)
         self._plotter.render()
-
-    def _apply_points_visibility(self, key: str, active: bool) -> None:
-        points_actor = self._mesh_points_actors.get(key)
-        label_actor = self._mesh_label_actors.get(key)
-        visible = active and self._points_visible
-        if points_actor is not None:
-            points_actor.SetVisibility(visible)
-        if label_actor is not None:
-            label_actor.SetVisibility(visible and self._labels_visible)
