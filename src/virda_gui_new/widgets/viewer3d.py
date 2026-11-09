@@ -18,7 +18,7 @@ in module-level plotter helpers below.
 """
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Protocol
 
 import pyvista as pv
 from PySide6.QtCore import Signal
@@ -30,11 +30,11 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from pyvista import Actor
 from pyvistaqt import QtInteractor
 
 from virda_gui_new.dto.viewer3d import (
     LabeledPoints,
-    MeshBundle,
     MeshSource,
     MeshWithPoints,
     PointSource,
@@ -63,7 +63,7 @@ def _add_mesh_actor(
     color: str,
     opacity: float,
     wireframe: bool,
-) -> Any:
+) -> Actor:
     return plotter.add_mesh(
         mesh,
         color=color,
@@ -80,18 +80,18 @@ def _add_volume_actor(
     cmap: str = "bone",
     opacity: str = "sigmoid",
     clim: float | tuple[float, float] | None = None,
-    mapper: str = "smart",
-) -> Any:
-    # pyvista's stubs narrow cmap/opacity/mapper to Literal unions (a snapshot
-    # of matplotlib names), while the plotter itself accepts any mpl-registered
-    # cmap string at runtime - keep the public API `str` and trust pyvista here.
-    kwargs: dict[str, Any] = {"cmap": cmap, "opacity": opacity, "clim": clim, "mapper": mapper}
-    return plotter.add_volume(volume, **kwargs)
+) -> Actor:
+    return plotter.add_volume(
+        volume,
+        cmap=cmap,
+        opacity=opacity,
+        clim=clim,
+    )
 
 
 def _add_point_actor(
     plotter: QtInteractor, points: LabeledPoints, *, color: str, point_size: int
-) -> Any:
+) -> Actor:
     return plotter.add_points(
         points.points,
         color=color,
@@ -100,7 +100,7 @@ def _add_point_actor(
     )
 
 
-def _build_label_actor(plotter: QtInteractor, points: LabeledPoints) -> Any:
+def _build_label_actor(plotter: QtInteractor, points: LabeledPoints) -> Actor:
     return plotter.add_point_labels(
         points.points,
         list(points.labels) if points.labels is not None else [],
@@ -114,21 +114,133 @@ def _build_label_actor(plotter: QtInteractor, points: LabeledPoints) -> Any:
     )
 
 
-def _finalize_render(plotter: QtInteractor) -> None:
-    """Finish a render pass: axes indicator, camera fit and immediate draw."""
-    plotter.add_axes(interactive=False)
-    plotter.reset_camera()
-    plotter.render()
+class _SceneRenderer(Protocol):
+    """One scene kind: collet its data and build its actors."""
+
+    label: str
+
+    def collect(self) -> Any:
+        """Collect the renderable scene (data is already ready in memory)."""
+        ...
+
+    def build(self, plotter: QtInteractor, scene: Any) -> list[Any]:
+        """Build the VTK actors of the collected scene."""
+        ...
 
 
-def _clear_layout(layout: QVBoxLayout) -> None:
-    while layout.count():
-        item = layout.takeAt(0)
-        if item is None:
-            break
-        widget = item.widget()
-        if widget is not None:
-            widget.deleteLater()
+class _VolumeRenderer:
+    """Renderer for a single NIfTI volume scene."""
+
+    label = "volume"
+
+    def __init__(
+        self,
+        source: VolumeSource,
+        *,
+        downsample_stride: int = 1,
+        cmap: str = "bone",
+        opacity: str = "sigmoid",
+        clim: float | tuple[float, float] | None = None,
+    ) -> None:
+        self.source = source
+        self.downsample_stride = downsample_stride
+        self.cmap = cmap
+        self.opacity = opacity
+        self.clim = clim
+
+    def collect(self) -> Any:
+        return collect_volume_scene(self.source, self.downsample_stride)
+
+    def build(self, plotter: QtInteractor, scene: Any) -> list[Any]:
+        return [
+            _add_volume_actor(
+                plotter,
+                scene,
+                cmap=self.cmap,
+                opacity=self.opacity,
+                clim=self.clim,
+            )
+        ]
+
+
+class _MeshRenderer:
+    """Renderer for a mesh, optionally with labeled points on it."""
+
+    label = "mesh"
+
+    def __init__(
+        self,
+        source: MeshSource | MeshWithPoints,
+        points: PointSource | None = None,
+        *,
+        color: str = _MESH_COLOR,
+        opacity: float = 1.0,
+        wireframe: bool = False,
+    ) -> None:
+        self.source = source
+        self.points = points
+        self.color = color
+        self.opacity = opacity
+        self.wireframe = wireframe
+
+    def collect(self) -> Any:
+        return collect_mesh_scene(self.source, self.points)
+
+    def build(self, plotter: QtInteractor, scene: Any) -> list[Any]:
+        actors: list[Any] = []
+        if scene.mesh is not None:
+            actors.append(
+                _add_mesh_actor(
+                    plotter,
+                    scene.mesh,
+                    color=self.color,
+                    opacity=self.opacity,
+                    wireframe=self.wireframe,
+                )
+            )
+
+        if scene.points is not None:
+            actors.append(
+                _add_point_actor(
+                    plotter,
+                    scene,
+                    color=_FIDUCIAL_COLOR,
+                    point_size=_FIDUCIAL_POINT_SIZE,
+                )
+            )
+            if scene.points.labels is not None:
+                actors.append(_build_label_actor(plotter, scene.points))
+
+        return actors
+
+
+class _PointsRenderer:
+    """Renderer for a labeled point set."""
+
+    label = "points"
+
+    def __init__(self, source: PointSource, *, color: str = _FIDUCIAL_COLOR) -> None:
+        self.source = source
+        self.color = color
+
+    def collect(self) -> LabeledPoints | None:
+        return collect_points_scene(self.source)
+
+    def build(self, plotter: QtInteractor, scene: Any) -> list[Actor]:
+        actors: list[Actor] = []
+        if len(scene) > 0:
+            actors.append(
+                _add_point_actor(
+                    plotter,
+                    scene.points,
+                    color=self.color,
+                    point_size=_FIDUCIAL_POINT_SIZE,
+                )
+            )
+            if scene.labels is not None:
+                actors.append(_build_label_actor(plotter, scene))
+
+        return actors
 
 
 class _SceneViewBase(QWidget):
@@ -157,6 +269,12 @@ class _SceneViewBase(QWidget):
         """Remove everything the plotter currently draws."""
         self._plotter.clear()
 
+    def _finalize_render(self) -> None:
+        """Finish a render pass: axes indicator, camera fit and immediate draw."""
+        self._plotter.add_axes(interactive=False)
+        self._plotter.reset_camera()
+        self._plotter.render()
+
 
 class BaseViewer3D(_SceneViewBase):
     """Minimal embeddable 3D viewer that renders a single scene object.
@@ -176,8 +294,7 @@ class BaseViewer3D(_SceneViewBase):
     ) -> None:
         super().__init__(parent, log=log, background_color=background_color)
 
-        self._kind: str | None = None
-        self._props: dict[str, Any] = {}
+        self._current: _SceneRenderer | None = None
         self._actors: list[Any] = []
 
     def show_nifti(
@@ -191,9 +308,13 @@ class BaseViewer3D(_SceneViewBase):
     ) -> None:
         """Show a volume: an MRIVolume model or a ready (data, affine) pair."""
         self._render(
-            "volume",
-            lambda: collect_volume_scene(source, downsample_stride),
-            props={"cmap": cmap, "opacity": opacity, "clim": clim},
+            _VolumeRenderer(
+                source,
+                downsample_stride=downsample_stride,
+                cmap=cmap,
+                opacity=opacity,
+                clim=clim,
+            )
         )
 
     def show_mesh(
@@ -207,89 +328,35 @@ class BaseViewer3D(_SceneViewBase):
     ) -> None:
         """Show a mesh; bundle or pass its labeled points to draw them too."""
         self._render(
-            "mesh",
-            lambda: collect_mesh_scene(source, points),
-            props={"color": color, "opacity": opacity, "wireframe": wireframe},
+            _MeshRenderer(source, points, color=color, opacity=opacity, wireframe=wireframe)
         )
 
     def show_points(self, source: PointSource, *, color: str = _FIDUCIAL_COLOR) -> None:
         """Show a labeled point set (fiducials, contact points, ...)."""
-        self._render("points", lambda: collect_points_scene(source), props={"color": color})
+        self._render(_PointsRenderer(source, color=color))
 
     def clear_scene(self) -> None:
         """Remove the current content."""
-        self._kind = None
-        self._props = {}
+        self._current = None
         self._actors = []
         super().clear_scene()
 
-    def _render(self, kind: str, fn: Callable[[], Any], props: dict[str, Any]) -> None:
+    def _render(self, renderer: _SceneRenderer) -> None:
         """Collect the scene synchronously, then build its actors."""
-        self._log(f"Loading {kind}...")
+        self._log(f"Loading {renderer.label}...")
 
         try:
-            scene = fn()
+            scene = renderer.collect()
         except Exception as exc:  # noqa: BLE001 - surfaced to the embedder as a signal
             self._log(f"ERROR: viewer failed: {exc}")
             self.sceneFailed.emit(str(exc))
             return
 
-        self._kind = kind
-        self._props = props
-        self._apply_scene(scene)
-
-    def _apply_scene(self, scene: Any) -> None:
+        self._current = renderer
         self._plotter.clear()
-        self._actors = []
-        plotter = self._plotter
-
-        if self._kind == "volume" and isinstance(scene, pv.ImageData):
-            self._actors.append(
-                _add_volume_actor(
-                    plotter,
-                    scene,
-                    cmap=self._props["cmap"],
-                    opacity=self._props["opacity"],
-                    clim=self._props["clim"],
-                )
-            )
-        elif self._kind == "mesh" and isinstance(scene, MeshBundle):
-            self._apply_mesh_bundle(scene)
-        elif self._kind == "points" and isinstance(scene, LabeledPoints) and len(scene) > 0:
-            self._actors.append(
-                _add_point_actor(
-                    plotter, scene, color=self._props["color"], point_size=_FIDUCIAL_POINT_SIZE
-                )
-            )
-            if scene.labels is not None:
-                self._actors.append(_build_label_actor(plotter, scene))
-
-        _finalize_render(plotter)
+        self._actors = renderer.build(self._plotter, scene)
+        self._finalize_render()
         self.sceneLoaded.emit(scene)
-
-    def _apply_mesh_bundle(self, bundle: MeshBundle) -> None:
-        if bundle.mesh is not None:
-            self._actors.append(
-                _add_mesh_actor(
-                    self._plotter,
-                    bundle.mesh,
-                    color=self._props["color"],
-                    opacity=self._props["opacity"],
-                    wireframe=self._props["wireframe"],
-                )
-            )
-
-        if bundle.points is not None:
-            self._actors.append(
-                _add_point_actor(
-                    self._plotter,
-                    bundle.points,
-                    color=_FIDUCIAL_COLOR,
-                    point_size=_FIDUCIAL_POINT_SIZE,
-                )
-            )
-            if bundle.points.labels is not None:
-                self._actors.append(_build_label_actor(self._plotter, bundle.points))
 
 
 class AdvancedViewer3D(_SceneViewBase):
@@ -450,7 +517,10 @@ class AdvancedViewer3D(_SceneViewBase):
                 points_actor = None
                 if len(points) > 0:
                     points_actor = _add_point_actor(
-                        self._plotter, points, color=color, point_size=_MESH_POINTS_POINT_SIZE
+                        self._plotter,
+                        points,
+                        color=color,
+                        point_size=_MESH_POINTS_POINT_SIZE,
                     )
                 self._mesh_points_actors[key] = points_actor
                 self._mesh_label_actors[key] = (
@@ -458,14 +528,28 @@ class AdvancedViewer3D(_SceneViewBase):
                 )
 
         if scene.volume is not None:
-            self._volume_actor = _add_volume_actor(self._plotter, scene.volume)
+            self._volume_actor = _add_volume_actor(
+                self._plotter,
+                scene.volume,
+            )
 
         self._build_panel()
         self._apply_visibility()
-        _finalize_render(self._plotter)
+        self._finalize_render()
+
+    def _clear_layout(self) -> None:
+        while self._panel_layout.count():
+            item = self._panel_layout.takeAt(0)
+            if item is None:
+                return
+
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
 
     def _build_panel(self) -> None:
-        _clear_layout(self._panel_layout)
+        self._clear_layout()
+
         scene = self._scene
         has_controls = False
 
@@ -482,6 +566,7 @@ class AdvancedViewer3D(_SceneViewBase):
         if scene.scalp_points is not None or scene.ese_points is not None:
             self._add_check("Show points", self._points_visible, self._set_points_visible)
             has_controls = True
+
         if (
             (scene.fiducials is not None and scene.fiducials.labels is not None)
             or (scene.scalp_points is not None and scene.scalp_points.labels is not None)
@@ -489,6 +574,7 @@ class AdvancedViewer3D(_SceneViewBase):
         ):
             self._add_check("Show labels", self._labels_visible, self._set_labels_visible)
             has_controls = True
+
         if scene.scalp_mesh is not None and scene.ese_mesh is not None:
             surface_box = QGroupBox("Surface", self._panel)
             surface_layout = QVBoxLayout(surface_box)
@@ -542,6 +628,7 @@ class AdvancedViewer3D(_SceneViewBase):
     def _apply_visibility(self) -> None:
         if self._scene is None:
             return
+
         if self._volume_actor is not None:
             self._volume_actor.SetVisibility(self._nifti_visible)
 
@@ -551,15 +638,19 @@ class AdvancedViewer3D(_SceneViewBase):
             mesh_actor = self._mesh_actors.get(key)
             if mesh_actor is not None:
                 mesh_actor.SetVisibility(active)
+
             visible = active and self._points_visible
             points_actor = self._mesh_points_actors.get(key)
             if points_actor is not None:
                 points_actor.SetVisibility(visible)
+
             label_actor = self._mesh_label_actors.get(key)
             if label_actor is not None:
                 label_actor.SetVisibility(visible and self._labels_visible)
+
         if self._fid_points_actor is not None:
             self._fid_points_actor.SetVisibility(self._fiducials_visible)
         if self._fid_labels_actor is not None:
             self._fid_labels_actor.SetVisibility(self._fiducials_visible and self._labels_visible)
+
         self._plotter.render()
