@@ -28,7 +28,7 @@ locations the GUI prefills the *Run Pipeline* form from and role-imports into.
 |--------------------------------------|------------------------------------------------------------------------------|
 | `<source_mri>.nii.gz`                | Byte-for-byte copy of the source MRI NIfTI.                                  |
 | `config.json`/`pipeline_config.json` | Optional user-supplied pipeline configuration (a partial `Config` JSON). This is where the GUI loads the run *Config file* from. |
-| `measurements.json`                  | Optional Stage 3 measurements input (see format below). This is where the GUI loads the run *Measurements* from. |
+| `measurements.json`                  | Byte-for-byte copy of the measurements file used by Stage 3; written by the pipeline on every Stage 3 run. This is where the GUI loads the run *Measurements* from. |
 | `fiducials.json`                     | List of fiducial coordinates; the GUI *Fiducials* input.                     |
 | `pipeline_config.json`               | Full merged `Config` dump (`model_dump(mode="json")`); written on every run. |
 
@@ -121,7 +121,6 @@ Example `measurements.json` (the Stage 3 input):
 | `final_mesh.ply` | Final scalp mesh (trimesh PLY export). |
 | `scalp_vertices.npy` | `(N, 3)` `float64` array of vertex coordinates in world millimeters. |
 | `scalp_faces.npy` | `(M, 3)` `int64` array of triangular faces referencing vertices. |
-| `scalp_face_adjacency.npy` | `(E, 2)` `int64` array of face-index pairs sharing an edge. |
 
 ## `ese/`
 
@@ -133,9 +132,13 @@ along local normals); written only when Stage 2 runs.
 | `ese_mesh.ply` | The ESE surface as a trimesh PLY export. |
 | `ese_vertices.npy` | `(N, 3)` `float64` array of ESE vertex coordinates (world mm). |
 | `ese_faces.npy` | `(M, 3)` `int64` triangular faces of the ESE mesh. |
-| `normals.npy` | `(N, 3)` unit normal at each scalp vertex used for the offset. |
 
-The arrays are row-aligned: `ese_vertices[i]` and `normals[i]` belong to `scalp_vertices[i]`.
+Row `i` of every array corresponds to scalp vertex `i` of the Stage 1 scalp
+mesh (`mesh/scalp_vertices.npy`, `mesh/scalp_faces.npy`): the two surfaces
+share the triangulation, and the scalp has no copies here.
+`ese_vertices[i]` = `scalp_vertices[i] + ese_offset_mm * normals[i]`, where
+`normals[i]` is the outward scalp normal computed during Stage 2 and kept in
+memory only — no normals or scalp copies are written into `ese/`.
 
 ## `localization/`
 
@@ -144,36 +147,15 @@ available.
 
 | File | Description |
 |---|---|
-| `electrodes.json` | Full localization result for every electrode (see below). |
-| `electrodes_scalp.json` | Same electrodes with only `coords` = scalp contact points (scanner RAS). |
-| `electrodes_ese.json` | Same electrodes with only `coords` = ESE body-center points (scanner RAS). |
-| `electrode_coords.csv` | Tabular copy: `electrode_id, x, y, z, residual_error, confidence, flagged`; `x/y/z` are the ESE coordinates. Empty `residual_error`/`confidence` mark non-localized electrodes. |
+| `electrodes.csv` | Full localization result: `electrode_id, ese_x, ese_y, ese_z, scalp_x, scalp_y, scalp_z, [one column per fiducial, lowercased], residual_mm, flagged`. Coordinates are scanner RAS millimeters; the fiducial columns carry the measured distances (mm). Empty coordinates and residual mark non-localized electrodes. |
+| `electrodes_scalp.csv` | Same electrodes with only `x, y, z` = scalp contact points (scanner RAS). |
+| `electrodes_ese.csv` | Same electrodes with only `x, y, z` = ESE body-center points (scanner RAS). |
 
-`electrodes.json` — one entry per electrode:
-
-```json
-[
-  {
-    "electrode_id": "EEG 001",
-    "measured_distances": {"NAS": 62.28, "LPA": 111.68, "RPA": 158.42},
-    "ese_coords": [-35.24, 61.01, 68.10],
-    "scalp_coords": [-35.19, 60.96, 68.02],
-    "residual_error": 1.27,
-    "confidence": 0.0012,
-    "flagged": false
-  }
-]
-```
-
-- `measured_distances` are the input distances to each fiducial (mm).
-- `ese_coords` / `scalp_coords` are `null` for electrodes that could not be
-  localized (`is_localized == false`); `residual_error` and `confidence`
-  are then `null` too. All coordinates are scanner RAS millimeters.
-- `flagged` marks electrodes whose residual exceeds
-  `residual_threshold_mm`.
-
-`calibrated_ese_offset_shift_mm` is present only when
-`calibrate_ese_offset` was enabled (`null` otherwise).
+The coordinate tables (`electrodes_scalp.csv`, `electrodes_ese.csv`) carry columns
+`electrode_id, x, y, z, residual_mm, flagged`.  Empty `x/y/z` and
+`residual_mm` mark electrodes that could not be localized
+(`is_localized == false`).  `flagged` (`yes`/`no`) marks electrodes whose
+residual exceeds `residual_threshold_mm`.
 
 ## `logs/`
 
