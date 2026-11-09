@@ -13,13 +13,16 @@ Two widgets share the same core:
 The widgets are pure display components: they accept only ready, already
 loaded data (:class:`~virda_gui_new.dto.viewer3d.LabeledPoints`, PyVista
 meshes, ``virda`` models, NumPy arrays) - never file paths - and they never
-read, import or modify source data themselves.  Scene collection is
-outsourced to :mod:`virda_gui_new.services.viewer_scene` and runs on a
-worker thread through :class:`virda_gui_new.services.task_runner.TaskRunner`;
-here only VTK actors are built and layer visibility is managed on the GUI
-thread.  The :attr:`AdvancedViewer3D.sceneLoaded` /
-:attr:`AdvancedViewer3D.sceneFailed` signals notify embedders when the scene
-is ready or the load failed.
+read, import or modify source data themselves, nor manage any loading
+threads.  Building the renderable scene from the passed sources is
+outsourced to :mod:`virda_gui_new.services.viewer_scene` and happens
+synchronously right before rendering; when slow loading appears it will be
+threaded by the embedder via
+:class:`virda_gui_new.services.task_runner.TaskRunner`.  Here only VTK
+actors are built and layer visibility is managed.  The
+:attr:`AdvancedViewer3D.sceneLoaded` / :attr:`AdvancedViewer3D.sceneFailed`
+signals notify embedders when the scene is ready or the scene collection
+failed.
 """
 
 from collections.abc import Callable
@@ -46,7 +49,6 @@ from virda_gui_new.dto.viewer3d import (
     ViewerScene,
     VolumeSource,
 )
-from virda_gui_new.services.task_runner import TaskRunner
 from virda_gui_new.services.viewer_scene import (
     collect_mesh_scene,
     collect_points_scene,
@@ -123,9 +125,6 @@ class BaseViewer3D(QWidget):
     ) -> None:
         super().__init__(parent)
         self._log = log
-        self._loader = TaskRunner(self)
-        self._loader.done.connect(self._on_scene_done)
-        self._loader.failed.connect(self._on_scene_failed)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -147,7 +146,7 @@ class BaseViewer3D(QWidget):
         clim: tuple[float, float] | None = None,
     ) -> None:
         """Show a volume: an MRIVolume model or a ready (data, affine) pair."""
-        self._start_load(
+        self._render(
             "volume",
             lambda: collect_volume_scene(source, downsample_stride),
             props={"cmap": cmap, "opacity": opacity, "clim": clim},
@@ -163,7 +162,7 @@ class BaseViewer3D(QWidget):
         wireframe: bool = False,
     ) -> None:
         """Show a mesh; bundle or pass its labeled points to draw them too."""
-        self._start_load(
+        self._render(
             "mesh",
             lambda: collect_mesh_scene(source, points),
             props={"color": color, "opacity": opacity, "wireframe": wireframe},
@@ -171,41 +170,29 @@ class BaseViewer3D(QWidget):
 
     def show_points(self, source: PointSource, *, color: str = _FIDUCIAL_COLOR) -> None:
         """Show a labeled point set (fiducials, contact points, ...)."""
-        self._start_load("points", lambda: collect_points_scene(source), props={"color": color})
+        self._render("points", lambda: collect_points_scene(source), props={"color": color})
 
     def clear_scene(self) -> None:
-        """Remove the current content and cancel any in-flight load."""
-        self._loader.stop()
+        """Remove the current content."""
         self._kind = None
         self._props = {}
         self._actors = []
         self._plotter.clear()
 
-    def shutdown(self) -> None:
-        """Stop the scene-loading thread; safe to call at application teardown."""
-        self._loader.stop()
+    def _render(self, kind: str, fn: Callable[[], Any], props: dict[str, Any]) -> None:
+        """Collect the scene synchronously, then build its actors."""
+        self._log(f"Loading {kind}...")
+        try:
+            scene = fn()
+        except Exception as exc:  # noqa: BLE001 - surfaced to the embedder as a signal
+            self._log(f"ERROR: viewer failed: {exc}")
+            self.sceneFailed.emit(str(exc))
+            return
 
-    def closeEvent(self, event: Any) -> None:  # noqa: N802 - Qt naming
-        self.shutdown()
-        super().closeEvent(event)
-
-    def _start_load(self, kind: str, fn: Callable[[], Any], props: dict[str, Any]) -> None:
         self._kind = kind
         self._props = props
-        self._log(f"Loading {kind}...")
-        self._loader.start(fn)
-
-    def _on_scene_done(self, seq: int, scene: Any) -> None:
-        if seq != self._loader.seq:
-            return
         self._apply_scene(scene)
         self.sceneLoaded.emit(scene)
-
-    def _on_scene_failed(self, seq: int, message: str) -> None:
-        if seq != self._loader.seq:
-            return
-        self._log(f"ERROR: viewer failed: {message}")
-        self.sceneFailed.emit(message)
 
     def _apply_scene(self, scene: Any) -> None:
         self._plotter.clear()
@@ -293,9 +280,6 @@ class AdvancedViewer3D(QWidget):
     ) -> None:
         super().__init__(parent)
         self._log = log
-        self._loader = TaskRunner(self)
-        self._loader.done.connect(self._on_scene_done)
-        self._loader.failed.connect(self._on_scene_failed)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -351,18 +335,15 @@ class AdvancedViewer3D(QWidget):
         mesh_opacity: float = 1.0,
         wireframe: bool = False,
     ) -> None:
-        """Load a new scene from the given ready-data sources (all optional).
-
-        The previous scene (and any in-flight load) is replaced; rendering
-        preparation runs on a worker thread and the result renders once
-        :attr:`sceneLoaded` fires.
-        """
+        """Load a new scene from the given ready-data sources (all optional)."""
         self._mesh_opacity = float(mesh_opacity)
         self._wireframe = bool(wireframe)
         self._scene = None
         self._reset_actors()
-        self._loader.start(
-            lambda: collect_viewer_scene(
+        self._log("Loading 3D scene...")
+
+        try:
+            scene = collect_viewer_scene(
                 nifti=nifti,
                 fiducials=fiducials,
                 scalp=scalp,
@@ -371,40 +352,21 @@ class AdvancedViewer3D(QWidget):
                 ese_points=ese_points,
                 downsample_stride=downsample_stride,
             )
-        )
-        self._log("Loading 3D scene...")
+        except Exception as exc:  # noqa: BLE001 - surfaced to the embedder as a signal
+            self._fail(str(exc))
+            return
+
+        self._scene = scene
+        self._build_scene(scene)
+        self.sceneLoaded.emit(scene)
 
     def clear_scene(self) -> None:
-        """Remove the current scene and cancel any in-flight load."""
-        self._loader.stop()
+        """Remove the current scene."""
         self._scene = None
         self._reset_actors()
         self._build_panel()  # no scene: empty (and hidden) panel
         self._plotter.clear()
         self._plotter.render()
-
-    def shutdown(self) -> None:
-        """Stop the scene-loading thread; safe to call at application teardown."""
-        self._loader.stop()
-
-    def closeEvent(self, event: Any) -> None:  # noqa: N802 - Qt naming
-        self.shutdown()
-        super().closeEvent(event)
-
-    def _on_scene_done(self, seq: int, scene: Any) -> None:
-        if seq != self._loader.seq:
-            return
-        if not isinstance(scene, ViewerScene):  # pragma: no cover - defensive
-            self._fail("unexpected scene result")
-            return
-        self._scene = scene
-        self._build_scene(scene)
-        self.sceneLoaded.emit(scene)
-
-    def _on_scene_failed(self, seq: int, message: str) -> None:
-        if seq != self._loader.seq:
-            return
-        self._fail(message)
 
     def _fail(self, message: str) -> None:
         self._log(f"ERROR: viewer failed: {message}")

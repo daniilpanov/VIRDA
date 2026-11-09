@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import Any
 
 from PySide6.QtWidgets import QMainWindow
 
@@ -18,7 +17,3 @@ class MainWindow(QMainWindow):
 
         self.showMaximized()
         self.maximumSize()
-
-    def closeEvent(self, event: Any) -> None:  # noqa: N802 - Qt naming
-        self._viewer3d.shutdown()
-        super().closeEvent(event)
