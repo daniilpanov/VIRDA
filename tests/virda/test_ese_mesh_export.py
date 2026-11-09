@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 
 import numpy as np
@@ -62,11 +61,12 @@ class TestExportEseCompanions:
         root = export_ese_companions(tmp_path / "ese" / "mesh.ply", ese)
 
         assert root == tmp_path / "ese"
-        for name in ("ese_vertices.npy", "ese_faces.npy", "quality.npy"):
+        for name in (
+            "ese_vertices.npy",
+            "ese_faces.npy",
+            "quality.npy",
+        ):
             assert (root / name).is_file()
-        pairs = json.loads((root / "point_pairs.json").read_text(encoding="utf-8"))
-        assert pairs["n_points"] == int(ese.vertices.shape[0])
-        assert len(pairs["scalp_vertices"]) == int(ese.vertices.shape[0])
 
     def test_full_round_trip_with_importer(self, tmp_path: Path) -> None:
         ese = make_ese(ese_offset_mm=1.5)[0]

@@ -1,6 +1,5 @@
 """Import an ESE surface mesh from a project ``ese/`` directory."""
 
-import json
 from pathlib import Path
 
 import numpy as np
@@ -12,8 +11,8 @@ def import_ese_mesh(path: str | Path) -> ESEMesh:
     """Rebuild an :class:`ESEMesh` from ``mesh.ply`` companion files.
 
     Reads ``ese_vertices.npy``, ``ese_faces.npy``, ``quality.npy`` and
-    ``point_pairs.json`` next to *path* (the project ``ese/`` layout); the PLY
-    itself only carries the surface geometry and is not parsed.
+    ``scalp_vertices.npy`` next to *path* (the project ``ese/`` layout); the
+    PLY itself only carries the surface geometry and is not parsed.
 
     Raises :class:`ValueError` when a companion file is missing or malformed.
     """
@@ -25,9 +24,7 @@ def import_ese_mesh(path: str | Path) -> ESEMesh:
         vertices = np.asarray(np.load(root / "ese_vertices.npy"), dtype=np.float64)
         faces = np.asarray(np.load(root / "ese_faces.npy"), dtype=np.int64)
         quality = np.asarray(np.load(root / "quality.npy"), dtype=np.float64)
-        with open(root / "point_pairs.json", encoding="utf-8") as handle:
-            pairs = json.load(handle)
-        scalp_vertices = np.asarray(pairs["scalp_vertices"], dtype=np.float64)
+        scalp_vertices = np.asarray(np.load(root / "scalp_vertices.npy"), dtype=np.float64)
     except (OSError, ValueError, KeyError) as exc:
         raise ValueError(f"Cannot import ESE mesh from {ply_path}: {exc}") from exc
     try:
