@@ -64,9 +64,6 @@ class TestNpyColumnMap:
     def test_faces_mask(self) -> None:
         assert npy_columns_for("ese_faces.npy") == ["A", "B", "C"]
 
-    def test_adjacency_mask(self) -> None:
-        assert npy_columns_for("scalp_face_adjacency.npy") == ["Face A", "Face B"]
-
     def test_mask_is_case_insensitive(self) -> None:
         assert npy_columns_for("Scalp_Vertices.npy") == ["X", "Y", "Z"]
 

@@ -39,7 +39,6 @@ class TestExportScalpMesh:
         empty = ScalpMesh(
             vertices=np.empty((0, 3), dtype=np.float64),
             faces=np.empty((0, 3), dtype=np.int64),
-            face_adjacency=np.empty((0, 2), dtype=np.int64),
         )
 
         path = export_scalp_mesh(tmp_path / "empty.ply", empty)

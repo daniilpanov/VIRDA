@@ -20,5 +20,4 @@ def import_scalp_mesh(path: str | Path) -> ScalpMesh:
     return ScalpMesh(
         vertices=np.asarray(source.vertices, dtype=np.float64),
         faces=np.asarray(source.faces, dtype=np.int64),
-        face_adjacency=np.asarray(source.face_adjacency, dtype=np.int64),
     )

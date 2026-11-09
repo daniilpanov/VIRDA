@@ -5,7 +5,6 @@ import logging
 import numpy as np
 import trimesh
 
-from virda.mesh.adjacency import build_scalp_mesh
 from virda.models.scalp_mesh import ScalpMesh
 
 _logger = logging.getLogger(__name__)
@@ -56,7 +55,7 @@ def decimate_mesh(
         len(mesh.vertices),
         len(decimated.vertices),
     )
-    return build_scalp_mesh(
+    return ScalpMesh(
         vertices=np.asarray(decimated.vertices, dtype=np.float64),
         faces=np.asarray(decimated.faces, dtype=np.int64),
     )

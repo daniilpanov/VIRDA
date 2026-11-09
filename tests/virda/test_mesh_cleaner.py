@@ -1,7 +1,6 @@
 import numpy as np
 import pytest
 
-from virda.mesh.adjacency import build_scalp_mesh
 from virda.models.mri_volume import MRIVolume
 from virda.models.scalp_mesh import ScalpMesh
 from virda.models.segmentation_mask import SegmentationMask
@@ -63,7 +62,7 @@ class TestTrimeshCleaner:
             [clean_sphere_mesh.faces, small_island_faces + clean_sphere_mesh.vertices.shape[0]]
         )
 
-        corrupted_mesh = build_scalp_mesh(vertices=combined_vertices, faces=combined_faces)
+        corrupted_mesh = ScalpMesh(vertices=combined_vertices, faces=combined_faces)
 
         cleaned = clean_mesh(corrupted_mesh, min_component_vertices=50)
 
@@ -82,7 +81,7 @@ class TestTrimeshCleaner:
             ]
         )
         faces = np.array([[0, 1, 2], [3, 4, 5]])
-        mesh = build_scalp_mesh(vertices=vertices, faces=faces)
+        mesh = ScalpMesh(vertices=vertices, faces=faces)
 
         cleaned = clean_mesh(mesh)
 

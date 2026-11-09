@@ -23,12 +23,6 @@ class TestImportScalpMesh:
         np.testing.assert_array_almost_equal(mesh.vertices, expected.vertices)
         np.testing.assert_array_equal(mesh.faces, expected.faces)
 
-    def test_face_adjacency_built(self, icosphere_path) -> None:
-        mesh = import_scalp_mesh(icosphere_path)
-
-        assert mesh.face_adjacency.ndim == 2
-        assert mesh.face_adjacency.shape[1] == 2
-
 
 class TestImportScalpMeshErrors:
     def test_point_cloud_rejected(self, tmp_path) -> None:

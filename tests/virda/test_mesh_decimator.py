@@ -2,7 +2,6 @@ import numpy as np
 import pytest
 import trimesh
 
-from virda.mesh.adjacency import build_scalp_mesh
 from virda.mesh.mesh_decimator import decimate_mesh
 from virda.models.scalp_mesh import ScalpMesh
 
@@ -10,7 +9,7 @@ from virda.models.scalp_mesh import ScalpMesh
 @pytest.fixture
 def icosphere_mesh() -> ScalpMesh:
     mesh = trimesh.creation.icosphere(subdivisions=3)
-    return build_scalp_mesh(
+    return ScalpMesh(
         vertices=np.asarray(mesh.vertices, dtype=np.float64),
         faces=np.asarray(mesh.faces, dtype=np.int64),
     )

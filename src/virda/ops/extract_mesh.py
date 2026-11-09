@@ -3,7 +3,6 @@
 import numpy as np
 from skimage.measure import marching_cubes
 
-from virda.mesh.adjacency import build_scalp_mesh
 from virda.mesh.density import step_size_for_voxel_size
 from virda.models.mri_volume import MRIVolume
 from virda.models.scalp_mesh import ScalpMesh
@@ -31,7 +30,7 @@ def extract_mesh(
     voxel_vertices, triangle_faces, _, _ = marching_cubes(mask.mask, level=0.5, step_size=step_size)
     world_vertices = voxel_vertices @ affine[:3, :3].T + affine[:3, 3]
 
-    return build_scalp_mesh(
+    return ScalpMesh(
         vertices=np.asarray(world_vertices, dtype=np.float64),
         faces=np.asarray(triangle_faces, dtype=np.int64),
     )

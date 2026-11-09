@@ -25,11 +25,7 @@ from virda.io.exporters.electrodes import (
 from virda.io.exporters.ese_mesh import export_ese_companions, export_ese_mesh
 from virda.io.exporters.fiducials import export_fiducials
 from virda.io.exporters.localization_table import export_localization_table
-from virda.io.exporters.mesh_arrays import (
-    export_mesh_adjacency,
-    export_mesh_faces,
-    export_mesh_vertices,
-)
+from virda.io.exporters.mesh_arrays import export_mesh_faces, export_mesh_vertices
 from virda.io.exporters.nifti_copy import export_nifti_copy
 from virda.io.exporters.pipeline_config import export_pipeline_config
 from virda.io.exporters.scalp_mesh import export_scalp_mesh
@@ -186,7 +182,6 @@ def run_stage1(config: Config) -> _Stage1Result:
     export_scalp_mesh(project_dir / "mesh" / "final_mesh.ply", mesh)
     export_mesh_vertices(project_dir / "mesh" / "scalp_vertices.npy", mesh.vertices)
     export_mesh_faces(project_dir / "mesh" / "scalp_faces.npy", mesh.faces)
-    export_mesh_adjacency(project_dir / "mesh" / "scalp_face_adjacency.npy", mesh.face_adjacency)
     export_fiducials(project_dir / "input" / "fiducials.json", fiducials)
     export_pipeline_config(project_dir / "input" / "pipeline_config.json", config)
     export_nifti_copy(project_dir / "input" / nifti_path.name, nifti_path, logger=logger)

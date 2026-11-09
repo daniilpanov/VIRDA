@@ -2,7 +2,6 @@
 
 import trimesh
 
-from virda.mesh.adjacency import build_scalp_mesh
 from virda.models.scalp_mesh import ScalpMesh
 
 
@@ -24,7 +23,7 @@ def smooth_mesh(
         trimesh.smoothing.filter_taubin(trimesh_mesh, lamb=lamb, nu=nu, iterations=iterations)
     else:
         trimesh.smoothing.filter_laplacian(trimesh_mesh, lamb=lamb, iterations=iterations)
-    return build_scalp_mesh(
+    return ScalpMesh(
         vertices=trimesh_mesh.vertices.copy(),
         faces=trimesh_mesh.faces.copy(),
     )

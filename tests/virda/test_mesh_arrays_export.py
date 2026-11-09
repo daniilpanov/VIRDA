@@ -1,11 +1,7 @@
 import numpy as np
 import pytest
 
-from virda.io.exporters.mesh_arrays import (
-    export_mesh_adjacency,
-    export_mesh_faces,
-    export_mesh_vertices,
-)
+from virda.io.exporters.mesh_arrays import export_mesh_faces, export_mesh_vertices
 
 
 class TestExportMeshVertices:
@@ -68,26 +64,3 @@ class TestExportMeshFaces:
             export_mesh_faces(tmp_path / "flat.npy", np.zeros(3))
         with pytest.raises(ValueError, match="faces"):
             export_mesh_faces(tmp_path / "quad.npy", np.zeros((2, 4)))
-
-
-class TestExportMeshAdjacency:
-    def test_writes_int64_array(self, tmp_path) -> None:
-        adjacency = np.array([[0, 1], [2, 3]])
-
-        path = export_mesh_adjacency(tmp_path / "adjacency.npy", adjacency)
-
-        loaded = np.load(path)
-        np.testing.assert_array_equal(loaded, adjacency)
-        assert loaded.dtype == np.int64
-
-    def test_appends_npy_suffix_and_creates_parents(self, tmp_path) -> None:
-        path = export_mesh_adjacency(tmp_path / "deep" / "adjacency", np.array([[0, 1]]))
-
-        assert path.name == "adjacency.npy"
-        assert path.is_file()
-
-    def test_rejects_wrong_shapes(self, tmp_path) -> None:
-        with pytest.raises(ValueError, match="adjacency"):
-            export_mesh_adjacency(tmp_path / "flat.npy", np.zeros(2))
-        with pytest.raises(ValueError, match="adjacency"):
-            export_mesh_adjacency(tmp_path / "triple.npy", np.zeros((2, 3)))

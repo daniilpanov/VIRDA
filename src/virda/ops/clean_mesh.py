@@ -5,7 +5,6 @@ from typing import cast
 import numpy as np
 import trimesh
 
-from virda.mesh.adjacency import build_scalp_mesh
 from virda.models.scalp_mesh import ScalpMesh
 
 
@@ -23,11 +22,11 @@ def clean_mesh(
     components = trimesh_mesh.split(only_watertight=False)
     if len(components) > 1:
         main_body = _keep_largest_component(components)
-        return build_scalp_mesh(
+        return ScalpMesh(
             vertices=np.asarray(main_body.vertices, dtype=np.float64),
             faces=np.asarray(main_body.faces, dtype=np.int64),
         )
-    return build_scalp_mesh(
+    return ScalpMesh(
         vertices=np.asarray(trimesh_mesh.vertices, dtype=np.float64),
         faces=np.asarray(trimesh_mesh.faces, dtype=np.int64),
     )
