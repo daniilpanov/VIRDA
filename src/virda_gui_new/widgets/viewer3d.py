@@ -10,19 +10,11 @@ Two widgets share the same core:
   their labels, plus a Scalp <-> ESE surface switcher when both meshes are
   present.
 
-The widgets are pure display components: they accept only ready, already
-loaded data (:class:`~virda_gui_new.dto.viewer3d.LabeledPoints`, PyVista
-meshes, ``virda`` models, NumPy arrays) - never file paths - and they never
-read, import or modify source data themselves, nor manage any loading
-threads.  Building the renderable scene from the passed sources is
-outsourced to :mod:`virda_gui_new.services.viewer_scene` and happens
-synchronously right before rendering; when slow loading appears it will be
-threaded by the embedder via
-:class:`virda_gui_new.services.task_runner.TaskRunner`.  Here only VTK
-actors are built and layer visibility is managed.  The
-:attr:`AdvancedViewer3D.sceneLoaded` / :attr:`AdvancedViewer3D.sceneFailed`
-signals notify embedders when the scene is ready or the scene collection
-failed.
+Both widgets are pure display components built on the private
+:class:`_SceneViewBase`, which owns the shared widget contract (the
+``sceneLoaded``/``sceneFailed`` signals, plotter assembly and synchronous
+scene resolution with failure reporting); stateless pyvista operations live
+in module-level plotter helpers below.
 """
 
 from collections.abc import Callable
@@ -64,19 +56,48 @@ _FIDUCIAL_POINT_SIZE = 10
 _MESH_POINTS_POINT_SIZE = 10
 
 
-# ---------------------------------------------------------------------------
-# Widget-level rendering helpers
-# ---------------------------------------------------------------------------
+def _add_mesh_actor(
+    plotter: QtInteractor,
+    mesh: pv.PolyData,
+    *,
+    color: str,
+    opacity: float,
+    wireframe: bool,
+) -> Any:
+    return plotter.add_mesh(
+        mesh,
+        color=color,
+        opacity=opacity,
+        show_edges=wireframe,
+        edge_color="gray",
+    )
 
 
-def _clear_layout(layout: QVBoxLayout) -> None:
-    while layout.count():
-        item = layout.takeAt(0)
-        if item is None:
-            break
-        widget = item.widget()
-        if widget is not None:
-            widget.deleteLater()
+def _add_volume_actor(
+    plotter: QtInteractor,
+    volume: pv.ImageData,
+    *,
+    cmap: str = "bone",
+    opacity: str = "sigmoid",
+    clim: float | tuple[float, float] | None = None,
+    mapper: str = "smart",
+) -> Any:
+    # pyvista's stubs narrow cmap/opacity/mapper to Literal unions (a snapshot
+    # of matplotlib names), while the plotter itself accepts any mpl-registered
+    # cmap string at runtime - keep the public API `str` and trust pyvista here.
+    kwargs: dict[str, Any] = {"cmap": cmap, "opacity": opacity, "clim": clim, "mapper": mapper}
+    return plotter.add_volume(volume, **kwargs)
+
+
+def _add_point_actor(
+    plotter: QtInteractor, points: LabeledPoints, *, color: str, point_size: int
+) -> Any:
+    return plotter.add_points(
+        points.points,
+        color=color,
+        point_size=point_size,
+        render_points_as_spheres=True,
+    )
 
 
 def _build_label_actor(plotter: QtInteractor, points: LabeledPoints) -> Any:
@@ -93,25 +114,25 @@ def _build_label_actor(plotter: QtInteractor, points: LabeledPoints) -> Any:
     )
 
 
-def _add_point_actor(
-    plotter: QtInteractor, points: LabeledPoints, *, color: str, point_size: int
-) -> Any:
-    return plotter.add_points(
-        points.points,
-        color=color,
-        point_size=point_size,
-        render_points_as_spheres=True,
-    )
+def _finalize_render(plotter: QtInteractor) -> None:
+    """Finish a render pass: axes indicator, camera fit and immediate draw."""
+    plotter.add_axes(interactive=False)
+    plotter.reset_camera()
+    plotter.render()
 
 
-class BaseViewer3D(QWidget):
-    """Minimal embeddable 3D viewer that renders a single scene object.
+def _clear_layout(layout: QVBoxLayout) -> None:
+    while layout.count():
+        item = layout.takeAt(0)
+        if item is None:
+            break
+        widget = item.widget()
+        if widget is not None:
+            widget.deleteLater()
 
-    Shows one thing at a time - a NIfTI volume (:meth:`show_nifti`), a mesh
-    (:meth:`show_mesh`, optionally with labeled points on it), or a labeled
-    point set (:meth:`show_points`) - with no panels or checkboxes.  Calling
-    another ``show_*`` replaces the current content.
-    """
+
+class _SceneViewBase(QWidget):
+    """Shared plumbing: plotter assembly, signals, sync scene resolution."""
 
     sceneLoaded = Signal(object)  # noqa: N815
     sceneFailed = Signal(str)  # noqa: N815
@@ -126,11 +147,34 @@ class BaseViewer3D(QWidget):
         super().__init__(parent)
         self._log = log
 
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        self._layout = QHBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
         self._plotter = QtInteractor(parent=self)
         self._plotter.set_background(background_color)
-        layout.addWidget(self._plotter, 1)
+        self._layout.addWidget(self._plotter, 1)
+
+    def clear_scene(self) -> None:
+        """Remove everything the plotter currently draws."""
+        self._plotter.clear()
+
+
+class BaseViewer3D(_SceneViewBase):
+    """Minimal embeddable 3D viewer that renders a single scene object.
+
+    Shows one thing at a time - a NIfTI volume (:meth:`show_nifti`), a mesh
+    (:meth:`show_mesh`, optionally with labeled points on it), or a labeled
+    point set (:meth:`show_points`); calling another ``show_*`` replaces the
+    current content. Inputs must be ready data and rendering is synchronous.
+    """
+
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        log: Callable[[str], None] = print,
+        background_color: str = "black",
+    ) -> None:
+        super().__init__(parent, log=log, background_color=background_color)
 
         self._kind: str | None = None
         self._props: dict[str, Any] = {}
@@ -177,11 +221,12 @@ class BaseViewer3D(QWidget):
         self._kind = None
         self._props = {}
         self._actors = []
-        self._plotter.clear()
+        super().clear_scene()
 
     def _render(self, kind: str, fn: Callable[[], Any], props: dict[str, Any]) -> None:
         """Collect the scene synchronously, then build its actors."""
         self._log(f"Loading {kind}...")
+
         try:
             scene = fn()
         except Exception as exc:  # noqa: BLE001 - surfaced to the embedder as a signal
@@ -192,47 +237,45 @@ class BaseViewer3D(QWidget):
         self._kind = kind
         self._props = props
         self._apply_scene(scene)
-        self.sceneLoaded.emit(scene)
 
     def _apply_scene(self, scene: Any) -> None:
         self._plotter.clear()
         self._actors = []
-        plotter, props = self._plotter, self._props
+        plotter = self._plotter
 
         if self._kind == "volume" and isinstance(scene, pv.ImageData):
             self._actors.append(
-                plotter.add_volume(
+                _add_volume_actor(
+                    plotter,
                     scene,
-                    cmap=props["cmap"],
-                    opacity=props["opacity"],
-                    clim=props["clim"],
-                    mapper="smart",
+                    cmap=self._props["cmap"],
+                    opacity=self._props["opacity"],
+                    clim=self._props["clim"],
                 )
             )
         elif self._kind == "mesh" and isinstance(scene, MeshBundle):
-            self._apply_mesh_bundle(scene, props)
+            self._apply_mesh_bundle(scene)
         elif self._kind == "points" and isinstance(scene, LabeledPoints) and len(scene) > 0:
             self._actors.append(
                 _add_point_actor(
-                    plotter, scene, color=props["color"], point_size=_FIDUCIAL_POINT_SIZE
+                    plotter, scene, color=self._props["color"], point_size=_FIDUCIAL_POINT_SIZE
                 )
             )
             if scene.labels is not None:
                 self._actors.append(_build_label_actor(plotter, scene))
 
-        plotter.add_axes(interactive=False)
-        plotter.reset_camera()
-        plotter.render()
+        _finalize_render(plotter)
+        self.sceneLoaded.emit(scene)
 
-    def _apply_mesh_bundle(self, bundle: MeshBundle, props: dict[str, Any]) -> None:
+    def _apply_mesh_bundle(self, bundle: MeshBundle) -> None:
         if bundle.mesh is not None:
             self._actors.append(
-                self._plotter.add_mesh(
+                _add_mesh_actor(
+                    self._plotter,
                     bundle.mesh,
-                    color=props["color"],
-                    opacity=props["opacity"],
-                    show_edges=props["wireframe"],
-                    edge_color="gray",
+                    color=self._props["color"],
+                    opacity=self._props["opacity"],
+                    wireframe=self._props["wireframe"],
                 )
             )
 
@@ -249,7 +292,7 @@ class BaseViewer3D(QWidget):
                 self._actors.append(_build_label_actor(self._plotter, bundle.points))
 
 
-class AdvancedViewer3D(QWidget):
+class AdvancedViewer3D(_SceneViewBase):
     """Full VIRDA 3D viewer: NIfTI + fiducials + scalp/ESE meshes with points.
 
     Accepts four optional ready-data sources - *nifti*, *fiducials*, *scalp*
@@ -261,9 +304,6 @@ class AdvancedViewer3D(QWidget):
     switcher when both meshes are loaded. Scenes with a single meaningful
     object (mesh-only, volume-only) render directly with no panel.
     """
-
-    sceneLoaded = Signal(object)  # noqa: N815
-    sceneFailed = Signal(str)  # noqa: N815
 
     def __init__(
         self,
@@ -278,21 +318,14 @@ class AdvancedViewer3D(QWidget):
         ese: MeshSource | MeshWithPoints | None = None,
         ese_points: PointSource | None = None,
     ) -> None:
-        super().__init__(parent)
-        self._log = log
+        super().__init__(parent, log=log, background_color=background_color)
 
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
-        self._plotter = QtInteractor(parent=self)
-        self._plotter.set_background(background_color)
-        layout.addWidget(self._plotter, 1)
-
+        self._layout.setSpacing(4)
         self._panel = QGroupBox("Layers", self)
         self._panel_layout = QVBoxLayout(self._panel)
         self._panel_layout.setContentsMargins(4, 4, 4, 4)
         self._panel_layout.setSpacing(4)
-        layout.addWidget(self._panel, 0)
+        self._layout.addWidget(self._panel, 0)
         self._panel.setVisible(False)
 
         # Render state / actors
@@ -353,7 +386,8 @@ class AdvancedViewer3D(QWidget):
                 downsample_stride=downsample_stride,
             )
         except Exception as exc:  # noqa: BLE001 - surfaced to the embedder as a signal
-            self._fail(str(exc))
+            self._log(f"ERROR: viewer failed: {exc}")
+            self.sceneFailed.emit(str(exc))
             return
 
         self._scene = scene
@@ -365,12 +399,8 @@ class AdvancedViewer3D(QWidget):
         self._scene = None
         self._reset_actors()
         self._build_panel()  # no scene: empty (and hidden) panel
-        self._plotter.clear()
+        super().clear_scene()
         self._plotter.render()
-
-    def _fail(self, message: str) -> None:
-        self._log(f"ERROR: viewer failed: {message}")
-        self.sceneFailed.emit(message)
 
     def _reset_actors(self) -> None:
         self._volume_actor = None
@@ -409,12 +439,12 @@ class AdvancedViewer3D(QWidget):
             ("ese", scene.ese_mesh, scene.ese_points, _ESE_POINTS_COLOR),
         ):
             if mesh is not None:
-                self._mesh_actors[key] = self._plotter.add_mesh(
+                self._mesh_actors[key] = _add_mesh_actor(
+                    self._plotter,
                     mesh,
                     color=_MESH_COLOR,
                     opacity=self._mesh_opacity,
-                    show_edges=self._wireframe,
-                    edge_color="gray",
+                    wireframe=self._wireframe,
                 )
             if points is not None:
                 points_actor = None
@@ -428,15 +458,11 @@ class AdvancedViewer3D(QWidget):
                 )
 
         if scene.volume is not None:
-            self._volume_actor = self._plotter.add_volume(
-                scene.volume, cmap="bone", opacity="sigmoid", mapper="smart"
-            )
+            self._volume_actor = _add_volume_actor(self._plotter, scene.volume)
 
         self._build_panel()
         self._apply_visibility()
-        self._plotter.add_axes(interactive=False)
-        self._plotter.reset_camera()
-        self._plotter.render()
+        _finalize_render(self._plotter)
 
     def _build_panel(self) -> None:
         _clear_layout(self._panel_layout)
@@ -516,7 +542,6 @@ class AdvancedViewer3D(QWidget):
     def _apply_visibility(self) -> None:
         if self._scene is None:
             return
-
         if self._volume_actor is not None:
             self._volume_actor.SetVisibility(self._nifti_visible)
 
@@ -533,10 +558,8 @@ class AdvancedViewer3D(QWidget):
             label_actor = self._mesh_label_actors.get(key)
             if label_actor is not None:
                 label_actor.SetVisibility(visible and self._labels_visible)
-
         if self._fid_points_actor is not None:
             self._fid_points_actor.SetVisibility(self._fiducials_visible)
         if self._fid_labels_actor is not None:
             self._fid_labels_actor.SetVisibility(self._fiducials_visible and self._labels_visible)
-
         self._plotter.render()
