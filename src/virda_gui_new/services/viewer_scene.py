@@ -13,10 +13,9 @@ from virda_gui_new.dto.viewer3d import (
     MeshSource,
     MeshWithPoints,
     PointSource,
-    ViewerScene,
     VolumeSource,
 )
-from virda_gui_new.services.geometry import downsample, scene_placement, transform_points
+from virda_gui_new.services.geometry import downsample, scene_placement
 
 
 def _faces_to_cells(faces: np.ndarray) -> np.ndarray:
@@ -113,74 +112,6 @@ def _build_volume(data: np.ndarray, affine: np.ndarray, mm_scene: bool) -> pv.Im
         volume.spacing = tuple(np.asarray(np.diag(affine)[:3], dtype=float))
         volume.origin = tuple(np.asarray(affine[:3, 3], dtype=float))
     return volume
-
-
-def _place_labeled_points(
-    points: LabeledPoints, mm_scene: bool, transform: np.ndarray
-) -> LabeledPoints | None:
-    """Move labeled points into the scene frame; ``None`` for empty sets."""
-    if len(points) == 0:
-        return None
-
-    return (
-        points
-        if mm_scene
-        else LabeledPoints(transform_points(points.points, transform), points.labels)
-    )
-
-
-def collect_viewer_scene(
-    nifti: VolumeSource | None = None,
-    fiducials: PointSource | None = None,
-    scalp: MeshSource | MeshWithPoints | None = None,
-    scalp_points: PointSource | None = None,
-    ese: MeshSource | MeshWithPoints | None = None,
-    ese_points: PointSource | None = None,
-    downsample_stride: int = 1,
-) -> ViewerScene:
-    """Resolve a full scene from in-memory sources into one scene frame."""
-    if (
-        nifti is None
-        and fiducials is None
-        and scalp is None
-        and ese is None
-        and scalp_points is None
-        and ese_points is None
-    ):
-        raise ValueError("no scene sources given: pass at least one of nifti/fiducials/scalp/ese")
-
-    mm_scene = True
-    volume: pv.ImageData | None = None
-    transform: np.ndarray = np.eye(4)
-    if nifti is not None:
-        data, affine = _load_volume_source(nifti, downsample_stride)
-        _, _, transform, mm_scene = scene_placement(affine)
-        volume = _build_volume(data, affine, mm_scene)
-
-    fiducial_scene = (
-        _place_labeled_points(fiducials, mm_scene, transform) if fiducials is not None else None
-    )
-    scalp_bundle = (
-        _load_mesh_bundle(scalp, scalp_points) if scalp is not None else MeshBundle(None, None)
-    )
-    ese_bundle = _load_mesh_bundle(ese, ese_points) if ese is not None else MeshBundle(None, None)
-
-    if not mm_scene:
-        for bundle in (scalp_bundle, ese_bundle):
-            if bundle.mesh is not None:
-                bundle.mesh.transform(transform, inplace=True)
-            if bundle.points is not None:
-                bundle.points = _place_labeled_points(bundle.points, mm_scene, transform)
-
-    return ViewerScene(
-        volume=volume,
-        mm_scene=mm_scene,
-        fiducials=fiducial_scene,
-        scalp_mesh=scalp_bundle.mesh,
-        scalp_points=scalp_bundle.points,
-        ese_mesh=ese_bundle.mesh,
-        ese_points=ese_bundle.points,
-    )
 
 
 def collect_volume_scene(source: VolumeSource, downsample_stride: int = 1) -> pv.ImageData:
