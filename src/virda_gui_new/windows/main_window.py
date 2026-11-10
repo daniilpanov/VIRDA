@@ -10,6 +10,7 @@ from virda_gui_new.services.project_scan import find_project_artifacts
 from virda_gui_new.services.scene_builder import collect_scene_kwargs
 from virda_gui_new.services.step_seeding import seed_steps_from_artifacts
 from virda_gui_new.services.steps_manager import StepsManager
+from virda_gui_new.widgets.filetree import FileTree
 from virda_gui_new.widgets.popup.abstract import StepPopupBase
 from virda_gui_new.widgets.popup.base_mesh_extraction import BaseMeshExtractionPopup
 from virda_gui_new.widgets.popup.ese_mesh import EseMeshPopup
@@ -49,6 +50,11 @@ class MainWindow(QMainWindow):
         self._popups: dict[int, StepPopupBase] = {}
         self._steps_menu.stepRequested.connect(self._open_step_popup)
         self._steps_menu.stepsInvalidated.connect(self._on_steps_invalidated)
+
+        self._filetree = FileTree()
+        self._filetree_window = open_widget_window(self._filetree, title="File tree")
+        self._filetree.set_artifacts(find_project_artifacts(self._project_path))
+        self._filetree.fileActivated.connect(lambda path: self._log(f"File selected: {path}"))
 
         self.showMaximized()
 
