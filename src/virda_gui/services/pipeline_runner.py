@@ -24,6 +24,7 @@ from virda.io.exporters.electrodes import (
 )
 from virda.io.exporters.ese_mesh import export_ese_companions, export_ese_mesh
 from virda.io.exporters.fiducials import export_fiducials
+from virda.io.exporters.measurements_copy import export_measurements_copy
 from virda.io.exporters.mesh_arrays import export_mesh_faces, export_mesh_vertices
 from virda.io.exporters.nifti_copy import export_nifti_copy
 from virda.io.exporters.pipeline_config import export_pipeline_config
@@ -258,6 +259,9 @@ def run_stage3(
     export_electrodes(localization_dir / "electrodes.csv", electrodes)
     export_electrodes_scalp(localization_dir / "electrodes_scalp.csv", electrodes)
     export_electrodes_ese(localization_dir / "electrodes_ese.csv", electrodes)
+    export_measurements_copy(
+        Path(project_dir) / "input" / "measurements.json", resolved_measurements_path
+    )
 
     return electrodes
 
