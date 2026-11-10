@@ -317,7 +317,7 @@ class ConfigTab(QWidget):
 
         adv = self._state.advanced
 
-        def _int(val: str, default: int | None = None, *, key: str = "value") -> int | None:
+        def _int(val: str, default: int, *, key: str = "value") -> int:
             val = _strip_null(val)
             if not val:
                 return default
@@ -326,10 +326,28 @@ class ConfigTab(QWidget):
             except ValueError:
                 raise ValueError(f"{key}: expected an integer, got {val!r}") from None
 
-        def _float(val: str, default: float | None = None, *, key: str = "value") -> float | None:
+        def _int_opt(val: str, *, key: str = "value") -> int | None:
+            val = _strip_null(val)
+            if not val:
+                return None
+            try:
+                return int(val)
+            except ValueError:
+                raise ValueError(f"{key}: expected an integer, got {val!r}") from None
+
+        def _float(val: str, default: float, *, key: str = "value") -> float:
             val = _strip_null(val)
             if not val:
                 return default
+            try:
+                return float(val)
+            except ValueError:
+                raise ValueError(f"{key}: expected a number, got {val!r}") from None
+
+        def _float_opt(val: str, *, key: str = "value") -> float | None:
+            val = _strip_null(val)
+            if not val:
+                return None
             try:
                 return float(val)
             except ValueError:
@@ -353,18 +371,16 @@ class ConfigTab(QWidget):
             smoother_iterations=_int(adv["smoother_iterations"], 5, key="smoother_iterations"),
             smoother_lamb=_float(adv["smoother_lamb"], 0.5, key="smoother_lamb"),
             smoother_nu=_float(adv["smoother_nu"], -0.53, key="smoother_nu"),
-            ese_offset_mm=_float(adv["ese_offset_mm"], key="ese_offset_mm"),
+            ese_offset_mm=_float_opt(adv["ese_offset_mm"], key="ese_offset_mm"),
             neighborhood_radius_mm=_float(
                 adv["neighborhood_radius_mm"], 10.0, key="neighborhood_radius_mm"
             ),
-            k_neighbors=_int(adv["k_neighbors"], key="k_neighbors"),
+            k_neighbors=_int_opt(adv["k_neighbors"], key="k_neighbors"),
             use_weighted_pca=adv["use_weighted_pca"] == "true",
             pca_sigma_mm=_float(adv["pca_sigma_mm"], 5.0, key="pca_sigma_mm"),
             min_neighbors=_int(adv["min_neighbors"], 5, key="min_neighbors"),
             residual_threshold_mm=_float(
-                adv["residual_threshold_mm"],  # type: ignore[arg-type]
-                10.0,
-                key="residual_threshold_mm",
+                adv["residual_threshold_mm"], 10.0, key="residual_threshold_mm"
             ),
             calibrate_ese_offset=adv["calibrate_ese_offset"] == "true",
         )

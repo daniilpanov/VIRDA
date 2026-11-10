@@ -11,7 +11,7 @@ tabular cRAS files) with automatic frame detection, and the QC report.
 import colorsys
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 import nibabel as nib
 import numpy as np
@@ -58,7 +58,7 @@ def _build_scene(
 
 
 def _load_mesh_poly(mesh_path: str) -> pv.PolyData:
-    loaded = trimesh.load(mesh_path, force="mesh")
+    loaded = cast("trimesh.Trimesh", trimesh.load(mesh_path, force="mesh"))
     vertices = np.asarray(loaded.vertices, dtype=np.float64)
     faces = np.asarray(loaded.faces, dtype=np.int64)
     face_array = np.empty((faces.shape[0], 4), dtype=np.int64)
@@ -298,7 +298,7 @@ def _fmt_bounds(bounds: _BOUNDS) -> str:
 
 
 def _report_qc(
-    spacing: tuple[float, float, float] | None,
+    spacing: tuple[float, ...] | None,
     orientation: tuple[str, str, str] | None,
     volume: pv.ImageData | None,
     mesh: pv.PolyData | None,
@@ -311,7 +311,9 @@ def _report_qc(
 
     log("=" * 62)
     if volume is not None:
-        volume_world_bounds = _scene_bounds_to_world(tuple(volume.bounds), scene_transform)
+        volume_world_bounds = _scene_bounds_to_world(
+            cast(_BOUNDS, tuple(volume.bounds)), scene_transform
+        )
         log("MRI volume")
         log(f"  spacing (mm)                  : {spacing}")
         log(f"  orientation                   : {orientation}")
@@ -325,7 +327,7 @@ def _report_qc(
         overlap = _mesh_within_volume(volume_world_bounds, mesh_world_bounds)
         log(f"  within volume bounds (+5 mm)  : {overlap}")
     log(f"  scene coordinates             : {scene_space}")
-    if affine is not None:
+    if affine is not None and volume is not None:
         log(
             "  voxel->world round-trip error :"
             f" {_round_trip_error(affine, _voxel_samples(volume)):.3e} mm"
@@ -382,7 +384,7 @@ def collect_scene_data(
     hi_clim: tuple[float, float] | None = None
     cras_offset: np.ndarray | None = None
     if nifti_path:
-        nifti_img = nib.load(nifti_path)
+        nifti_img = cast("nib.Nifti1Image", nib.load(nifti_path))
         data = nifti_img.get_fdata(dtype=np.float32)
         if data.ndim == 4:
             data = data[..., 0]
@@ -406,7 +408,7 @@ def collect_scene_data(
     scene_fiducials = None
     if fiducial_points is not None:
         scene_fiducials = fiducial_points
-        if not mm_scene:
+        if not mm_scene and affine is not None:
             scene_fiducials = transform_points(fiducial_points, np.linalg.inv(affine))
 
     electrode_groups: list[dict[str, Any]] = []
@@ -424,7 +426,7 @@ def collect_scene_data(
                 if converted:
                     points = points + cras_offset
                 log(_cras_decision_message(label, converted, d_raw, d_shift))
-        if len(points) > 0 and not mm_scene:
+        if len(points) > 0 and not mm_scene and affine is not None:
             points = transform_points(points, np.linalg.inv(affine))
         electrode_groups.append(
             {

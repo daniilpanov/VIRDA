@@ -4,6 +4,7 @@ import traceback
 
 if __name__ == "__main__":
     from multiprocessing import freeze_support
+    from types import TracebackType
 
     # In a 'PyInstaller' one-file build a multiprocessing child process
     # (e.g. the resource_tracker) is launched by re-executing the frozen executable,
@@ -20,7 +21,11 @@ if __name__ == "__main__":
     # crash log next to the executable before exiting non-zero.
     if getattr(sys, "frozen", False):
 
-        def _frozen_excepthook(exc_type, exc_value, exc_tb) -> None:
+        def _frozen_excepthook(
+            exc_type: type[BaseException],
+            exc_value: BaseException,
+            exc_tb: TracebackType | None,
+        ) -> None:
             crash_log = os.path.join(os.path.dirname(sys.executable), "virda-crash.log")
             try:
                 with open(crash_log, "w", encoding="utf-8") as fh:

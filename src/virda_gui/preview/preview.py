@@ -12,7 +12,7 @@ import json
 from collections.abc import Callable
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import nibabel as nib
 import numpy as np
@@ -164,7 +164,7 @@ def npy_table_rows(array: np.ndarray) -> list[list[str]]:
 
 def open_npy_memmap(path: Path) -> np.memmap:
     """Open a ``.npy`` file as a read-only memory map (data is read lazily)."""
-    return np.load(path, mmap_mode="r")
+    return cast("np.memmap", np.load(path, mmap_mode="r"))
 
 
 def npy_table_rows_chunked(
@@ -269,7 +269,7 @@ def preview_artifact_text(path: Path, array: np.ndarray | None = None) -> str:
         try:
             import trimesh
 
-            cloud = trimesh.load(str(path), force="mesh")
+            cloud = cast("trimesh.Trimesh", trimesh.load(str(path), force="mesh"))
             vertices = np.asarray(cloud.vertices, dtype=np.float64)
             faces = np.asarray(cloud.faces, dtype=np.int64)
             lo = tuple(round(float(v), 2) for v in vertices.min(axis=0))
