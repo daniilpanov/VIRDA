@@ -75,7 +75,7 @@ class StepPopupBase(QWidget):
         self._hint_label.setText("Running...")
         self._runner.start(work)
 
-    def _on_done(self, seq: int, result: Any) -> None:
+    def _on_done(self, result: Any) -> None:
         try:
             self._apply_result(result)
         except Exception as exc:  # noqa: BLE001 - any apply error is user-facing
@@ -88,7 +88,7 @@ class StepPopupBase(QWidget):
         self._hint_label.setText("Done.")
         self.completed.emit(self._step.index)
 
-    def _on_failed(self, seq: int, message: str) -> None:
+    def _on_failed(self, message: str) -> None:
         self._show_failure(message)
 
     def _show_failure(self, message: str) -> None:
