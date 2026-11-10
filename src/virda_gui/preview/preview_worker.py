@@ -130,14 +130,14 @@ class _PreviewWorker(QObject):
                     headers, tabular = table_from_npy(array, path.name)
                 except ValueError:
                     return _PreviewBundle("text", text=preview_artifact_text(path, array=array))
-                rows = npy_table_rows_chunked(tabular, is_current)
-                if rows is None:
+                npy_rows = npy_table_rows_chunked(tabular, is_current)
+                if npy_rows is None:
                     return None
-                return _PreviewBundle("table", headers=headers, rows=rows)
+                return _PreviewBundle("table", headers=headers, rows=npy_rows)
             finally:
                 if isinstance(array, np.memmap):
                     array.flush()
-                    array._mmap.close()
+                    array._mmap.close()  # type: ignore[attr-defined]  # private attr, necessary
                     del array
 
         if not is_current():

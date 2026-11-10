@@ -9,6 +9,7 @@ mesh.
 """
 
 from collections.abc import Callable
+from functools import partial
 from typing import Any
 
 import pyvista as pv
@@ -199,6 +200,8 @@ class ViewerWidget(QWidget):
     def _clear_layers(self) -> None:
         while self._layers_layout.count():
             item = self._layers_layout.takeAt(0)
+            if item is None:
+                break
             widget = item.widget()
             if widget is not None:
                 widget.deleteLater()
@@ -298,7 +301,7 @@ class ViewerWidget(QWidget):
         self._fiducials_visible = True
         self._labels_visible = True
         self._build_layers(scene)
-        self._plotter.add_axes(interactive=False)
+        self._plotter.add_axes(interactive=False)  # type: ignore[call-arg]  # pyvista @wraps
         self._plotter.render()
 
     def _build_layers(self, scene: SceneData) -> None:
@@ -318,7 +321,7 @@ class ViewerWidget(QWidget):
                 self._add_layer_check(
                     f"Show {group['label']}",
                     True,
-                    lambda flag, gi=gi: self._set_group_visibility(gi, flag),
+                    partial(self._set_group_visibility, gi),
                 )
         self._add_layer_check("Boost contrast", False, self._set_contrast)
         self._layers_layout.addStretch(1)
@@ -386,7 +389,7 @@ class ViewerWidget(QWidget):
                 self._mesh_actor.prop.ambient = 0.0
         if self._volume is not None and self._mri_actor is not None:
             if "intensity" in self._plotter.scalar_bars:
-                self._plotter.remove_scalar_bar("intensity")
+                self._plotter.remove_scalar_bar("intensity")  # type: ignore[arg-type]  # pyvista @wraps
             self._plotter.remove_actor(self._mri_actor)
             if flag:
                 self._mri_actor = self._plotter.add_volume(

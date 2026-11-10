@@ -213,7 +213,7 @@ class LabeledField(QFrame):
             self._combo.setEditable(False)
             if values:
                 self._combo.addItems(values)
-            if default and default in values:
+            if default and values and default in values:
                 self._combo.setCurrentText(default)
             layout.addWidget(self._combo, 1)
         elif widget_type == "check":

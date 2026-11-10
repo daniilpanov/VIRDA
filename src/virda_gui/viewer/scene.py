@@ -58,7 +58,7 @@ def scene_placement(affine: np.ndarray | None) -> ScenePlacement:
 
 def transform_points(points: np.ndarray, transform: np.ndarray) -> np.ndarray:
     """Apply a 4x4 affine ``transform`` to an (N, 3) array of points."""
-    return points @ transform[:3, :3].T + transform[:3, 3]
+    return np.asarray(points @ transform[:3, :3].T + transform[:3, 3], dtype=float)
 
 
 def load_fiducial_points(path: str | Path) -> tuple[np.ndarray, list[str]]:

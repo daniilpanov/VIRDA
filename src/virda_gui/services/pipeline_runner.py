@@ -79,7 +79,7 @@ def _resolve_stage1_fiducials(
 _ARTIFACT_SIZE_ATTRS = ("shape", "vertices", "locations", "items")
 
 
-def _artifact_size_hint(artifact) -> str:
+def _artifact_size_hint(artifact: object) -> str:
     for attr in _ARTIFACT_SIZE_ATTRS:
         value = getattr(artifact, attr, None)
         if value is not None:
@@ -90,7 +90,7 @@ def _artifact_size_hint(artifact) -> str:
     return ""
 
 
-def _log_artifact(logger: Logger | None, artifact) -> None:
+def _log_artifact(logger: Logger | None, artifact: object) -> None:
     """Report a produced pipeline artifact through the stage logger."""
     if logger is None:
         return
@@ -195,14 +195,23 @@ def run_stage2(config: Config, scalp_mesh: Mesh) -> tuple[Mesh, Normals]:
     """Build the ESE surface and export it (Stage 2)."""
     logger = logging.getLogger("virda_gui.stage_2")
 
+    ese_config = config.to_ese_config()
+    if ese_config is None:
+        raise ValueError("ESE configuration not provided; ESE stage is disabled.")
+
     ese_mesh, normals = build_ese(
         scalp_mesh,
         config=config.to_stage2_config(),
-        ese_offset_mm=config.to_ese_config().ese_offset_mm,
+        ese_offset_mm=ese_config.ese_offset_mm,
         logger=logger,
     )
     _log_artifact(logger, ese_mesh)
 
+    if config.project_dir is None:
+        raise ValueError(
+            "Project directory path not provided. "
+            "Set project_dir in a config file or the PROJECT_DIR environment variable."
+        )
     ese_mesh_path = Path(config.project_dir) / "ese" / "ese_mesh.ply"
     export_ese_mesh(ese_mesh_path, ese_mesh)
     export_ese_companions(ese_mesh_path, ese_mesh)
@@ -244,6 +253,10 @@ def run_stage3(
     )
 
     logger = logging.getLogger("virda_gui.stage_3")
+    if normals is None:
+        raise ValueError("ESE surface normals not provided for electrode localization.")
+    if fiducials is None:
+        raise ValueError("Fiducials not available for electrode localization.")
     electrodes = localize_electrodes(
         ese_mesh,
         normals,

@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QPoint, Qt, Signal
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -126,7 +126,7 @@ class ProjectSidebar(QWidget):
         if path is not None and path.is_file():
             self.fileActivated.emit(path)
 
-    def _show_context_menu(self, position) -> None:
+    def _show_context_menu(self, position: QPoint) -> None:
         menu = QMenu(self._tree)
         grouped: list[tuple[str, list[ImportRole]]] = []
         group_order: list[str] = []

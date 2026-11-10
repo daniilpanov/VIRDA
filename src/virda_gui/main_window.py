@@ -45,7 +45,8 @@ class IdeWindow(QMainWindow):
         super().__init__()
         self._project: Path | None = None
         self._viewer_widget: ViewerWidget | None = None
-        self._file_tabs: dict[str, QWidget] = {}
+        self._viewer_tabs: dict[str, ViewerWidget] = {}
+        self._preview_tabs: dict[str, PreviewTab] = {}
         self._prefs = prefs or Preferences()
 
         self.setWindowTitle("VIRDA — Electrode Localization System")
@@ -182,6 +183,8 @@ class IdeWindow(QMainWindow):
     def _close_tab(self, index: int) -> None:
         widget = self._tabs.widget(index)
         self._tabs.removeTab(index)
+        if widget is None:
+            return
         if widget is self._config_tab:
             # The run form keeps its state across closes via the sidebar.
             return
@@ -189,10 +192,11 @@ class IdeWindow(QMainWindow):
 
     def _discard_tab_widget(self, widget: QWidget) -> None:
         """Release per-file tabs and tear down interactive widgets on close."""
-        for key, memo in list(self._file_tabs.items()):
-            if memo is widget:
-                del self._file_tabs[key]
-                break
+        for tabs in (self._viewer_tabs, self._preview_tabs):
+            for key, memo in list(tabs.items()):
+                if memo is widget:
+                    del tabs[key]
+                    break
         if widget is self._viewer_widget:
             self._viewer_widget.shutdown()
             self._viewer_widget = None
@@ -219,14 +223,14 @@ class IdeWindow(QMainWindow):
 
     def _open_visual_file_tab(self, path: Path, kwargs: dict[str, Any]) -> None:
         key = str(path)
-        widget = self._file_tabs.get(key)
+        widget = self._viewer_tabs.get(key)
         if widget is None:
             widget = ViewerWidget()
             widget.sceneLoaded.connect(lambda _scene, tab=widget: self._on_scene_tab_loaded(tab))
             widget.sceneFailed.connect(
                 lambda message, tab=widget: self._on_scene_tab_failed(tab, message)
             )
-            self._file_tabs[key] = widget
+            self._viewer_tabs[key] = widget
         if self._tabs.indexOf(widget) < 0:
             self._add_tab(widget, path.name)
             self._tabs.setTabToolTip(self._tabs.indexOf(widget), str(path))
@@ -235,10 +239,10 @@ class IdeWindow(QMainWindow):
 
     def _open_preview_tab(self, path: Path) -> None:
         key = str(path)
-        widget = self._file_tabs.get(key)
+        widget = self._preview_tabs.get(key)
         if widget is None:
             widget = PreviewTab()
-            self._file_tabs[key] = widget
+            self._preview_tabs[key] = widget
         if self._tabs.indexOf(widget) < 0:
             self._add_tab(widget, path.name)
             self._tabs.setTabToolTip(self._tabs.indexOf(widget), str(path))
@@ -356,12 +360,14 @@ class IdeWindow(QMainWindow):
     # 3D viewer
     # ------------------------------------------------------------------
 
-    def _build_viewer_widget(self) -> None:
+    def _build_viewer_widget(self) -> ViewerWidget:
+        """Create the shared viewer widget once and return it."""
         if self._viewer_widget is not None:
-            return
+            return self._viewer_widget
         self._viewer_widget = ViewerWidget()
         self._viewer_widget.sceneLoaded.connect(self._on_viewer_scene_loaded)
         self._viewer_widget.sceneFailed.connect(self._on_viewer_scene_failed)
+        return self._viewer_widget
 
     def _on_open_viewer(self) -> None:
         resolved = self._state.last_project_dir or self._project
@@ -391,10 +397,10 @@ class IdeWindow(QMainWindow):
 
         self._config_tab.viewer_btn.setEnabled(False)
         self._state.viewer_loading = True
-        self._build_viewer_widget()
-        self._add_tab(self._viewer_widget, "3D Viewer")
-        self._tabs.setCurrentWidget(self._viewer_widget)
-        self._viewer_widget.load(**kwargs)
+        viewer = self._build_viewer_widget()
+        self._add_tab(viewer, "3D Viewer")
+        self._tabs.setCurrentWidget(viewer)
+        viewer.load(**kwargs)
 
     def _collect_viewer_kwargs(self, project: Path) -> dict[str, Any]:
         mesh_path = project / "mesh" / "final_mesh.ply"
@@ -444,9 +450,10 @@ class IdeWindow(QMainWindow):
 
     def _on_close(self) -> None:
         self._state.closed = True
-        for widget in self._file_tabs.values():
-            if isinstance(widget, (PreviewTab, ViewerWidget)):
-                widget.shutdown()
+        for preview in self._preview_tabs.values():
+            preview.shutdown()
+        for viewer in self._viewer_tabs.values():
+            viewer.shutdown()
         if self._viewer_widget is not None:
             self._viewer_widget.shutdown()
         self._pipe_runner.shutdown()
