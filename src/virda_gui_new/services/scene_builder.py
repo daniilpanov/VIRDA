@@ -22,13 +22,13 @@ from virda_gui_new.services.steps_manager import StepsManager
 # recorded at their collection step.
 _RULES: tuple[tuple[int, str, str, Callable[[Path], Any]], ...] = (
     (0, "volume", "nifti", artifact_loading.load_volume),
-    (1, "scalp_surface", "scalp", artifact_loading.load_mesh),
-    (1, "scalp_points", "scalp_points", artifact_loading.load_point_rows),
     (2, "mesh", "scalp", artifact_loading.load_mesh),
+    (1, "scalp_surface", "scalp", artifact_loading.load_mesh),
     (3, "ese_mesh", "ese", artifact_loading.load_mesh),
     (4, "fiducials", "fiducials", artifact_loading.load_fiducial_points),
     (4, "scalp_points", "scalp_points", artifact_loading.load_point_rows),
     (4, "ese_points", "ese_points", artifact_loading.load_point_rows),
+    (1, "scalp_points", "scalp_points", artifact_loading.load_point_rows),
 )
 
 _READY_SOURCE_TYPES = (MRIVolume, Mesh, LabeledPoints)
@@ -41,14 +41,11 @@ def _load(kwarg: str, path: Path, loader: Callable[[Path], Any]) -> Any:
         raise ValueError(f"Failed to load {kwarg} file {path}: {error}") from error
 
 
-def collect_scene_kwargs(
-    manager: StepsManager, failures: list[str] | None = None
-) -> dict[str, Any]:
+def collect_scene_kwargs(manager: StepsManager) -> dict[str, Any]:
     """Resolve the :meth:`SceneViewer3D.set_scene` kwargs for the current contexts.
 
-    With ``failures`` given, unloadable context paths are skipped and
-    reported there as ``"<message>"`` strings instead of raising; an empty
-    dict means there is nothing to show.
+    Raises :class:`ValueError` naming the file when a context path cannot be
+    loaded; an empty dict means there is nothing to show.
     """
     contexts = manager.all_contexts()
     kwargs: dict[str, Any] = {}
@@ -58,12 +55,7 @@ def collect_scene_kwargs(
             continue
         value = contexts[step_n].get(key)
         if isinstance(value, Path):
-            try:
-                kwargs[kwarg] = _load(kwarg, value, loader)
-            except ValueError as error:
-                if failures is None:
-                    raise
-                failures.append(str(error))
+            kwargs[kwarg] = _load(kwarg, value, loader)
         elif isinstance(value, _READY_SOURCE_TYPES):
             kwargs[kwarg] = value
 
