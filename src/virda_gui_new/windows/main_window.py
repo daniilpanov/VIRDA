@@ -5,7 +5,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QMainWindow
 
-from virda_gui_new.dto.steps import BASE_MESH, ESE_MESH, MESH_POSTPROCESSING, STEPS
+from virda_gui_new.dto.steps import BASE_MESH, ESE_MESH, LOCALIZATION, MESH_POSTPROCESSING, STEPS
 from virda_gui_new.services.project_scan import find_project_artifacts
 from virda_gui_new.services.scene_builder import collect_scene_kwargs
 from virda_gui_new.services.step_seeding import seed_steps_from_artifacts
@@ -13,6 +13,7 @@ from virda_gui_new.services.steps_manager import StepsManager
 from virda_gui_new.widgets.popup.abstract import StepPopupBase
 from virda_gui_new.widgets.popup.base_mesh_extraction import BaseMeshExtractionPopup
 from virda_gui_new.widgets.popup.ese_mesh import EseMeshPopup
+from virda_gui_new.widgets.popup.localization import LocalizationPopup
 from virda_gui_new.widgets.popup.main_menu import StepsMenu
 from virda_gui_new.widgets.popup.mesh_postprocessing import MeshPostprocessingPopup
 from virda_gui_new.widgets.viewer3d import SceneViewer3D
@@ -43,6 +44,7 @@ class MainWindow(QMainWindow):
         self._popup_factories[1] = lambda: BaseMeshExtractionPopup(BASE_MESH, self._steps)
         self._popup_factories[2] = lambda: MeshPostprocessingPopup(MESH_POSTPROCESSING, self._steps)
         self._popup_factories[3] = lambda: EseMeshPopup(ESE_MESH, self._steps)
+        self._popup_factories[4] = lambda: LocalizationPopup(LOCALIZATION, self._steps)
         self._popup_windows: dict[int, WidgetWindow] = {}
         self._popups: dict[int, StepPopupBase] = {}
         self._steps_menu.stepRequested.connect(self._open_step_popup)
