@@ -83,6 +83,3 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 pythonpath = ["src"]
 addopts = "-v --cov=src/virda --cov-report=term-missing"
-markers = [
-    "integration: end-to-end tests with real data (deselect with '-m \"not integration\"')",
-]
