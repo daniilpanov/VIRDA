@@ -46,7 +46,6 @@ def ask_create_project_folder(parent: QWidget | None) -> Path | None:
     """
     dialog = QFileDialog(parent, "Create new project")
     dialog.setFileMode(QFileDialog.FileMode.Directory)
-    dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptSave)
     if not dialog.exec():
         return None
     selected = dialog.selectedFiles()

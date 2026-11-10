@@ -5,18 +5,17 @@ import logging
 import numpy as np
 import trimesh
 
-from virda.mesh.adjacency import build_scalp_mesh
-from virda.models.scalp_mesh import ScalpMesh
+from virda.models.mesh import Mesh
 
 _logger = logging.getLogger(__name__)
 
 
 def decimate_mesh(
-    mesh: ScalpMesh,
+    mesh: Mesh,
     *,
     density_percent: float = 100.0,
     logger: logging.Logger = _logger,
-) -> ScalpMesh:
+) -> Mesh:
     """Return ``mesh`` reduced to ``density_percent`` of its original density.
 
     ``density_percent`` expresses how much of the mesh is kept: ``100`` is a
@@ -56,7 +55,7 @@ def decimate_mesh(
         len(mesh.vertices),
         len(decimated.vertices),
     )
-    return build_scalp_mesh(
+    return Mesh(
         vertices=np.asarray(decimated.vertices, dtype=np.float64),
         faces=np.asarray(decimated.faces, dtype=np.int64),
     )

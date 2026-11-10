@@ -1,9 +1,8 @@
 import numpy as np
 import pytest
 
-from virda.mesh.adjacency import build_scalp_mesh
+from virda.models.mesh import Mesh
 from virda.models.mri_volume import MRIVolume
-from virda.models.scalp_mesh import ScalpMesh
 from virda.models.segmentation_mask import SegmentationMask
 from virda.ops.clean_mesh import clean_mesh
 
@@ -34,7 +33,7 @@ def sphere_volume() -> MRIVolume:
 
 
 @pytest.fixture
-def clean_sphere_mesh(sphere_volume: MRIVolume) -> ScalpMesh:
+def clean_sphere_mesh(sphere_volume: MRIVolume) -> Mesh:
     grid = np.indices((20, 20, 20))
     center = np.array([10, 10, 10])
     squared_distance = np.sum((grid - center.reshape(-1, 1, 1, 1)) ** 2, axis=0)
@@ -46,16 +45,16 @@ def clean_sphere_mesh(sphere_volume: MRIVolume) -> ScalpMesh:
 
 
 class TestTrimeshCleaner:
-    def test_clean_preserves_valid_mesh(self, clean_sphere_mesh: ScalpMesh) -> None:
+    def test_clean_preserves_valid_mesh(self, clean_sphere_mesh: Mesh) -> None:
         cleaned = clean_mesh(clean_sphere_mesh)
 
-        assert isinstance(cleaned, ScalpMesh)
+        assert isinstance(cleaned, Mesh)
         assert cleaned.vertices.shape[1] == 3
         assert cleaned.faces.shape[1] == 3
         assert cleaned.faces.min() >= 0
         assert cleaned.faces.max() < cleaned.vertices.shape[0]
 
-    def test_clean_removes_small_component(self, clean_sphere_mesh: ScalpMesh) -> None:
+    def test_clean_removes_small_component(self, clean_sphere_mesh: Mesh) -> None:
         small_island_vertices = np.array([[0.0, 0.0, 0.0], [0.0, 0.1, 0.0], [0.1, 0.0, 0.0]])
         small_island_faces = np.array([[0, 1, 2]])
         combined_vertices = np.vstack([clean_sphere_mesh.vertices, small_island_vertices])
@@ -63,7 +62,7 @@ class TestTrimeshCleaner:
             [clean_sphere_mesh.faces, small_island_faces + clean_sphere_mesh.vertices.shape[0]]
         )
 
-        corrupted_mesh = build_scalp_mesh(vertices=combined_vertices, faces=combined_faces)
+        corrupted_mesh = Mesh(vertices=combined_vertices, faces=combined_faces)
 
         cleaned = clean_mesh(corrupted_mesh, min_component_vertices=50)
 
@@ -82,7 +81,7 @@ class TestTrimeshCleaner:
             ]
         )
         faces = np.array([[0, 1, 2], [3, 4, 5]])
-        mesh = build_scalp_mesh(vertices=vertices, faces=faces)
+        mesh = Mesh(vertices=vertices, faces=faces)
 
         cleaned = clean_mesh(mesh)
 

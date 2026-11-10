@@ -3,7 +3,7 @@ import pytest
 import trimesh
 
 from virda.io.importers.scalp_mesh import import_scalp_mesh
-from virda.models.scalp_mesh import ScalpMesh
+from virda.models.mesh import Mesh
 
 
 @pytest.fixture
@@ -14,23 +14,17 @@ def icosphere_path(tmp_path):
     return path
 
 
-class TestImportScalpMesh:
+class TestImportMesh:
     def test_reads_back_geometry(self, icosphere_path) -> None:
         mesh = import_scalp_mesh(icosphere_path)
 
-        assert isinstance(mesh, ScalpMesh)
+        assert isinstance(mesh, Mesh)
         expected = trimesh.creation.icosphere(subdivisions=2)
         np.testing.assert_array_almost_equal(mesh.vertices, expected.vertices)
         np.testing.assert_array_equal(mesh.faces, expected.faces)
 
-    def test_face_adjacency_built(self, icosphere_path) -> None:
-        mesh = import_scalp_mesh(icosphere_path)
 
-        assert mesh.face_adjacency.ndim == 2
-        assert mesh.face_adjacency.shape[1] == 2
-
-
-class TestImportScalpMeshErrors:
+class TestImportMeshErrors:
     def test_point_cloud_rejected(self, tmp_path) -> None:
         path = tmp_path / "points.ply"
         trimesh.PointCloud(vertices=np.zeros((10, 3))).export(path)

@@ -105,9 +105,6 @@ def parse_csv_tsv_chunked(
 _NPY_COLUMN_MAP = [
     ("*vertices*", ["X", "Y", "Z"]),
     ("*faces*", ["A", "B", "C"]),
-    ("*adjacency*", ["Face A", "Face B"]),
-    ("*normals*", ["NX", "NY", "NZ"]),
-    ("*quality*", ["Quality"]),
 ]
 
 

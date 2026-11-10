@@ -4,10 +4,10 @@ from pathlib import Path
 
 import trimesh
 
-from virda.models.scalp_mesh import ScalpMesh
+from virda.models.mesh import Mesh
 
 
-def export_scalp_mesh(path: str | Path, mesh: ScalpMesh) -> Path:
+def export_scalp_mesh(path: str | Path, mesh: Mesh) -> Path:
     """Write *mesh* as a triangular PLY file; returns the written path."""
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)

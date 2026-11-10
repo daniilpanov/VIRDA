@@ -20,7 +20,7 @@ def _write(path: Path, text: str) -> Path:
 
 class TestParseCsvTsv:
     def test_parse_comma_separated(self, tmp_path: Path) -> None:
-        path = _write(tmp_path / "electrode_coords.csv", "id,x,y,z\nE1,1,2,3\nE2,4,5,6\n")
+        path = _write(tmp_path / "electrodes.csv", "id,x,y,z\nE1,1,2,3\nE2,4,5,6\n")
         headers, rows = parse_csv_tsv(path)
         assert headers == ["id", "x", "y", "z"]
         assert rows == [["E1", "1", "2", "3"], ["E2", "4", "5", "6"]]
@@ -64,15 +64,6 @@ class TestNpyColumnMap:
     def test_faces_mask(self) -> None:
         assert npy_columns_for("ese_faces.npy") == ["A", "B", "C"]
 
-    def test_adjacency_mask(self) -> None:
-        assert npy_columns_for("scalp_face_adjacency.npy") == ["Face A", "Face B"]
-
-    def test_normals_mask(self) -> None:
-        assert npy_columns_for("normals.npy") == ["NX", "NY", "NZ"]
-
-    def test_quality_mask(self) -> None:
-        assert npy_columns_for("quality.npy") == ["Quality"]
-
     def test_mask_is_case_insensitive(self) -> None:
         assert npy_columns_for("Scalp_Vertices.npy") == ["X", "Y", "Z"]
 
@@ -89,7 +80,7 @@ class TestLoadNpyTable:
         assert array.shape == (2, 3)
 
     def test_1d_array_gets_value_column(self, tmp_path: Path) -> None:
-        path = tmp_path / "quality.npy"
+        path = tmp_path / "custom_data.npy"
         np.save(path, np.array([0.1, 0.2]))
         headers, array = load_npy_table(path)
         assert headers == ["Value"]

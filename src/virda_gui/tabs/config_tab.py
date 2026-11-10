@@ -247,7 +247,7 @@ class ConfigTab(QWidget):
         resolved = project_dir or self._state.last_project_dir
         if not resolved:
             return None
-        electrodes_path = Path(resolved) / "localization" / "electrodes.json"
+        electrodes_path = Path(resolved) / "localization" / "electrodes_scalp.csv"
         if not electrodes_path.is_file():
             return None
         path_str = str(electrodes_path)

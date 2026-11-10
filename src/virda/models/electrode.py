@@ -10,7 +10,6 @@ class Electrode:
     ese_coords: np.ndarray | None = None
     scalp_coords: np.ndarray | None = None
     residual_error: float | None = None
-    confidence: float | None = None
     flagged: bool = False
 
     def __post_init__(self) -> None:

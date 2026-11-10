@@ -2,18 +2,17 @@
 
 import trimesh
 
-from virda.mesh.adjacency import build_scalp_mesh
-from virda.models.scalp_mesh import ScalpMesh
+from virda.models.mesh import Mesh
 
 
 def smooth_mesh(
-    mesh: ScalpMesh,
+    mesh: Mesh,
     *,
     smoother_type: str = "laplacian",
     iterations: int = 10,
     lamb: float = 0.5,
     nu: float = -0.53,
-) -> ScalpMesh:
+) -> Mesh:
     """Apply the selected trimesh smoothing filter to the mesh.
 
     ``smoother_type="taubin"`` additionally uses ``nu`` (the Mu parameter must
@@ -24,7 +23,7 @@ def smooth_mesh(
         trimesh.smoothing.filter_taubin(trimesh_mesh, lamb=lamb, nu=nu, iterations=iterations)
     else:
         trimesh.smoothing.filter_laplacian(trimesh_mesh, lamb=lamb, iterations=iterations)
-    return build_scalp_mesh(
+    return Mesh(
         vertices=trimesh_mesh.vertices.copy(),
         faces=trimesh_mesh.faces.copy(),
     )

@@ -1,21 +1,13 @@
-"""GUI-side facades over the ``virda`` core step functions.
-
-The core stays a flat set of typed functions; the facades bundle their
-keyword arguments into :mod:`virda_gui.options` values so tabs call
-``clean(mesh, CleanOptions())``-shaped APIs instead of raw keyword lists.
-
-No Qt here: these are plain callables, runnable off the GUI thread.
-"""
+"""GUI-side facades over the ``virda`` core step functions."""
 
 from dataclasses import dataclass
 from logging import Logger
 
 from virda.mesh.mesh_decimator import decimate_mesh
 from virda.models.electrode import Electrodes
-from virda.models.ese_mesh import ESEMesh
 from virda.models.fiducial import Fiducials
+from virda.models.mesh import Mesh, Normals
 from virda.models.mri_volume import MRIVolume
-from virda.models.scalp_mesh import ScalpMesh
 from virda.models.segmentation_mask import SegmentationMask
 from virda.models.stage2_config import Stage2Config
 from virda.models.stage3_config import Stage3Config
@@ -26,7 +18,7 @@ from virda.ops.localize_electrodes import localize_electrodes
 from virda.ops.seal_mask import seal_mask
 from virda.ops.segment_head import segment_head
 from virda.ops.smooth_mesh import smooth_mesh
-from virda_gui.options import (
+from virda_gui.api.options import (
     CleanOptions,
     DecimateOptions,
     EseOptions,
@@ -41,7 +33,7 @@ class ScalpSurface:
     """Segmentation mask together with the mesh extracted from it."""
 
     mask: SegmentationMask
-    mesh: ScalpMesh
+    mesh: Mesh
 
 
 def generate_scalp_surface(
@@ -62,7 +54,7 @@ def generate_scalp_surface(
     return ScalpSurface(mask=mask, mesh=extract_mesh(mask, mri, voxel_size_mm=voxel_size_mm))
 
 
-def clean(mesh: ScalpMesh, options: CleanOptions) -> ScalpMesh:
+def clean(mesh: Mesh, options: CleanOptions) -> Mesh:
     """Merge near-coincident vertices, split into components and keep the main body."""
     return clean_mesh(
         mesh,
@@ -71,12 +63,12 @@ def clean(mesh: ScalpMesh, options: CleanOptions) -> ScalpMesh:
     )
 
 
-def decimate(mesh: ScalpMesh, options: DecimateOptions) -> ScalpMesh:
+def decimate(mesh: Mesh, options: DecimateOptions) -> Mesh:
     """Reduce the mesh density by ``options.density_percent``."""
     return decimate_mesh(mesh, density_percent=options.density_percent)
 
 
-def smooth(mesh: ScalpMesh, options: SmoothOptions) -> ScalpMesh:
+def smooth(mesh: Mesh, options: SmoothOptions) -> Mesh:
     """Smooth a scalp mesh with the selected Laplacian or Taubin kernel."""
     if options.smoother == "none":
         return mesh
@@ -89,7 +81,7 @@ def smooth(mesh: ScalpMesh, options: SmoothOptions) -> ScalpMesh:
     )
 
 
-def generate_ese(mesh: ScalpMesh, options: EseOptions) -> ESEMesh:
+def generate_ese(mesh: Mesh, options: EseOptions) -> tuple[Mesh, Normals]:
     """Estimate outward normals and offset the scalp surface into the ESE mesh."""
     return build_ese(
         mesh,
@@ -105,7 +97,9 @@ def generate_ese(mesh: ScalpMesh, options: EseOptions) -> ESEMesh:
 
 
 def localize(
-    ese: ESEMesh,
+    ese: Mesh,
+    normals: Normals,
+    scalp_mesh: Mesh,
     fiducials: Fiducials,
     electrodes: Electrodes,
     options: LocalizeOptions,
@@ -114,6 +108,8 @@ def localize(
     """Localize electrodes on the ESE surface by brute-force search."""
     return localize_electrodes(
         ese,
+        normals,
+        scalp_mesh,
         fiducials,
         electrodes,
         config=Stage3Config(

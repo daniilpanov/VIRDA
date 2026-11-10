@@ -1,1 +1,1 @@
-"""Mesh domain utilities (adjacency, palette helpers)."""
+"""Mesh domain utilities (density, palette helpers)."""

@@ -399,7 +399,6 @@ class IdeWindow(QMainWindow):
     def _collect_viewer_kwargs(self, project: Path) -> dict[str, Any]:
         mesh_path = project / "mesh" / "final_mesh.ply"
         fiducials_path = project / "input" / "fiducials.json"
-        normals_path = project / "ese" / "normals.npy"
 
         nifti = self._config_tab.nifti_path()
         kwargs: dict[str, Any] = {}
@@ -415,8 +414,6 @@ class IdeWindow(QMainWindow):
             kwargs["mesh_path"] = str(mesh_path)
         if fiducials_path.exists():
             kwargs["fiducials_path"] = str(fiducials_path)
-        if normals_path.exists():
-            kwargs["normals_path"] = str(normals_path)
 
         self._config_tab.ensure_stage3_electrodes_group(project)
         electrode_specs = self._config_tab.collect_electrode_specs()

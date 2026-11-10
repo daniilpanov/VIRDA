@@ -7,8 +7,8 @@ import numpy as np
 from scipy.spatial.distance import cdist
 
 from virda.models.electrode import Electrode, Electrodes
-from virda.models.ese_mesh import ESEMesh
 from virda.models.fiducial import Fiducial, Fiducials
+from virda.models.mesh import Mesh, Normals
 from virda.models.stage3_config import Stage3Config
 
 _OFFSET_SEARCH_MIN_MM = -30.0
@@ -70,7 +70,9 @@ def _mirror_plane_mask(
 
 
 def localize_electrodes(
-    ese: ESEMesh,
+    ese: Mesh,
+    normals: Normals,
+    scalp_mesh: Mesh,
     fiducials: Fiducials,
     electrodes: Electrodes,
     *,
@@ -97,7 +99,8 @@ def localize_electrodes(
     a fallback whenever refinement does not improve the residual.
     """
     vertices = np.asarray(ese.vertices)
-    normals = np.asarray(ese.normals)
+    normals = np.asarray(normals)
+    scalp_vertices = np.asarray(scalp_mesh.vertices)
     fiducial_coords = np.asarray([fiducial.coordinates for fiducial in fiducials.items])
 
     offset_shift = 0.0
@@ -116,9 +119,9 @@ def localize_electrodes(
             _localize_one(
                 electrode,
                 fiducials,
-                ese,
                 config,
                 logger,
+                scalp_vertices,
                 fiducial_coords,
                 search_vertices,
                 distances_to_fiducials,
@@ -150,9 +153,9 @@ def localize_electrodes(
 def _localize_one(
     electrode: Electrode,
     fiducials: Fiducials,
-    ese: ESEMesh,
     config: Stage3Config,
     logger: Logger | None,
+    scalp_vertices: np.ndarray,
     fiducial_coords: np.ndarray,
     search_vertices: np.ndarray,
     distances_to_fiducials: np.ndarray,
@@ -202,9 +205,8 @@ def _localize_one(
     return replace(
         electrode,
         ese_coords=np.asarray(search_vertices)[best_index],
-        scalp_coords=np.asarray(ese.scalp_vertices)[best_index],
+        scalp_coords=scalp_vertices[best_index],
         residual_error=residual_error,
-        confidence=float(ese.quality[best_index]),
         flagged=residual_error > config.residual_threshold_mm,
     )
 

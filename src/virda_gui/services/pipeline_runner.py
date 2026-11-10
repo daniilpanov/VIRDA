@@ -24,12 +24,8 @@ from virda.io.exporters.electrodes import (
 )
 from virda.io.exporters.ese_mesh import export_ese_companions, export_ese_mesh
 from virda.io.exporters.fiducials import export_fiducials
-from virda.io.exporters.localization_table import export_localization_table
-from virda.io.exporters.mesh_arrays import (
-    export_mesh_adjacency,
-    export_mesh_faces,
-    export_mesh_vertices,
-)
+from virda.io.exporters.measurements_copy import export_measurements_copy
+from virda.io.exporters.mesh_arrays import export_mesh_faces, export_mesh_vertices
 from virda.io.exporters.nifti_copy import export_nifti_copy
 from virda.io.exporters.pipeline_config import export_pipeline_config
 from virda.io.exporters.scalp_mesh import export_scalp_mesh
@@ -40,12 +36,11 @@ from virda.io.importers.nifti import import_nifti
 from virda.models.config import Config
 from virda.models.coordsystem import Coordsystem
 from virda.models.electrode import Electrodes
-from virda.models.ese_mesh import ESEMesh
 from virda.models.fiducial import (
     Fiducials,
     ManualFiducials,
 )
-from virda.models.scalp_mesh import ScalpMesh
+from virda.models.mesh import Mesh, Normals
 from virda.ops.build_ese import build_ese
 from virda.ops.clean_mesh import clean_mesh
 from virda.ops.extract_mesh import extract_mesh
@@ -60,7 +55,7 @@ from virda_gui.state import AppState
 class _Stage1Result:
     """GUI-side view of Stage 1: the scalp mesh and the resolved fiducials."""
 
-    mesh: ScalpMesh
+    mesh: Mesh
     fiducials: Fiducials
 
 
@@ -104,7 +99,7 @@ def _log_artifact(logger: Logger | None, artifact) -> None:
 
 def run(
     config: Config, measurements_path: str | Path | None = None
-) -> tuple[_Stage1Result, ESEMesh | None, Electrodes | None]:
+) -> tuple[_Stage1Result, Mesh | None, Electrodes | None]:
     """Run the VIRDA pipeline: Stage 1 -> 2 -> 3.
 
     Returns the Stage 1 result, the ESE surface when ESE is configured,
@@ -114,8 +109,8 @@ def run(
     if config.to_ese_config() is None:
         return stage1_result, None, None
 
-    ese_mesh = run_stage2(config, stage1_result.mesh)
-    electrodes = run_stage3(config, stage1_result, ese_mesh, measurements_path)
+    ese_mesh, normals = run_stage2(config, stage1_result.mesh)
+    electrodes = run_stage3(config, stage1_result, ese_mesh, normals, measurements_path)
     return stage1_result, ese_mesh, electrodes
 
 
@@ -186,7 +181,6 @@ def run_stage1(config: Config) -> _Stage1Result:
     export_scalp_mesh(project_dir / "mesh" / "final_mesh.ply", mesh)
     export_mesh_vertices(project_dir / "mesh" / "scalp_vertices.npy", mesh.vertices)
     export_mesh_faces(project_dir / "mesh" / "scalp_faces.npy", mesh.faces)
-    export_mesh_adjacency(project_dir / "mesh" / "scalp_face_adjacency.npy", mesh.face_adjacency)
     export_fiducials(project_dir / "input" / "fiducials.json", fiducials)
     export_pipeline_config(project_dir / "input" / "pipeline_config.json", config)
     export_nifti_copy(project_dir / "input" / nifti_path.name, nifti_path, logger=logger)
@@ -197,11 +191,11 @@ def run_stage1(config: Config) -> _Stage1Result:
     return result
 
 
-def run_stage2(config: Config, scalp_mesh: ScalpMesh) -> ESEMesh:
+def run_stage2(config: Config, scalp_mesh: Mesh) -> tuple[Mesh, Normals]:
     """Build the ESE surface and export it (Stage 2)."""
     logger = logging.getLogger("virda_gui.stage_2")
 
-    ese_mesh = build_ese(
+    ese_mesh, normals = build_ese(
         scalp_mesh,
         config=config.to_stage2_config(),
         ese_offset_mm=config.to_ese_config().ese_offset_mm,
@@ -213,13 +207,14 @@ def run_stage2(config: Config, scalp_mesh: ScalpMesh) -> ESEMesh:
     export_ese_mesh(ese_mesh_path, ese_mesh)
     export_ese_companions(ese_mesh_path, ese_mesh)
 
-    return ese_mesh
+    return ese_mesh, normals
 
 
 def run_stage3(
     config: Config,
     stage1_result: _Stage1Result,
-    ese_mesh: ESEMesh | None,
+    ese_mesh: Mesh | None,
+    normals: Normals | None = None,
     measurements_path: str | Path | None = None,
 ) -> Electrodes | None:
     """Localize electrodes from precomputed Stage 1/2 results (Stage 3).
@@ -251,6 +246,8 @@ def run_stage3(
     logger = logging.getLogger("virda_gui.stage_3")
     electrodes = localize_electrodes(
         ese_mesh,
+        normals,
+        stage1_result.mesh,
         fiducials,
         electrodes,
         config=stage3_config,
@@ -259,11 +256,12 @@ def run_stage3(
     _log_artifact(logger, electrodes)
 
     localization_dir = Path(project_dir) / "localization"
-    export_localization_table(localization_dir / "electrode_coords.csv", electrodes)
-    electrodes_path = localization_dir / "electrodes.json"
-    export_electrodes(electrodes_path, electrodes)
-    export_electrodes_scalp(localization_dir / "electrodes_scalp.json", electrodes)
-    export_electrodes_ese(localization_dir / "electrodes_ese.json", electrodes)
+    export_electrodes(localization_dir / "electrodes.csv", electrodes)
+    export_electrodes_scalp(localization_dir / "electrodes_scalp.csv", electrodes)
+    export_electrodes_ese(localization_dir / "electrodes_ese.csv", electrodes)
+    export_measurements_copy(
+        Path(project_dir) / "input" / "measurements.json", resolved_measurements_path
+    )
 
     return electrodes
 
