@@ -1589,7 +1589,7 @@ wheels = [
 
 [[package]]
 name = "virda"
-version = "1.0.1"
+version = "2.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "fast-simplification" },
@@ -1647,7 +1647,7 @@ provides-extras = ["dev", "research"]
 
 [[package]]
 name = "virda-gui"
-version = "1.0.1"
+version = "2.2.0"
 source = { editable = "src/virda_gui" }
 dependencies = [
     { name = "nibabel" },
