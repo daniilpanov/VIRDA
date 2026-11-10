@@ -60,3 +60,16 @@ class MeshWithPoints:
 class MeshBundle:
     mesh: pv.PolyData | None
     points: LabeledPoints | None
+
+
+@dataclass
+class ViewerScene:
+    """Fully resolved 3D scene, ready to be rendered."""
+
+    volume: pv.ImageData | None = None
+    mm_scene: bool = True
+    fiducials: LabeledPoints | None = None
+    scalp_mesh: pv.PolyData | None = None
+    scalp_points: LabeledPoints | None = None
+    ese_mesh: pv.PolyData | None = None
+    ese_points: LabeledPoints | None = None
