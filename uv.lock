@@ -1326,15 +1326,15 @@ wheels = [
 
 [[package]]
 name = "pyvistaqt"
-version = "0.13.1"
+version = "0.13.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pyvista" },
     { name = "qtpy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ac/5b/fde55dbdf5a88733834debcb90449bf19f392aaadd3ca3867b5a263ac264/pyvistaqt-0.13.1.tar.gz", hash = "sha256:f5d06435381e7b2cb803a57682c7a0e4500de689b6da0c5679afe68fdeb81d98", size = 582745, upload-time = "2026-09-08T17:10:23.007Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a2/ac/cc744f1a68de13208bf188dbf39164d6cbfb68bf816ef79cf3111fd66d87/pyvistaqt-0.13.2.tar.gz", hash = "sha256:82aef38012e3110fbe9a3aa92feb8175142cbcee0ae167cd99068c697dce81e1", size = 584322, upload-time = "2026-11-02T15:21:14.678Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b5/59/64646e550d8512b540a0e2b62960aca86298d8c14cd588e874a23045e94e/pyvistaqt-0.13.1-py3-none-any.whl", hash = "sha256:8ec3c40d2bb5de2b90b73cc47bc9179ae1d3d169078c7b7e84514cdde9f268be", size = 141818, upload-time = "2026-09-08T17:10:21.285Z" },
+    { url = "https://files.pythonhosted.org/packages/f2/de/d474a74dc80552c08af1a980a86ba6cb0777c2d12a5fccc3e9145374f08b/pyvistaqt-0.13.2-py3-none-any.whl", hash = "sha256:158b986e24c38984794ad707f263218d3fdfb3f4c0c1ae9f6683d7eddc43071c", size = 142555, upload-time = "2026-11-02T15:21:12.884Z" },
 ]
 
 [[package]]
