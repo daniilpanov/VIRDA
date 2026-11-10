@@ -6,16 +6,18 @@ heavy mesh work runs; only hint text, context writes and hooks flow.
 
 import os
 import time
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pytest
+from PySide6.QtWidgets import QTableWidgetItem
 
 from virda.models.electrode import Electrode, Electrodes
 from virda.models.mesh import Mesh
 from virda_gui_new.api import ops
 from virda_gui_new.dto.steps import LOCALIZATION, STEPS
 from virda_gui_new.services.steps_manager import StepsManager
+from virda_gui_new.widgets.popup.localization import LocalizationPopup
 from virda_gui_new.widgets.popup.localization.abstract import (
     LocalizationPopupBase,
 )
@@ -182,3 +184,71 @@ def test_shutdown_is_safe(qapp, popups, monkeypatch) -> None:
 
     popup.shutdown()  # idempotent: live runner then the base machinery
     popup.shutdown()
+
+
+def test_concrete_popup_blocked_states(qapp, popups, monkeypatch) -> None:
+    calls: list[Any] = []
+
+    def fail_late(*_args):
+        calls.append(())
+        return Electrodes([])
+
+    monkeypatch.setattr(ops, "localize", fail_late)
+    popup = LocalizationPopup(LOCALIZATION, _make_manager())
+    popups.append(popup)
+
+    assert popup._hint_label.text() == "Blocked: not enough fiducials (need 3)."
+    for _row in range(3):
+        popup._fiducials_table.add_row()
+    assert popup._hint_label.text() == "Blocked: not enough fiducials (need 3)."
+    for row, coords in enumerate(("0 0 1", "1 0 0", "-1 0 0")):
+        popup._fiducials_table._table.setItem(row, 0, QTableWidgetItem("Nasion"))
+        for column, text in enumerate(coords.split(), start=1):
+            popup._fiducials_table._table.setItem(row, column, QTableWidgetItem(text))
+    assert popup._hint_label.text() == "Blocked: no measurements."
+    popup._measurements_table.add_row()
+    assert popup._hint_label.text() == "Blocked: no measurements."
+    popup._measurements_table._table.setItem(0, 0, QTableWidgetItem("A"))
+
+    time.sleep(0.3)
+    qapp.processEvents()
+    assert calls == []  # incomplete measurement row: nothing runs
+    assert not popup._electrodes_table._table.rowCount()
+
+
+def test_concrete_popup_live_flow(qapp, popups, monkeypatch) -> None:
+    calls: list[Any] = []
+    payload = Electrodes(
+        [
+            Electrode("A", {"LPA": 10.0}, ese_coords=np.zeros(3), scalp_coords=np.zeros(3)),
+            Electrode("B", {"RPA": 1.0}, ese_coords=np.zeros(3), scalp_coords=np.zeros(3)),
+        ]
+    )
+    _patch_localize(monkeypatch, calls, payload)
+    manager = _make_manager()
+    popup = LocalizationPopup(LOCALIZATION, manager)
+    popups.append(popup)
+
+    for _row in range(3):
+        popup._fiducials_table.add_row()
+    for row, (name, coords) in enumerate(
+        zip(("Nasion", "LPA", "RPA"), ("0 0 1", "1 0 0", "-1 0 0"), strict=True)
+    ):
+        popup._fiducials_table._table.setItem(row, 0, QTableWidgetItem(name))
+        for column, text in enumerate(coords.split(), start=1):
+            popup._fiducials_table._table.setItem(row, column, QTableWidgetItem(text))
+    popup._measurements_table.add_row()
+    for column, text in enumerate(("A", "LPA", "10")):
+        popup._measurements_table._table.setItem(0, column, QTableWidgetItem(text))
+
+    _settle(qapp, popup, "Localized 2 electrodes.")
+
+    assert popup._hint_label.text() == "Localized 2 electrodes."
+    assert len(calls) >= 1
+    assert manager.get_step_context_item(LOCALIZATION.index, "electrodes") is payload
+    grid = popup._electrodes_table._table
+    assert cast("QTableWidgetItem", grid.item(0, 0)).text() == "A"
+    assert cast("QTableWidgetItem", grid.item(0, 1)).text() == "0.00"
+    assert cast("QTableWidgetItem", grid.item(1, 0)).text() == "B"
+    assert cast("QTableWidgetItem", grid.item(1, 7)).text() == ""
+    assert cast("QTableWidgetItem", grid.item(1, 8)).text() == "no"
