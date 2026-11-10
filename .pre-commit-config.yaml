@@ -1,18 +1,6 @@
 repos:
   - repo: local
     hooks:
-      - id: black
-        name: black
-        entry: uv run --active black
-        language: system
-        types: [ python ]
-        pass_filenames: true
-      - id: isort
-        name: isort
-        entry: uv run --active isort
-        language: system
-        types: [ python ]
-        pass_filenames: true
       - id: ruff check
         name: ruff check
         entry: uv run --active ruff check --fix
