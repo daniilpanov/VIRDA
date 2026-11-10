@@ -9,7 +9,9 @@ from virda_gui_new.services.project_scan import find_project_artifacts
 from virda_gui_new.services.scene_builder import collect_scene_kwargs
 from virda_gui_new.services.step_seeding import seed_steps_from_artifacts
 from virda_gui_new.services.steps_manager import StepsManager
+from virda_gui_new.widgets.popup.main_menu import StepsMenu
 from virda_gui_new.widgets.viewer3d import SceneViewer3D
+from virda_gui_new.windows.widget_windows import open_widget_window
 
 
 class MainWindow(QMainWindow):
@@ -28,6 +30,13 @@ class MainWindow(QMainWindow):
         seed_steps_from_artifacts(self._steps, find_project_artifacts(project_path))
         self._steps.subscribe(self._rebuild_scene)
         self._rebuild_scene()
+
+        self._steps_menu = StepsMenu(self._steps)
+        self._steps_window = open_widget_window(self._steps_menu, title="Steps")
+        self._steps_menu.stepRequested.connect(lambda n: self._log(f"Step {n} requested."))
+        self._steps_menu.stepsInvalidated.connect(
+            lambda n: self._log(f"Steps after {n} invalidated.")
+        )
 
         self.showMaximized()
 

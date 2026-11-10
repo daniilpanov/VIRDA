@@ -27,10 +27,9 @@ class StepsMenu(QWidget):
     Rows read ``"{index}. {name}"`` plus ``[done]`` for an earlier completed
     step or ``[current]`` for the working step; later steps are pending.
     A row is clickable only when its step exists in the manager. Clicking
-    an already-satisfied step asks for a redo confirmation (only when later
-    step results would be discarded) and, on agree, discards them. Step 0
-    re-imports a NIfTI in place; a fresh step 0 import auto-advances to
-    step 1 and emits ``stepRequested``.
+    an already-satisfied step asks for a redo confirmation and, on agree,
+    discards the later step results. Step 0 re-imports a NIfTI in place;
+    a fresh step 0 import auto-advances to step 1 and emits ``stepRequested``.
     """
 
     stepRequested = Signal(int)  # noqa: N815
@@ -86,13 +85,11 @@ class StepsMenu(QWidget):
         if step_n > current:  # disabled row; guarded for programmatic clicks
             return
         if step_n < current or self._manager.is_step_done(step_n):
-            last = min(current + 1, len(STEPS))
-            discarded = [STEPS[later].name for later in range(step_n + 1, last)]
-            if discarded and not confirm_step_redo(self, STEPS[step_n].name, discarded):
+            discarded = [STEPS[later].name for later in range(step_n + 1, current + 1)]
+            if not confirm_step_redo(self, STEPS[step_n].name, discarded):
                 return
-            if discarded:
-                self._manager.invalidate_steps_after(step_n)
-                self.stepsInvalidated.emit(step_n)
+            self._manager.invalidate_steps_after(step_n)
+            self.stepsInvalidated.emit(step_n)
         if step_n == 0:
             self._import_volume()
         else:
