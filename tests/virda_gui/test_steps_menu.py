@@ -127,9 +127,7 @@ def test_fresh_step0_import_advances_and_emits(qapp, manager, menu, monkeypatch,
 
 
 def test_fresh_step0_import_cancelled_keeps_state(qapp, manager, menu, monkeypatch) -> None:
-    monkeypatch.setattr(
-        QFileDialog, "getOpenFileName", staticmethod(lambda *a, **k: ("", ""))
-    )
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", staticmethod(lambda *a, **k: ("", "")))
     requested, invalidated = _connect(menu)
 
     menu._on_step_clicked(0)
