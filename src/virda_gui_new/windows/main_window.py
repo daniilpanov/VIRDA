@@ -1,17 +1,22 @@
 """Main window assembling the 3D viewer over the pipeline step contexts."""
 
+from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtWidgets import QMainWindow
 
-from virda_gui_new.dto.steps import STEPS
+from virda_gui_new.dto.steps import BASE_MESH, ESE_MESH, MESH_POSTPROCESSING, STEPS
 from virda_gui_new.services.project_import import PreparedProject, prepare_project
 from virda_gui_new.services.scene_builder import collect_scene_kwargs
 from virda_gui_new.services.step_seeding import seed_steps_from_artifacts
 from virda_gui_new.services.steps_manager import StepsManager
+from virda_gui_new.widgets.popup.abstract import StepPopupBase
+from virda_gui_new.widgets.popup.base_mesh_extraction import BaseMeshExtractionPopup
+from virda_gui_new.widgets.popup.ese_mesh import EseMeshPopup
 from virda_gui_new.widgets.popup.main_menu import StepsMenu
+from virda_gui_new.widgets.popup.mesh_postprocessing import MeshPostprocessingPopup
 from virda_gui_new.widgets.viewer3d import SceneViewer3D
-from virda_gui_new.windows.widget_windows import open_widget_window
+from virda_gui_new.windows.widget_windows import WidgetWindow, open_widget_window
 
 
 class MainWindow(QMainWindow):
@@ -40,14 +45,19 @@ class MainWindow(QMainWindow):
             seed_steps_from_artifacts(steps, prepared.loaded)
         self._steps = steps
         self._steps.subscribe(self._rebuild_scene)
+        self._steps.subscribe(self._on_steps_changed)
         self._rebuild_scene()
 
         self._steps_menu = StepsMenu(self._steps)
         self._steps_window = open_widget_window(self._steps_menu, title="Steps")
-        self._steps_menu.stepRequested.connect(lambda n: self._log(f"Step {n} requested."))
-        self._steps_menu.stepsInvalidated.connect(
-            lambda n: self._log(f"Steps after {n} invalidated.")
-        )
+        self._popup_factories: dict[int, Callable[[], StepPopupBase]] = {}
+        self._popup_factories[1] = lambda: BaseMeshExtractionPopup(BASE_MESH, self._steps)
+        self._popup_factories[2] = lambda: MeshPostprocessingPopup(MESH_POSTPROCESSING, self._steps)
+        self._popup_factories[3] = lambda: EseMeshPopup(ESE_MESH, self._steps)
+        self._popup_windows: dict[int, WidgetWindow] = {}
+        self._popups: dict[int, StepPopupBase] = {}
+        self._steps_menu.stepRequested.connect(self._open_step_popup)
+        self._steps_menu.stepsInvalidated.connect(self._on_steps_invalidated)
 
         self.showMaximized()
 
@@ -60,6 +70,57 @@ class MainWindow(QMainWindow):
             self._viewer3d.set_scene(**kwargs)
         else:
             self._viewer3d.clear_scene()
+
+    def _open_step_popup(self, step_n: int) -> None:
+        factory = self._popup_factories.get(step_n)
+        if factory is None:
+            self._log(f"Step {step_n}: editor not implemented yet.")
+            return
+        self._close_popup(step_n)
+        popup = factory()
+        popup.completed.connect(self._on_step_completed)
+        popup.failed.connect(lambda msg, s=step_n: self._log(f"Step {s} failed: {msg}"))
+        window = open_widget_window(popup, title=STEPS[step_n].name)
+
+        def on_window_destroyed(*_args: object) -> None:
+            self._forget_popup(step_n)
+
+        window.destroyed.connect(on_window_destroyed)
+        self._popups[step_n] = popup
+        self._popup_windows[step_n] = window
+
+    def _on_step_completed(self, step_n: int) -> None:
+        self._log(f"Step {step_n} done.")
+        self._close_popup(step_n)
+        if step_n + 1 < len(STEPS):
+            self._open_step_popup(step_n + 1)
+        elif step_n == len(STEPS) - 1:
+            self._log("Pipeline complete.")
+
+    def _on_steps_changed(self) -> None:
+        self._close_stale_popups(self._steps.get_current_step())
+
+    def _on_steps_invalidated(self, n: int) -> None:
+        self._log(f"Steps after {n} invalidated.")
+
+    def _close_stale_popups(self, step_n: int) -> None:
+        """Close open popup windows of steps beyond the current step."""
+        for step in [s for s in self._popup_windows if s > step_n]:
+            self._close_popup(step)
+
+    def _close_popup(self, step_n: int) -> None:
+        """Shut down and close this step's popup window, if open."""
+        popup = self._popups.pop(step_n, None)
+        window = self._popup_windows.pop(step_n, None)
+        if popup is not None:
+            popup.shutdown()
+        if window is not None:
+            window.close()
+
+    def _forget_popup(self, step_n: int) -> None:
+        """Drop tracking of a popup window destroyed outside the dispatcher."""
+        self._popup_windows.pop(step_n, None)
+        self._popups.pop(step_n, None)
 
     def _log(self, message: str) -> None:
         self.statusBar().showMessage(message)
