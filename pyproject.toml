@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "virda"
-version = "1.0.1"
+version = "2.2.0"
 description = "VIRDA Electrode Localization System"
 requires-python = ">=3.14"
 dependencies = [
@@ -26,8 +26,6 @@ dev = [
     "pytest-cov>=5.0",
     "pytest-mock>=3.14",
     "pytest-xdist>=3.6",
-    "black>=26.5.1",
-    "isort>=8.0.1",
     "mypy>=2.3.0",
     "ruff>=0.16.1",
     "pre-commit>=3.8",
@@ -43,14 +41,6 @@ packages = ["src/virda", "src/lib"]
 
 [tool.uv.workspace]
 members = ["src/virda_gui"]
-
-[tool.black]
-line-length = 100
-target-version = ["py314"]
-
-[tool.isort]
-profile = "black"
-line_length = 100
 
 [tool.mypy]
 exclude = "research/"
