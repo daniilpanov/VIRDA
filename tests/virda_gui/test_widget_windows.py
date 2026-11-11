@@ -98,6 +98,49 @@ def test_open_widget_window_defaults_to_parentless_tool(qapp):
     qapp.processEvents()
 
 
+def test_open_widget_window_raises_the_window(qapp, monkeypatch):
+    """Opening a window raises it, so it lands above the parent window."""
+    from PySide6.QtWidgets import QWidget
+
+    from virda_gui_new.windows import widget_windows
+
+    class _RaiseSpy(widget_windows.WidgetWindow):
+        """Tool window that counts how often it was raised."""
+
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            super().__init__(*args, **kwargs)
+            self.raises = 0
+
+        def raise_(self) -> None:
+            self.raises += 1
+            super().raise_()
+
+    monkeypatch.setattr(widget_windows, "WidgetWindow", _RaiseSpy)
+    window = widget_windows.open_widget_window(QWidget())
+    try:
+        assert window.raises >= 1
+        assert window.isVisible()
+    finally:
+        window.close()
+    qapp.processEvents()
+
+
+def test_is_alive_reports_destroyed_windows(qapp):
+    """A destroyed window is not alive anymore."""
+    from PySide6.QtWidgets import QWidget
+
+    from virda_gui_new.windows.widget_windows import is_alive
+
+    assert not is_alive(None)
+
+    window = open_widget_window(QWidget())
+    assert is_alive(window)
+
+    window.close()
+    qapp.processEvents()
+    assert not is_alive(window)
+
+
 def test_widget_window_title_derived_from_widget(qapp):
     """Without an explicit title the widget's own windowTitle() is used."""
     from PySide6.QtWidgets import QWidget
