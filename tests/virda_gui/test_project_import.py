@@ -53,7 +53,7 @@ def _write_measurements(path: Path) -> None:
     )
 
 
-def _write_legacy_point_rows(path: Path) -> None:
+def _write_outdated_point_rows(path: Path) -> None:
     """Write the outdated electrode format (electrode_id / coords keys)."""
     path.write_text(
         json.dumps(
@@ -95,11 +95,11 @@ def test_prepare_project_loads_valid_artifacts(project: Path) -> None:
     assert prepared.recoverable_step == 4
 
 
-def test_prepare_project_rejects_legacy_point_format(project: Path) -> None:
+def test_prepare_project_rejects_outdated_point_format(project: Path) -> None:
     _write_nifti(project / "input" / "a.nii")
     _write_ply(project / "mesh" / "final_mesh.ply")
     _write_ply(project / "ese" / "ese_mesh.ply")
-    _write_legacy_point_rows(project / "localization" / "electrodes_scalp.json")
+    _write_outdated_point_rows(project / "localization" / "electrodes_scalp.json")
 
     prepared = prepare_project(project)
 

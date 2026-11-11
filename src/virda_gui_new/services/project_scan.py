@@ -27,7 +27,9 @@ class ArtifactRule:
     """One scan rule: a file pattern mapped to a :class:`ProjectArtifacts` slot.
 
     ``folders`` is the tuple of project subdirectories to search, or
-    ``None`` to search the whole project recursively.
+    ``None`` to search the whole project recursively. ``exclude`` lists
+    file names the rule never matches, so rules with overlapping patterns
+    (e.g. the NIfTI glob and the head mask) stay unambiguous.
     """
 
     slot: str
@@ -36,39 +38,31 @@ class ArtifactRule:
     """File name (or glob) matched against candidate paths."""
     folders: tuple[str, ...] | None = None
     """Subdirectories to search; ``None`` searches the whole project."""
+    exclude: tuple[str, ...] = ()
+    """File names this rule never matches."""
 
 
 #: Single source of truth for artifact discovery. Rules run in order and
-#: the first match fills its slot: slots with a canonical home first look
-#: there (NIfTI, configs and fiducials under ``input/``, the mask under
-#: ``segmentation/``, meshes under ``scalp/``, electrode points under
-#: ``localization/``), then accept the file anywhere in the project --
-#: so a GUI-written canonical file wins over a stray or legacy copy, and
-#: old layouts still open. ESE mesh: the ``mesh.ply`` project format
-#: before the legacy ``ese_mesh.ply``; NIfTI ``*.nii.gz`` before
-#: ``*.nii``. ``mesh.ply`` counts as an ESE mesh only under ``ese/``.
+#: the first match fills its slot; every variant name is a first-class
+#: rule (no canonical-folder preference, no fallbacks). Most names are
+#: searched anywhere in the project; ``mesh.ply`` counts as an ESE mesh
+#: only under ``ese/``, and ``*.nii.gz`` outranks ``*.nii`` (the head
+#: mask is excluded from the NIfTI globs). When several
+#: files match one rule, the first in sorted path order wins.
 #: Dot-directories are never searched.
 _ARTIFACT_RULES: tuple[ArtifactRule, ...] = (
-    ArtifactRule("nifti", "*.nii.gz", ("input",)),
-    ArtifactRule("nifti", "*.nii", ("input",)),
-    ArtifactRule("fiducials", "fiducials.json", ("input",)),
+    ArtifactRule("nifti", "*.nii.gz", exclude=("head_mask.nii.gz",)),
+    ArtifactRule("nifti", "*.nii"),
     ArtifactRule("fiducials", "fiducials.json"),
-    ArtifactRule("measurements", "measurements.json", ("input",)),
     ArtifactRule("measurements", "measurements.json"),
-    ArtifactRule("coordsystem", "coordsystem.json", ("input",)),
     ArtifactRule("coordsystem", "coordsystem.json"),
-    ArtifactRule("pipeline_config", "pipeline_config.json", ("input",)),
     ArtifactRule("pipeline_config", "pipeline_config.json"),
-    ArtifactRule("head_mask", "head_mask.nii.gz", ("segmentation",)),
-    ArtifactRule("base_mesh", "base_mesh.ply", ("scalp",)),
+    ArtifactRule("head_mask", "head_mask.nii.gz"),
     ArtifactRule("base_mesh", "base_mesh.ply"),
-    ArtifactRule("scalp_mesh", "final_mesh.ply", ("scalp",)),
     ArtifactRule("scalp_mesh", "final_mesh.ply"),
     ArtifactRule("ese_mesh", "mesh.ply", ("ese",)),
-    ArtifactRule("ese_mesh", "ese_mesh.ply", ("ese",)),
-    ArtifactRule("scalp_points", "electrodes_scalp.json", ("localization",)),
+    ArtifactRule("ese_mesh", "ese_mesh.ply"),
     ArtifactRule("scalp_points", "electrodes_scalp.json"),
-    ArtifactRule("ese_points", "electrodes_ese.json", ("localization",)),
     ArtifactRule("ese_points", "electrodes_ese.json"),
 )
 
@@ -89,6 +83,8 @@ def _candidates(project: Path, rule: ArtifactRule) -> Iterator[Path]:
             for path in sorted((project / folder).glob(rule.pattern))
         ]
     for path in found:
+        if path.name in rule.exclude:
+            continue
         if not any(part.startswith(".") for part in path.relative_to(project).parts[:-1]):
             yield path
 
@@ -98,9 +94,8 @@ def find_project_artifacts(project: Path) -> ProjectArtifacts:
 
     Scanning only: file contents are not read. The rules in
     :data:`_ARTIFACT_RULES` run in order and the first match fills its
-    slot; see that constant for the discovered file names and where they
-    are searched. Dot-directories (``.venv``, ``.opencode``, ...) are
-    skipped.
+    slot; see that constant for the searched file names and folders.
+    Dot-directories (``.venv``, ``.opencode``, ...) are skipped.
     """
     found: dict[str, Path] = {}
     for rule in _ARTIFACT_RULES:
