@@ -6,7 +6,8 @@ from pathlib import Path
 from PySide6.QtWidgets import QMainWindow
 
 from virda_gui_new.dto.steps import BASE_MESH, ESE_MESH, LOCALIZATION, MESH_POSTPROCESSING, STEPS
-from virda_gui_new.services.project_scan import ProjectArtifacts, find_project_artifacts
+from virda_gui_new.services.project_import import PreparedProject, prepare_project
+from virda_gui_new.services.project_scan import find_project_artifacts
 from virda_gui_new.services.scene_builder import collect_scene_kwargs
 from virda_gui_new.services.step_seeding import seed_steps_from_artifacts
 from virda_gui_new.services.steps_manager import StepsManager
@@ -22,7 +23,7 @@ from virda_gui_new.windows.widget_windows import WidgetWindow, open_widget_windo
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, project_path: Path, artifacts: ProjectArtifacts | None = None) -> None:
+    def __init__(self, project_path: Path, prepared: PreparedProject | None = None) -> None:
         super().__init__()
 
         self.setWindowTitle("VIRDA: Electrode Localization System")
@@ -34,9 +35,9 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self._viewer3d)
 
         self._steps = StepsManager(tuple(step.required_keys for step in STEPS))
-        if artifacts is None:
-            artifacts = find_project_artifacts(project_path)
-        seed_steps_from_artifacts(self._steps, artifacts)
+        if prepared is None:
+            prepared = prepare_project(project_path)
+        seed_steps_from_artifacts(self._steps, prepared.loaded)
         self._steps.subscribe(self._rebuild_scene)
         self._steps.subscribe(self._on_steps_changed)
         self._rebuild_scene()

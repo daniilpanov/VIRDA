@@ -10,6 +10,9 @@ import trimesh
 
 from virda.io.fiducial_helpers import save_fiducials
 from virda.models.fiducial import Fiducial, Fiducials
+from virda.models.mesh import Mesh
+from virda.models.mri_volume import MRIVolume
+from virda_gui_new.dto.viewer3d import LabeledPoints
 from virda_gui_new.services.project_import import prepare_project
 
 
@@ -52,7 +55,7 @@ def project(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def test_prepare_project_accepts_valid_artifacts(project: Path) -> None:
+def test_prepare_project_loads_valid_artifacts(project: Path) -> None:
     _write_nifti(project / "input" / "a.nii")
     _write_ply(project / "mesh" / "final_mesh.ply")
     _write_ply(project / "ese" / "ese_mesh.ply")
@@ -61,10 +64,11 @@ def test_prepare_project_accepts_valid_artifacts(project: Path) -> None:
     prepared = prepare_project(project)
 
     assert prepared.failures == ()
-    assert prepared.artifacts.nifti is not None
-    assert prepared.artifacts.scalp_mesh is not None
-    assert prepared.artifacts.ese_mesh is not None
-    assert prepared.artifacts.fiducials is not None
+    assert isinstance(prepared.loaded.nifti, MRIVolume)
+    assert isinstance(prepared.loaded.scalp_mesh, Mesh)
+    assert isinstance(prepared.loaded.ese_mesh, Mesh)
+    assert isinstance(prepared.loaded.fiducials, LabeledPoints)
+    assert prepared.loaded.fiducials.labels == ("nas",)
     assert prepared.recoverable_step == 4
 
 
@@ -79,10 +83,10 @@ def test_prepare_project_rejects_legacy_point_format(project: Path) -> None:
     assert len(prepared.failures) == 1
     assert "electrodes_scalp.json" in prepared.failures[0]
     assert "electrode points" in prepared.failures[0]
-    assert prepared.artifacts.scalp_points is None
-    # Everything else still seeds; recovery follows the filtered artifacts.
-    assert prepared.artifacts.nifti is not None
-    assert prepared.artifacts.scalp_mesh is not None
+    assert prepared.loaded.scalp_points is None
+    # Everything else still seeds; recovery follows the loaded artifacts.
+    assert prepared.loaded.nifti is not None
+    assert prepared.loaded.scalp_mesh is not None
     assert prepared.recoverable_step == 3
 
 
@@ -93,7 +97,7 @@ def test_prepare_project_rejects_empty_point_file(project: Path) -> None:
     prepared = prepare_project(project)
 
     assert len(prepared.failures) == 1
-    assert prepared.artifacts.scalp_points is None
+    assert prepared.loaded.scalp_points is None
     assert prepared.recoverable_step == 0
 
 
@@ -104,14 +108,14 @@ def test_prepare_project_rejects_non_array_point_file(project: Path) -> None:
     prepared = prepare_project(project)
 
     assert len(prepared.failures) == 1
-    assert prepared.artifacts.scalp_points is None
+    assert prepared.loaded.scalp_points is None
 
 
 def test_prepare_project_empty_directory(project: Path) -> None:
     prepared = prepare_project(project)
 
     assert prepared.failures == ()
-    assert prepared.artifacts.nifti is None
+    assert prepared.loaded == type(prepared.loaded)()
     assert prepared.recoverable_step == -1
 
 
@@ -123,5 +127,5 @@ def test_prepare_project_corrupt_mesh_is_reported(project: Path) -> None:
 
     assert len(prepared.failures) == 1
     assert "final_mesh.ply" in prepared.failures[0]
-    assert prepared.artifacts.scalp_mesh is None
+    assert prepared.loaded.scalp_mesh is None
     assert prepared.recoverable_step == 0
