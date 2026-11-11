@@ -12,8 +12,10 @@ from pathlib import Path
 import numpy as np
 
 from virda.io.fiducial_helpers import load_fiducials
+from virda.io.importers.measurements import import_measurements
 from virda.io.importers.nifti import import_nifti
 from virda.io.importers.scalp_mesh import import_scalp_mesh
+from virda.models.electrode import Electrodes
 from virda.models.mesh import Mesh
 from virda.models.mri_volume import MRIVolume
 from virda_gui_new.dto.viewer3d import LabeledPoints
@@ -30,13 +32,23 @@ def load_mesh(path: Path) -> Mesh:
 
 
 def load_fiducial_points(path: Path) -> LabeledPoints:
-    """Read a fiducials JSON file into labeled points."""
+    """Read a fiducials JSON file into labeled points.
+
+    Also accepts an MNE-style ``coordsystem.json``: its MRI fiducial
+    coordinates are converted to millimetres through
+    :meth:`~virda.models.coordsystem.Coordsystem.to_fiducials`.
+    """
     fiducials = load_fiducials(path)
     if not fiducials.items:
         raise ValueError("no fiducials found in file")
     points = np.stack([fiducial.coordinates for fiducial in fiducials.items])
     labels = tuple(fiducial.name or fiducial.fiducial_id for fiducial in fiducials.items)
     return LabeledPoints(np.asarray(points, dtype=np.float64), labels)
+
+
+def load_measurements(path: Path) -> Electrodes:
+    """Read a measurements JSON file into an :class:`Electrodes` model."""
+    return import_measurements(path)
 
 
 def load_point_rows(path: Path) -> LabeledPoints:
