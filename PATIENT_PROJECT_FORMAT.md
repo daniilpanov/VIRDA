@@ -174,17 +174,19 @@ pipeline's Stage 1-3 output where noted.
 | `localization/electrodes_scalp.json`   | Localization        | Localized scalp contact points: `[{"name", "x", "y", "z"}, ...]` (scanner RAS mm). |
 | `localization/electrodes_ese.json`     | Localization        | Localized ESE body-center points, same row shape. |
 
-Scanner rules (the GUI's single source of truth): `fiducials.json`,
-`measurements.json`, `coordsystem.json`, `pipeline_config.json`,
-`base_mesh.ply` and `final_mesh.ply` are accepted in any project folder
-(first match fills the slot); `head_mask.nii.gz` only under `segmentation/`,
-`mesh.ply` only under `ese/` (the legacy `ese/ese_mesh.ply` is still found),
-and NIfTI volumes only under `input/` with `*.nii.gz` preferred over
-`*.nii`. Dot-directories are never searched. Precedence when several
-candidates exist: `fiducials.json` wins over `coordsystem.json` as the
-fiducial input (a lone `coordsystem.json` is converted through its MRI
-fiducial coordinates), and `final_mesh.ply` wins over `base_mesh.ply` as
-the scene and postprocessing mesh.
+Scanner rules (the GUI's single source of truth): each slot first looks
+in its canonical project folder (NIfTI, configs and fiducials under
+`input/`, the mask under `segmentation/`, meshes under `scalp/`, electrode
+points under `localization/`), then accepts the file anywhere in the
+project, so a GUI-written canonical file wins over a stray or legacy copy
+and old layouts still open. `mesh.ply` counts as the ESE mesh only under
+`ese/` (the legacy `ese/ese_mesh.ply` is still found), and NIfTI volumes
+come from `input/` with `*.nii.gz` preferred over `*.nii`. Dot-directories
+are never searched. Precedence when several candidates exist:
+`fiducials.json` wins over `coordsystem.json` as the fiducial input (a lone
+`coordsystem.json` is converted through its MRI fiducial coordinates), and
+`final_mesh.ply` wins over `base_mesh.ply` as the scene and postprocessing
+mesh.
 
 ## `logs/`
 
