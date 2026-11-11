@@ -2,6 +2,8 @@
 
 Each saver writes tiny real files into ``tmp_path`` (NIfTI via nibabel,
 PLY via trimesh) and the written files are read back or checked on disk.
+The localization savers write the virda exporter formats, so the CSV
+point files are read back through the virda point importer.
 """
 
 import json
@@ -12,12 +14,13 @@ import nibabel as nib
 import numpy as np
 import trimesh
 
+from virda.io.importers.electrode_points import import_electrode_points
 from virda.models.electrode import Electrode, Electrodes
 from virda.models.mesh import Mesh
 from virda.models.mri_volume import MRIVolume
 from virda.models.segmentation_mask import SegmentationMask
 from virda_gui_new.api.ops import ScalpSurface
-from virda_gui_new.services.artifact_loading import load_fiducial_points, load_point_rows
+from virda_gui_new.services.artifact_loading import load_fiducial_points
 from virda_gui_new.services.artifact_saving import (
     save_ese_mesh,
     save_final_mesh,
@@ -30,9 +33,9 @@ _VOLUME = MRIVolume(
 )
 
 _FIDUCIAL_ROWS = [
-    ("NAS", np.array([0.0, 0.0, 1.0])),
-    ("LPA", np.array([1.0, 0.0, 0.0])),
-    ("RPA", np.array([-1.0, 0.0, 0.0])),
+    ("NAS", cast("Any", np.array([0.0, 0.0, 1.0]))),
+    ("LPA", cast("Any", np.array([1.0, 0.0, 0.0]))),
+    ("RPA", cast("Any", np.array([-1.0, 0.0, 0.0]))),
 ]
 _MEASUREMENTS = {"Fz": {"NAS": 120.5, "LPA": 131.2}}
 
@@ -78,10 +81,10 @@ def test_save_localization_writes_all_files(tmp_path: Path) -> None:
             Electrode(
                 "A",
                 {"NAS": 1.0},
-                ese_coords=np.array([1.0, 2.0, 3.0]),
-                scalp_coords=np.array([4.0, 5.0, 6.0]),
+                ese_coords=cast("Any", np.array([1.0, 2.0, 3.0])),
+                scalp_coords=cast("Any", np.array([4.0, 5.0, 6.0])),
             ),
-            Electrode("B", {"LPA": 2.0}, ese_coords=np.array([7.0, 8.0, 9.0]), scalp_coords=None),
+            Electrode("B", {"LPA": 2.0}, ese_coords=cast("Any", np.array([7.0, 8.0, 9.0])), scalp_coords=None),
         ]
     )
 
@@ -97,13 +100,21 @@ def test_save_localization_writes_all_files(tmp_path: Path) -> None:
         "electrodes": [{"electrode_id": "Fz", "measured_distances": {"NAS": 120.5, "LPA": 131.2}}]
     }
 
-    scalp = load_point_rows(tmp_path / "localization" / "electrodes_scalp.json")
-    assert scalp.labels == ("A",)
-    assert scalp.points.tolist() == [[4.0, 5.0, 6.0]]
+    scalp_path = tmp_path / "localization" / "electrodes_scalp.csv"
+    with scalp_path.open(newline="", encoding="utf-8") as fh:
+        header = fh.readline().strip()
+    # The exact batch pipeline header of export_electrodes_scalp.
+    assert header == "electrode_id,x,y,z,residual_mm,flagged"
+    scalp = import_electrode_points(scalp_path)
+    assert [point.electrode_id for point in scalp] == ["A"]
+    assert scalp[0].coordinates.tolist() == [4.0, 5.0, 6.0]
 
-    ese = load_point_rows(tmp_path / "localization" / "electrodes_ese.json")
-    assert ese.labels == ("A", "B")
-    assert ese.points.tolist() == [[1.0, 2.0, 3.0], [7.0, 8.0, 9.0]]
+    ese = import_electrode_points(tmp_path / "localization" / "electrodes_ese.csv")
+    assert [point.electrode_id for point in ese] == ["A", "B"]
+    assert [point.coordinates.tolist() for point in ese] == [
+        [1.0, 2.0, 3.0],
+        [7.0, 8.0, 9.0],
+    ]
 
 
 def test_save_localization_skips_files_without_coordinates(tmp_path: Path) -> None:
@@ -113,8 +124,8 @@ def test_save_localization_skips_files_without_coordinates(tmp_path: Path) -> No
 
     assert (tmp_path / "localization" / "fiducials.json").is_file()
     assert (tmp_path / "localization" / "measurements.json").is_file()
-    assert not (tmp_path / "localization" / "electrodes_scalp.json").exists()
-    assert not (tmp_path / "localization" / "electrodes_ese.json").exists()
+    assert not (tmp_path / "localization" / "electrodes_scalp.csv").exists()
+    assert not (tmp_path / "localization" / "electrodes_ese.csv").exists()
 
 
 def test_save_localization_rejects_invalid_fiducial_rows(tmp_path: Path) -> None:

@@ -1,24 +1,30 @@
 """Saving produced step artifacts into the project directory.
 
 Each saver mirrors one pipeline step's outputs into the file names the
-project scanner knows (:mod:`virda_gui_new.services.project_scan`):
-meshes and the segmentation mask go through the :mod:`virda.io.exporters`
-writers, the localization JSON files are written directly in the GUI's
-own artifact formats (the same shapes the loaders read back). All savers
-create parent directories and raise on failure; popups surface the error
-through their hint label and ``failed`` signal.
+project scanner knows (:mod:`virda_gui_new.services.project_scan`). The
+GUI side is a thin orchestration only: it chooses the canonical project
+paths, while every file format is written by a :mod:`virda.io.exporters`
+writer. All savers raise on failure; popups surface the error through
+their hint label and ``failed`` signal.
 """
 
-import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
+from virda.io.exporters.electrodes import export_electrodes_ese, export_electrodes_scalp
+from virda.io.exporters.ese_mesh import export_ese_mesh
+from virda.io.exporters.fiducials import export_fiducials
+from virda.io.exporters.measurements import export_measurements
 from virda.io.exporters.scalp_mesh import export_scalp_mesh
 from virda.io.exporters.segmentation import export_head_mask
-from virda.io.fiducial_helpers import save_fiducials
 from virda.models.electrode import Electrodes
 from virda.models.mri_volume import MRIVolume
-from virda_gui_new.services.localization import FiducialRows, MeasurementTable, build_fiducials
+from virda_gui_new.services.localization import (
+    FiducialRows,
+    MeasurementTable,
+    build_electrodes,
+    build_fiducials,
+)
 
 if TYPE_CHECKING:
     from virda.models.mesh import Mesh
@@ -50,7 +56,7 @@ def save_ese_mesh(project: Path, mesh: Mesh) -> None:
     The per-vertex normals stay in-memory only, matching the seeding
     contract.
     """
-    export_scalp_mesh(project / "ese" / "mesh.ply", mesh)
+    export_ese_mesh(project / "ese" / "mesh.ply", mesh)
 
 
 def save_localization(
@@ -64,59 +70,22 @@ def save_localization(
     ``fiducials.json`` holds the current fiducial table rows, so the
     saved file matches what the popup shows and what the global store
     holds. ``measurements.json`` follows the project measurements format
-    (electrode ids with their measured distances). The localized
-    electrode coordinates become the point files the scanner reads back:
-    scalp contact points to ``electrodes_scalp.json`` and ESE body-center
-    points to ``electrodes_ese.json``; a file is skipped when no
-    electrode carries that coordinate set.
+    (electrode ids with their measured distances), built from the popup's
+    measurement table. The localized electrode coordinates become the
+    point CSVs the scanner reads back, in the batch pipeline's format:
+    scalp contact points to ``electrodes_scalp.csv`` and ESE body-center
+    points to ``electrodes_ese.csv``. A point CSV is written only when at
+    least one electrode carries that coordinate set (matching the
+    previous behavior of not writing the file at all); electrodes
+    without that coordinate set keep empty coordinate cells in the rows,
+    and the CSV reader skips such rows on load.
     """
     if not fiducial_rows:
         raise ValueError("no fiducial rows; refusing to write an empty fiducials.json")
-    save_fiducials(project / _LOCALIZATION_DIR / "fiducials.json", build_fiducials(fiducial_rows))
-    _write_json(
-        project / _LOCALIZATION_DIR / "measurements.json",
-        _measurements_document(measurements),
-    )
-    scalp_rows = _electrode_point_rows(electrodes, "scalp_coords")
-    if scalp_rows is not None:
-        _write_json(project / _LOCALIZATION_DIR / "electrodes_scalp.json", scalp_rows)
-    ese_rows = _electrode_point_rows(electrodes, "ese_coords")
-    if ese_rows is not None:
-        _write_json(project / _LOCALIZATION_DIR / "electrodes_ese.json", ese_rows)
-
-
-def _measurements_document(measurements: MeasurementTable) -> dict[str, Any]:
-    """Shape the measurement table like the project ``measurements.json``."""
-    return {
-        "electrodes": [
-            {"electrode_id": electrode_id, "measured_distances": dict(distances)}
-            for electrode_id, distances in measurements.items()
-        ]
-    }
-
-
-def _electrode_point_rows(
-    electrodes: Electrodes, coords_attribute: str
-) -> list[dict[str, Any]] | None:
-    """One ``{"name", "x", "y", "z"}`` row per localized electrode.
-
-    Electrodes without coordinates are skipped; ``None`` when no
-    electrode carries the attribute at all.
-    """
-    rows = [
-        {
-            "name": electrode.electrode_id,
-            "x": float(np_coords[0]),
-            "y": float(np_coords[1]),
-            "z": float(np_coords[2]),
-        }
-        for electrode in electrodes.items
-        if (np_coords := getattr(electrode, coords_attribute)) is not None
-    ]
-    return rows or None
-
-
-def _write_json(path: Path, document: Any) -> None:
-    """Write ``document`` as JSON, creating parent directories."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(document, indent=2, ensure_ascii=False), encoding="utf-8")
+    localization = project / _LOCALIZATION_DIR
+    export_fiducials(localization / "fiducials.json", build_fiducials(fiducial_rows))
+    export_measurements(localization / "measurements.json", build_electrodes(measurements))
+    if any(electrode.scalp_coords is not None for electrode in electrodes.items):
+        export_electrodes_scalp(localization / "electrodes_scalp.csv", electrodes)
+    if any(electrode.ese_coords is not None for electrode in electrodes.items):
+        export_electrodes_ese(localization / "electrodes_ese.csv", electrodes)
