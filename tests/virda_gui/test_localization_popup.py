@@ -575,7 +575,9 @@ def test_concrete_popup_fiducials_frame_needs_three_fiducials(qapp, popups) -> N
     )
 
     # NAS sits at the fiducials-frame origin; collection stays world.
-    assert [cast("QTableWidgetItem", popup._fiducials_table._table.item(0, c)).text() for c in (1, 2, 3)] == ["0", "0", "0"]
+    assert [
+        cast("QTableWidgetItem", popup._fiducials_table._table.item(0, c)).text() for c in (1, 2, 3)
+    ] == ["0", "0", "0"]
     assert popup.collect_fiducial_rows()[0][1].tolist() == _WORLD_FIDUCIALS[0].tolist()
 
 
@@ -616,7 +618,9 @@ def test_localized_save_is_world_canonical_in_head_display(
     popups.append(popup)
 
     assert popup._fiducials_frames.frame() == CoordinateFrame.HEAD
-    assert [cast("QTableWidgetItem", popup._fiducials_table._table.item(0, c)).text() for c in (1, 2, 3)] == [
+    assert [
+        cast("QTableWidgetItem", popup._fiducials_table._table.item(0, c)).text() for c in (1, 2, 3)
+    ] == [
         "-7.5",
         "92.5",
         "-7.5",

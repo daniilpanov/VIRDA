@@ -408,7 +408,9 @@ def test_electrodes_table_renders_in_display_frame(qapp) -> None:
 def test_electrodes_table_without_converter_stays_world(qapp) -> None:
     widget = ElectrodesTable()
     widget.show_electrodes(
-        Electrodes([Electrode("A", {"LPA": 1.0}, ese_coords=cast("Any", np.array([1.0, 2.0, 3.0])))])
+        Electrodes(
+            [Electrode("A", {"LPA": 1.0}, ese_coords=cast("Any", np.array([1.0, 2.0, 3.0])))]
+        )
     )
 
     widget.set_display_frame(CoordinateFrame.HEAD)

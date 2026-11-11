@@ -28,7 +28,9 @@ def _write_ply(path: Path) -> None:
 
 
 def _write_fiducials(path: Path) -> None:
-    fiducials = Fiducials(items=[Fiducial("c1", "nas", cast("Any", np.array([0.0, 1.0, 2.0])), "world")])
+    fiducials = Fiducials(
+        items=[Fiducial("c1", "nas", cast("Any", np.array([0.0, 1.0, 2.0])), "world")]
+    )
     save_fiducials(path, fiducials)
 
 

@@ -84,7 +84,12 @@ def test_save_localization_writes_all_files(tmp_path: Path) -> None:
                 ese_coords=cast("Any", np.array([1.0, 2.0, 3.0])),
                 scalp_coords=cast("Any", np.array([4.0, 5.0, 6.0])),
             ),
-            Electrode("B", {"LPA": 2.0}, ese_coords=cast("Any", np.array([7.0, 8.0, 9.0])), scalp_coords=None),
+            Electrode(
+                "B",
+                {"LPA": 2.0},
+                ese_coords=cast("Any", np.array([7.0, 8.0, 9.0])),
+                scalp_coords=None,
+            ),
         ]
     )
 
