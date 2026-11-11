@@ -225,3 +225,41 @@ def test_redo_agreed_on_done_step1_emits_requested(qapp, manager, menu, monkeypa
     assert manager.all_contexts() == [{}, {"scalp_surface": "ready"}]
     assert invalidated == [1]
     assert requested == [1]
+
+
+def test_done_current_step_reopens_without_confirmation(qapp, manager, menu, monkeypatch) -> None:
+    """Clicking a done step that has no later steps skips the redo dialog."""
+    manager.next_step()
+    manager.set_step_context_item(1, "scalp_surface", "ready")  # done, current = 1
+    calls: list[tuple[object, str]] = []
+    monkeypatch.setattr(
+        main_menu, "confirm_step_redo", lambda parent, _name, _disc: calls.append((parent, _name))
+    )
+    requested, invalidated = _connect(menu)
+
+    menu._on_step_clicked(1)
+
+    assert calls == []
+    assert manager.get_current_step() == 1
+    assert invalidated == []
+    assert requested == [1]
+
+
+def test_seeded_ese_mesh_shows_done(qapp, manager, menu) -> None:
+    """ESE mesh is done by its ``ese_mesh`` artifact; normals are not required."""
+    manager.set_step_context_item(0, "volume", "ready")
+    manager.next_step()
+    manager.set_step_context_item(1, "scalp_surface", "ready")
+    manager.next_step()
+    manager.set_step_context_item(2, "mesh", "ready")
+    manager.next_step()
+    manager.set_step_context_item(3, "ese_mesh", "ready")
+    manager.next_step()
+
+    assert _row_texts(menu) == [
+        "0. NIfTI import [done]",
+        "1. Base mesh [done]",
+        "2. Mesh postprocessing [done]",
+        "3. ESE mesh [done]",
+        "4. Localization [current]",
+    ]

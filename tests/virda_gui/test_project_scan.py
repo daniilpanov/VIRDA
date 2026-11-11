@@ -157,9 +157,9 @@ def test_seed_full_set_without_electrodes(tmp_path: Path) -> None:
         "fiducials": project / "input" / "fiducials.json",
         "scalp_points": project / "localization" / "electrodes_scalp.json",
     }
-    # "normals" is in-memory only, so step 3 stays not-done.
+    # "normals" is in-memory only and not part of the done state.
     assert "normals" not in contexts[3]
-    assert manager.is_step_done(3) is False
+    assert manager.is_step_done(3) is True
 
 
 def test_seed_full_set_with_electrodes(tmp_path: Path) -> None:
