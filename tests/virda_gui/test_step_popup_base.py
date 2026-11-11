@@ -189,6 +189,9 @@ class _Host:
     def _close_popup(self, step_n: int) -> None:
         MainWindow._close_popup(cast("MainWindow", self), step_n)
 
+    def _forget_popup(self, step_n: int) -> None:
+        MainWindow._forget_popup(cast("MainWindow", self), step_n)
+
 
 def test_dispatcher_missing_factory_logs(qapp) -> None:
     host = _Host()
@@ -229,4 +232,31 @@ def test_dispatcher_full_flow(qapp, manager, popups) -> None:
     assert host.logs == [f"Step {BASE_MESH.index} done."]
 
     popup.shutdown()
+    qapp.processEvents()
+
+
+def test_dispatcher_user_closed_popup_window(qapp, manager, popups) -> None:
+    """A manually closed popup window is dropped from dispatcher tracking."""
+    host = _Host()
+    host._popup_factories[BASE_MESH.index] = lambda: _ProbePopup(BASE_MESH, manager)
+    for _ in range(BASE_MESH.index):
+        manager.next_step()
+
+    MainWindow._open_step_popup(cast("MainWindow", host), BASE_MESH.index)
+    window = host._popup_windows[BASE_MESH.index]
+    window.close()
+    qapp.processEvents()
+
+    assert host._popup_windows == {}
+    assert host._popups == {}
+
+    # Reopening must not touch the destroyed window again.
+    MainWindow._open_step_popup(cast("MainWindow", host), BASE_MESH.index)
+    assert list(host._popups) == [BASE_MESH.index]
+    assert list(host._popup_windows) == [BASE_MESH.index]
+
+    for popup in host._popups.values():
+        popup.shutdown()
+    for window in host._popup_windows.values():
+        window.close()
     qapp.processEvents()
