@@ -58,12 +58,80 @@ def test_scan_reports_all_artifacts(tmp_path: Path) -> None:
     assert artifacts.scalp_points == project / "localization" / "electrodes_scalp.json"
     assert artifacts.ese_mesh == project / "ese" / "ese_mesh.ply"
     assert artifacts.ese_points == project / "localization" / "electrodes_ese.json"
+    assert artifacts.measurements is None
+    assert artifacts.coordsystem is None
+    assert artifacts.pipeline_config is None
+    assert artifacts.base_mesh is None
 
 
 def test_scan_of_empty_directory_finds_nothing(tmp_path: Path) -> None:
     artifacts = find_project_artifacts(tmp_path)
 
     assert artifacts == ProjectArtifacts()
+
+
+def test_scan_finds_whole_project_artifacts_in_any_folder(tmp_path: Path) -> None:
+    nested = tmp_path / "a" / "b"
+    nested.mkdir(parents=True)
+    names = {
+        "fiducials": "fiducials.json",
+        "measurements": "measurements.json",
+        "coordsystem": "coordsystem.json",
+        "pipeline_config": "pipeline_config.json",
+        "base_mesh": "base_mesh.ply",
+        "scalp_mesh": "final_mesh.ply",
+    }
+    for _slot, name in names.items():
+        (nested / name).write_text("")
+
+    artifacts = find_project_artifacts(tmp_path)
+
+    for slot, name in names.items():
+        assert getattr(artifacts, slot) == nested / name
+
+
+def test_scan_nifti_only_in_input(tmp_path: Path) -> None:
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    (outside / "head.nii.gz").write_text("")
+
+    assert find_project_artifacts(tmp_path).nifti is None
+
+
+def test_scan_ese_mesh_from_new_name(tmp_path: Path) -> None:
+    ese = tmp_path / "ese"
+    ese.mkdir()
+    (ese / "mesh.ply").write_text("")
+
+    assert find_project_artifacts(tmp_path).ese_mesh == ese / "mesh.ply"
+
+
+def test_scan_ese_mesh_keeps_legacy_name(tmp_path: Path) -> None:
+    """Old projects store the ESE mesh as ``ese/ese_mesh.ply``; still found."""
+    ese = tmp_path / "ese"
+    ese.mkdir()
+    (ese / "ese_mesh.ply").write_text("")
+
+    assert find_project_artifacts(tmp_path).ese_mesh == ese / "ese_mesh.ply"
+
+
+def test_scan_ese_mesh_prefers_new_name_over_legacy(tmp_path: Path) -> None:
+    ese = tmp_path / "ese"
+    ese.mkdir()
+    (ese / "ese_mesh.ply").write_text("")
+    (ese / "mesh.ply").write_text("")
+
+    assert find_project_artifacts(tmp_path).ese_mesh == ese / "mesh.ply"
+
+
+def test_scan_mesh_ply_outside_ese_is_not_an_ese_mesh(tmp_path: Path) -> None:
+    (tmp_path / "mesh").mkdir()
+    (tmp_path / "mesh" / "mesh.ply").write_text("")
+
+    artifacts = find_project_artifacts(tmp_path)
+
+    assert artifacts.ese_mesh is None
+    assert artifacts.scalp_mesh is None
 
 
 def test_scan_prefers_nii_gz_over_nii(tmp_path: Path) -> None:
@@ -105,6 +173,19 @@ def test_scan_reports_partial_artifacts(tmp_path: Path) -> None:
     assert artifacts.scalp_points is None
     assert artifacts.ese_mesh is None
     assert artifacts.ese_points is None
+
+
+def test_scan_skips_dot_directories(tmp_path: Path) -> None:
+    """Tool/venv caches never contribute artifacts, wherever they hide."""
+    hidden = tmp_path / ".opencode" / "cache"
+    hidden.mkdir(parents=True)
+    (hidden / "fiducials.json").write_text("")
+    (hidden / "final_mesh.ply").write_text("")
+
+    artifacts = find_project_artifacts(tmp_path)
+
+    assert artifacts.fiducials is None
+    assert artifacts.scalp_mesh is None
 
 
 # --- seed_steps_from_artifacts ---
