@@ -39,28 +39,36 @@ class ArtifactRule:
 
 
 #: Single source of truth for artifact discovery. Rules run in order and
-#: the first match fills its slot, so earlier rules for one slot are the
-#: preferred names (NIfTI: ``*.nii.gz`` before ``*.nii``; ESE mesh: the
-#: ``mesh.ply`` project format before the legacy ``ese_mesh.ply``).
-#: Whole-project rules find ``fiducials.json``, ``measurements.json``,
-#: ``coordsystem.json``, ``pipeline_config.json``, ``base_mesh.ply`` and
-#: ``final_mesh.ply`` in any folder; the segmentation mask only under
-#: ``segmentation/``, ``mesh.ply`` counts as an ESE mesh only under
-#: ``ese/`` and NIfTI volumes only under ``input/``. Dot-directories are
-#: never searched.
+#: the first match fills its slot: slots with a canonical home first look
+#: there (NIfTI, configs and fiducials under ``input/``, the mask under
+#: ``segmentation/``, meshes under ``scalp/``, electrode points under
+#: ``localization/``), then accept the file anywhere in the project --
+#: so a GUI-written canonical file wins over a stray or legacy copy, and
+#: old layouts still open. ESE mesh: the ``mesh.ply`` project format
+#: before the legacy ``ese_mesh.ply``; NIfTI ``*.nii.gz`` before
+#: ``*.nii``. ``mesh.ply`` counts as an ESE mesh only under ``ese/``.
+#: Dot-directories are never searched.
 _ARTIFACT_RULES: tuple[ArtifactRule, ...] = (
     ArtifactRule("nifti", "*.nii.gz", ("input",)),
     ArtifactRule("nifti", "*.nii", ("input",)),
+    ArtifactRule("fiducials", "fiducials.json", ("input",)),
     ArtifactRule("fiducials", "fiducials.json"),
+    ArtifactRule("measurements", "measurements.json", ("input",)),
     ArtifactRule("measurements", "measurements.json"),
+    ArtifactRule("coordsystem", "coordsystem.json", ("input",)),
     ArtifactRule("coordsystem", "coordsystem.json"),
+    ArtifactRule("pipeline_config", "pipeline_config.json", ("input",)),
     ArtifactRule("pipeline_config", "pipeline_config.json"),
     ArtifactRule("head_mask", "head_mask.nii.gz", ("segmentation",)),
+    ArtifactRule("base_mesh", "base_mesh.ply", ("scalp",)),
     ArtifactRule("base_mesh", "base_mesh.ply"),
+    ArtifactRule("scalp_mesh", "final_mesh.ply", ("scalp",)),
     ArtifactRule("scalp_mesh", "final_mesh.ply"),
     ArtifactRule("ese_mesh", "mesh.ply", ("ese",)),
     ArtifactRule("ese_mesh", "ese_mesh.ply", ("ese",)),
+    ArtifactRule("scalp_points", "electrodes_scalp.json", ("localization",)),
     ArtifactRule("scalp_points", "electrodes_scalp.json"),
+    ArtifactRule("ese_points", "electrodes_ese.json", ("localization",)),
     ArtifactRule("ese_points", "electrodes_ese.json"),
 )
 

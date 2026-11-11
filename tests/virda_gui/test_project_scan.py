@@ -129,6 +129,29 @@ def test_scan_ese_mesh_prefers_new_name_over_legacy(tmp_path: Path) -> None:
     assert find_project_artifacts(tmp_path).ese_mesh == ese / "mesh.ply"
 
 
+def test_scan_prefers_canonical_folder_over_stray_copy(tmp_path: Path) -> None:
+    """A GUI-written canonical file wins over a stray or legacy copy."""
+    stray = tmp_path / "mesh"
+    stray.mkdir()
+    (stray / "final_mesh.ply").write_text("")
+    canonical = tmp_path / "scalp"
+    canonical.mkdir()
+    (canonical / "final_mesh.ply").write_text("")
+
+    artifacts = find_project_artifacts(tmp_path)
+
+    assert artifacts.scalp_mesh == canonical / "final_mesh.ply"
+
+
+def test_scan_falls_back_to_any_folder(tmp_path: Path) -> None:
+    """Without a canonical copy the file is still found anywhere."""
+    stray = tmp_path / "mesh"
+    stray.mkdir()
+    (stray / "final_mesh.ply").write_text("")
+
+    assert find_project_artifacts(tmp_path).scalp_mesh == stray / "final_mesh.ply"
+
+
 def test_scan_mesh_ply_outside_ese_is_not_an_ese_mesh(tmp_path: Path) -> None:
     (tmp_path / "mesh").mkdir()
     (tmp_path / "mesh" / "mesh.ply").write_text("")
