@@ -54,8 +54,9 @@ class MainWindow(QMainWindow):
         self._steps_menu.stepRequested.connect(self._open_step_popup)
         self._steps_menu.stepsInvalidated.connect(self._on_steps_invalidated)
 
-        self._filetree = FileTree()
+        self._filetree: FileTree | None = FileTree()
         self._filetree_window = open_widget_window(self._filetree, title="File tree")
+        self._filetree_window.destroyed.connect(self._forget_filetree)
         self._filetree.set_artifacts(find_project_artifacts(self._project_path))
         self._filetree.fileActivated.connect(lambda path: self._log(f"File selected: {path}"))
 
@@ -102,7 +103,12 @@ class MainWindow(QMainWindow):
 
     def _on_steps_invalidated(self, n: int) -> None:
         self._log(f"Steps after {n} invalidated.")
-        self._filetree.set_artifacts(find_project_artifacts(self._project_path))
+        if self._filetree is not None:
+            self._filetree.set_artifacts(find_project_artifacts(self._project_path))
+
+    def _forget_filetree(self) -> None:
+        """Drop the file tree reference once its window was destroyed."""
+        self._filetree = None
 
     def _close_stale_popups(self, step_n: int) -> None:
         """Close open popup windows of steps beyond the current step."""
