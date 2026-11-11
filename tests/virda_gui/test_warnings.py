@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from virda_gui_new.dialogs.warnings import confirm_step_redo, show_warning
+from virda_gui_new.dialogs.warnings import confirm_partial_import, confirm_step_redo, show_warning
 
 
 @pytest.fixture
@@ -98,3 +98,43 @@ def test_show_warning_delegates(qapp, monkeypatch) -> None:
     assert captured["parent"] is None
     assert captured["title"] == "VIRDA warning"
     assert captured["text"] == "Something failed."
+
+
+def test_confirm_partial_import_yes_lists_failures_and_step(qapp, monkeypatch) -> None:
+    """Yes returns True; the dialog lists each dropped file and the recovery step."""
+    from PySide6.QtWidgets import QMessageBox
+
+    captured: dict[str, Any] = {}
+
+    def fake_question(parent, title, text, buttons=None, default=None):
+        captured.update(parent=parent, title=title, text=text, default=default)
+        return QMessageBox.StandardButton.Yes
+
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(fake_question))
+
+    failures = ["localization/electrodes_scalp.json: no electrode points found"]
+    assert confirm_partial_import(None, failures, 2) is True
+    assert captured["parent"] is None
+    assert captured["title"] == "Partial import"
+    assert captured["text"] == (
+        "Some project files could not be imported:\n"
+        "- localization/electrodes_scalp.json: no electrode points found\n\n"
+        "Recovery is available up to step 2 (Mesh postprocessing).\n\nContinue?"
+    )
+    assert captured["default"] == QMessageBox.StandardButton.No
+
+
+def test_confirm_partial_import_nothing_restored(qapp, monkeypatch) -> None:
+    """With no recoverable step the dialog says so and No returns False."""
+    from PySide6.QtWidgets import QMessageBox
+
+    captured: dict[str, Any] = {}
+
+    def fake_question(parent, title, text, buttons=None, default=None):
+        captured.update(text=text)
+        return QMessageBox.StandardButton.No
+
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(fake_question))
+
+    assert confirm_partial_import(None, ["input/a.nii: unreadable"], -1) is False
+    assert "No pipeline artifacts could be restored." in captured["text"]
