@@ -55,8 +55,8 @@ def test_rows_group_in_stable_order_with_plain_text(qapp, tree, tmp_path) -> Non
         tmp_path / "input" / "fiducials.json",
         tmp_path / "mesh" / "final_mesh.ply",
         tmp_path / "ese" / "ese_mesh.ply",
-        tmp_path / "localization" / "electrodes_scalp.json",
-        tmp_path / "localization" / "electrodes_ese.json",
+        tmp_path / "localization" / "electrodes_scalp.csv",
+        tmp_path / "localization" / "electrodes_ese.csv",
     ]
     for path in files:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -77,8 +77,8 @@ def test_rows_group_in_stable_order_with_plain_text(qapp, tree, tmp_path) -> Non
         "input/fiducials.json",
         "mesh/final_mesh.ply",
         "ese/ese_mesh.ply",
-        "localization/electrodes_scalp.json",
-        "localization/electrodes_ese.json",
+        "localization/electrodes_scalp.csv",
+        "localization/electrodes_ese.csv",
     ]
 
 

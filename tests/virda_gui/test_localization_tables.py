@@ -23,7 +23,7 @@ _WORLD_FIDUCIALS = np.array([[0.0, 100.0, 0.0], [-70.0, 0.0, 0.0], [70.0, 0.0, 0
 _FIDUCIAL_LABELS = ("NASION", "LPA", "RPA")
 # Mesh whose centroid is (7.5, 7.5, 7.5): the head frame shifts by that.
 _MESH_VERTICES = np.array([[0.0, 0.0, 0.0], [30.0, 0.0, 0.0], [0.0, 30.0, 0.0], [0.0, 0.0, 30.0]])
-_HEAD_ORIGIN = np.array([7.5, 7.5, 7.5])
+_HEAD_ORIGIN = cast("Any", np.array([7.5, 7.5, 7.5]))
 
 
 @pytest.fixture
@@ -380,7 +380,7 @@ def test_electrodes_table_renders_in_display_frame(qapp) -> None:
                 "A",
                 {"LPA": 10.0},
                 ese_coords=_WORLD_FIDUCIALS[0],
-                scalp_coords=np.array([1.0, 2.0, 3.0]),
+                scalp_coords=cast("Any", np.array([1.0, 2.0, 3.0])),
                 residual_error=0.125,
             )
         ]
@@ -408,7 +408,7 @@ def test_electrodes_table_renders_in_display_frame(qapp) -> None:
 def test_electrodes_table_without_converter_stays_world(qapp) -> None:
     widget = ElectrodesTable()
     widget.show_electrodes(
-        Electrodes([Electrode("A", {"LPA": 1.0}, ese_coords=np.array([1.0, 2.0, 3.0]))])
+        Electrodes([Electrode("A", {"LPA": 1.0}, ese_coords=cast("Any", np.array([1.0, 2.0, 3.0])))])
     )
 
     widget.set_display_frame(CoordinateFrame.HEAD)

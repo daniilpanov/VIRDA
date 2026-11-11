@@ -62,8 +62,8 @@ _ARTIFACT_RULES: tuple[ArtifactRule, ...] = (
     ArtifactRule("scalp_mesh", "final_mesh.ply"),
     ArtifactRule("ese_mesh", "mesh.ply", ("ese",)),
     ArtifactRule("ese_mesh", "ese_mesh.ply"),
-    ArtifactRule("scalp_points", "electrodes_scalp.json"),
-    ArtifactRule("ese_points", "electrodes_ese.json"),
+    ArtifactRule("scalp_points", "electrodes_scalp.csv"),
+    ArtifactRule("ese_points", "electrodes_ese.csv"),
 )
 
 

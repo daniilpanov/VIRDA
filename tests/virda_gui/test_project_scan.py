@@ -32,11 +32,11 @@ def make_project(
     if scalp_mesh:
         files.append(tmp_path / "mesh" / "final_mesh.ply")
     if scalp_points:
-        files.append(tmp_path / "localization" / "electrodes_scalp.json")
+        files.append(tmp_path / "localization" / "electrodes_scalp.csv")
     if ese_mesh:
         files.append(tmp_path / "ese" / "ese_mesh.ply")
     if ese_points:
-        files.append(tmp_path / "localization" / "electrodes_ese.json")
+        files.append(tmp_path / "localization" / "electrodes_ese.csv")
     if base_mesh:
         files.append(tmp_path / "scalp" / "base_mesh.ply")
     for path in files:
@@ -60,9 +60,9 @@ def test_scan_reports_all_artifacts(tmp_path: Path) -> None:
     assert artifacts.nifti == project / "input" / "volume.nii.gz"
     assert artifacts.fiducials == project / "input" / "fiducials.json"
     assert artifacts.scalp_mesh == project / "mesh" / "final_mesh.ply"
-    assert artifacts.scalp_points == project / "localization" / "electrodes_scalp.json"
+    assert artifacts.scalp_points == project / "localization" / "electrodes_scalp.csv"
     assert artifacts.ese_mesh == project / "ese" / "ese_mesh.ply"
-    assert artifacts.ese_points == project / "localization" / "electrodes_ese.json"
+    assert artifacts.ese_points == project / "localization" / "electrodes_ese.csv"
     assert artifacts.measurements is None
     assert artifacts.coordsystem is None
     assert artifacts.pipeline_config is None
@@ -186,6 +186,19 @@ def test_scan_head_mask_is_not_a_nifti(tmp_path: Path) -> None:
     assert artifacts.head_mask == segmentation / "head_mask.nii.gz"
 
 
+def test_scan_json_electrode_files_are_ignored(tmp_path: Path) -> None:
+    """The GUI-invented JSON point-row format is gone: no legacy support."""
+    localization = tmp_path / "localization"
+    localization.mkdir()
+    (localization / "electrodes_scalp.json").write_text("[]", encoding="utf-8")
+    (localization / "electrodes_ese.json").write_text("[]", encoding="utf-8")
+
+    artifacts = find_project_artifacts(tmp_path)
+
+    assert artifacts.scalp_points is None
+    assert artifacts.ese_points is None
+
+
 def test_scan_reports_partial_artifacts(tmp_path: Path) -> None:
     project = make_project(
         tmp_path,
@@ -264,7 +277,7 @@ def test_seed_full_set_without_electrodes(tmp_path: Path) -> None:
     assert manager.get_current_step() == 4
     contexts = manager.all_contexts()
     assert contexts[3] == {"ese_mesh": project / "ese" / "ese_mesh.ply"}
-    assert contexts[4] == {"scalp_points": project / "localization" / "electrodes_scalp.json"}
+    assert contexts[4] == {"scalp_points": project / "localization" / "electrodes_scalp.csv"}
     assert manager.get_global_item("fiducials") == project / "input" / "fiducials.json"
     # "normals" is in-memory only and not part of the done state.
     assert "normals" not in contexts[3]
@@ -280,8 +293,8 @@ def test_seed_full_set_with_electrodes(tmp_path: Path) -> None:
     assert manager.get_current_step() == 4
     contexts = manager.all_contexts()
     assert contexts[4] == {
-        "scalp_points": project / "localization" / "electrodes_scalp.json",
-        "ese_points": project / "localization" / "electrodes_ese.json",
+        "scalp_points": project / "localization" / "electrodes_scalp.csv",
+        "ese_points": project / "localization" / "electrodes_ese.csv",
     }
     assert manager.get_global_item("fiducials") == project / "input" / "fiducials.json"
 
@@ -304,7 +317,7 @@ def test_seed_ese_points_without_ese_mesh(tmp_path: Path) -> None:
     assert manager.get_current_step() == 4
     contexts = manager.all_contexts()
     assert contexts[3] == {}
-    assert contexts[4] == {"ese_points": project / "localization" / "electrodes_ese.json"}
+    assert contexts[4] == {"ese_points": project / "localization" / "electrodes_ese.csv"}
 
 
 def test_seed_fiducials_only_still_reaches_step_4(tmp_path: Path) -> None:

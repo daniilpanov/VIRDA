@@ -1,6 +1,5 @@
 """Unit tests for :mod:`virda_gui_new.services.artifact_loading` and scene building."""
 
-import json
 from pathlib import Path
 
 import nibabel as nib
@@ -15,9 +14,9 @@ from virda.models.mri_volume import MRIVolume
 from virda_gui_new.dto.steps import STEPS
 from virda_gui_new.dto.viewer3d import LabeledPoints
 from virda_gui_new.services.artifact_loading import (
+    load_electrode_points,
     load_fiducial_points,
     load_mesh,
-    load_point_rows,
     load_volume,
 )
 from virda_gui_new.services.project_scan import find_project_artifacts
@@ -45,8 +44,11 @@ def _write_fiducials(path: Path) -> None:
     save_fiducials(path, fiducials)
 
 
-def _write_point_rows(path: Path, rows: list[dict[str, object]]) -> None:
-    path.write_text(json.dumps(rows), encoding="utf-8")
+def _write_points_csv(path: Path, rows: list[tuple[str, str, str, str]]) -> None:
+    """Write the pipeline coords CSV header plus ``(id, x, y, z)`` rows."""
+    lines = ["electrode_id,x,y,z,residual_mm,flagged"]
+    lines += [f"{electrode_id},{x},{y},{z},,no" for electrode_id, x, y, z in rows]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _make_manager(project: Path) -> StepsManager:
@@ -93,21 +95,17 @@ def test_load_fiducial_points_uses_names_with_id_fallback(project: Path) -> None
     assert points.labels == ("nas", "c2")
 
 
-def test_load_point_rows_skips_rows_with_null_coordinates(project: Path) -> None:
-    rows_path = project / "localization" / "electrodes_scalp.json"
-    _write_point_rows(
+def test_load_electrode_points_skips_rows_without_coordinates(project: Path) -> None:
+    rows_path = project / "localization" / "electrodes_scalp.csv"
+    _write_points_csv(
         rows_path,
-        [
-            {"name": "A1", "x": 1.0, "y": 2.0, "z": 3.0},
-            {"name": "A2", "x": 1.0, "y": 2.0, "z": None},
-            {"name": 4, "x": 4.0, "y": 5.0, "z": 6.0, "note": "extra"},
-        ],
+        [("A1", "1.0", "2.0", "3.0"), ("A2", "", "", "")],
     )
 
-    points = load_point_rows(rows_path)
+    points = load_electrode_points(rows_path)
 
-    assert points.points.tolist() == [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
-    assert points.labels == ("A1", "4")
+    assert points.points.tolist() == [[1.0, 2.0, 3.0]]
+    assert points.labels == ("A1",)
 
 
 def test_collect_scene_kwargs_volume_only(project: Path) -> None:
@@ -123,9 +121,9 @@ def test_collect_scene_kwargs_volume_only(project: Path) -> None:
 def test_collect_scene_kwargs_with_scalp_and_points(project: Path) -> None:
     _write_nifti(project / "input" / "a.nii")
     _write_ply(project / "mesh" / "final_mesh.ply")
-    _write_point_rows(
-        project / "localization" / "electrodes_scalp.json",
-        [{"name": "A1", "x": 1.0, "y": 2.0, "z": 3.0}],
+    _write_points_csv(
+        project / "localization" / "electrodes_scalp.csv",
+        [("A1", "1.0", "2.0", "3.0")],
     )
 
     kwargs = collect_scene_kwargs(_make_manager(project))
@@ -164,13 +162,13 @@ def test_collect_scene_kwargs_with_localization_artifacts(project: Path) -> None
     _write_nifti(project / "input" / "a.nii")
     _write_ply(project / "mesh" / "final_mesh.ply")
     _write_fiducials(project / "input" / "fiducials.json")
-    _write_point_rows(
-        project / "localization" / "electrodes_scalp.json",
-        [{"name": "A1", "x": 1.0, "y": 2.0, "z": 3.0}],
+    _write_points_csv(
+        project / "localization" / "electrodes_scalp.csv",
+        [("A1", "1.0", "2.0", "3.0")],
     )
-    _write_point_rows(
-        project / "localization" / "electrodes_ese.json",
-        [{"name": "E1", "x": 9.0, "y": 8.0, "z": 7.0}],
+    _write_points_csv(
+        project / "localization" / "electrodes_ese.csv",
+        [("E1", "9.0", "8.0", "7.0")],
     )
 
     kwargs = collect_scene_kwargs(_make_manager(project))
@@ -186,9 +184,9 @@ def test_collect_scene_kwargs_with_localization_artifacts(project: Path) -> None
 def test_collect_scene_kwargs_preserves_same_point_file_for_both_steps(project: Path) -> None:
     """The step-1 and step-4 scalp points are one file; it is loaded once."""
     _write_ply(project / "mesh" / "final_mesh.ply")
-    _write_point_rows(
-        project / "localization" / "electrodes_scalp.json",
-        [{"name": "A1", "x": 1.0, "y": 2.0, "z": 3.0}],
+    _write_points_csv(
+        project / "localization" / "electrodes_scalp.csv",
+        [("A1", "1.0", "2.0", "3.0")],
     )
 
     kwargs = collect_scene_kwargs(_make_manager(project))
@@ -245,20 +243,24 @@ def test_collect_scene_kwargs_empty_for_empty_project(project: Path) -> None:
 
 
 def test_collect_scene_kwargs_reports_unparsable_file(project: Path) -> None:
-    (project / "localization" / "electrodes_scalp.json").write_text("not json", encoding="utf-8")
+    (project / "localization" / "electrodes_scalp.csv").write_text(
+        "not a table\n", encoding="utf-8"
+    )
 
-    with pytest.raises(ValueError, match="electrodes_scalp.json"):
+    with pytest.raises(ValueError, match="electrodes_scalp.csv"):
         collect_scene_kwargs(_make_manager(project))
 
 
 def test_collect_scene_kwargs_collects_failures_instead_of_raising(project: Path) -> None:
-    (project / "localization" / "electrodes_scalp.json").write_text("not json", encoding="utf-8")
+    (project / "localization" / "electrodes_scalp.csv").write_text(
+        "not a table\n", encoding="utf-8"
+    )
     _write_nifti(project / "input" / "a.nii")
 
     failures: list[str] = []
     kwargs = collect_scene_kwargs(_make_manager(project), failures)
 
     assert len(failures) == 1
-    assert "electrodes_scalp.json" in failures[0]
+    assert "electrodes_scalp.csv" in failures[0]
     assert isinstance(kwargs["nifti"], MRIVolume)
     assert "scalp_points" not in kwargs

@@ -170,17 +170,21 @@ pipeline's Stage 1-3 output where noted.
 | `scalp/final_mesh.ply`                 | Mesh postprocessing | Cleaned, decimated and smoothed mesh (trimesh PLY). |
 | `ese/mesh.ply`                         | ESE mesh            | ESE surface (trimesh PLY); normals stay in memory only. |
 | `localization/fiducials.json`          | Localization        | Fiducial table in the `input/fiducials.json` format. |
-| `localization/measurements.json`       | Localization        | Measured distances in the Stage 3 `measurements.json` format. |
-| `localization/electrodes_scalp.json`   | Localization        | Localized scalp contact points: `[{"name", "x", "y", "z"}, ...]` (scanner RAS mm). |
-| `localization/electrodes_ese.json`     | Localization        | Localized ESE body-center points, same row shape. |
+| `localization/measurements.json`       | Localization        | Measured distances in the Stage 3 `measurements.json` format (no `fiducial_weights`). |
+| `localization/electrodes_scalp.csv`    | Localization        | Localized scalp contact points, in the pipeline's `electrodes_scalp.csv` format (see `localization/` above). |
+| `localization/electrodes_ese.csv`      | Localization        | Localized ESE body-center points, in the pipeline's `electrodes_ese.csv` format. |
+
+A point CSV is written only when at least one electrode carries that
+coordinate set; electrodes without it keep empty coordinate cells, and
+readers skip such rows.
 
 Scanner rules (the GUI's single source of truth): rules run in order and
 the first match fills its slot; every variant name is a first-class rule
 with no canonical-folder preference and no fallbacks. Most names are
 searched anywhere in the project (`fiducials.json`, `measurements.json`,
 `coordsystem.json`, `pipeline_config.json`, `base_mesh.ply`,
-`final_mesh.ply`, `ese_mesh.ply`, `electrodes_scalp.json`,
-`electrodes_ese.json`, `head_mask.nii.gz`, `*.nii.gz` before `*.nii`);
+`final_mesh.ply`, `ese_mesh.ply`, `electrodes_scalp.csv`,
+`electrodes_ese.csv`, `head_mask.nii.gz`, `*.nii.gz` before `*.nii`);
 the head mask is excluded from the NIfTI globs by name; `mesh.ply`
 counts as the ESE mesh only under `ese/` and outranks an
 `ese_mesh.ply` there. When several files match one rule, the first in
@@ -189,6 +193,11 @@ between different artifact kinds: `fiducials.json` wins over
 `coordsystem.json` as the fiducial input (a lone `coordsystem.json` is
 converted through its MRI fiducial coordinates), and `final_mesh.ply`
 wins over `base_mesh.ply` as the scene and postprocessing mesh.
+
+Electrode point files are CSV only: the GUI-invented JSON point-row
+files (`electrodes_scalp.json` / `electrodes_ese.json`) are no longer
+recognized, so projects carrying only those files do not seed electrode
+points (no legacy support).
 
 ## `logs/`
 

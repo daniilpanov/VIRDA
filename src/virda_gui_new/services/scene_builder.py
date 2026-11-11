@@ -32,9 +32,9 @@ _RULES: tuple[tuple[int, str, str, Callable[[Path], Any]], ...] = (
     (2, "mesh", "scalp", artifact_loading.load_mesh),
     (1, "scalp_surface", "scalp", artifact_loading.load_mesh),
     (3, "ese_mesh", "ese", artifact_loading.load_mesh),
-    (4, "scalp_points", "scalp_points", artifact_loading.load_point_rows),
-    (4, "ese_points", "ese_points", artifact_loading.load_point_rows),
-    (1, "scalp_points", "scalp_points", artifact_loading.load_point_rows),
+    (4, "scalp_points", "scalp_points", artifact_loading.load_electrode_points),
+    (4, "ese_points", "ese_points", artifact_loading.load_electrode_points),
+    (1, "scalp_points", "scalp_points", artifact_loading.load_electrode_points),
 )
 
 _READY_SOURCE_TYPES = (MRIVolume, Mesh, LabeledPoints)

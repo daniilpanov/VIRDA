@@ -1,17 +1,17 @@
 """Artifact file loading: step-context file paths -> ready viewer sources.
 
-Electrode point files (``electrodes_scalp.json`` / ``electrodes_ese.json``)
-hold a JSON array of point objects ``{"name": str, "x": mm, "y": mm,
-"z": mm}``; extra keys are tolerated and rows with missing or null
-coordinates are skipped.
+Electrode point files (``electrodes_scalp.csv`` / ``electrodes_ese.csv``)
+are the pipeline's coords CSV tables (``electrode_id, x, y, z,
+residual_mm, flagged``); they are read through the virda point importer,
+which skips the rows whose coordinate cells are empty.
 """
 
-import json
 from pathlib import Path
 
 import numpy as np
 
 from virda.io.fiducial_helpers import load_fiducials
+from virda.io.importers.electrode_points import import_electrode_points
 from virda.io.importers.measurements import import_measurements
 from virda.io.importers.nifti import import_nifti
 from virda.io.importers.scalp_mesh import import_scalp_mesh
@@ -51,21 +51,9 @@ def load_measurements(path: Path) -> Electrodes:
     return import_measurements(path)
 
 
-def load_point_rows(path: Path) -> LabeledPoints:
-    """Read an electrode point file into labeled points."""
-    rows = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(rows, list):
-        raise ValueError("expected a JSON array of point objects")
-    points: list[tuple[float, float, float]] = []
-    labels: list[str] = []
-    for row in rows:
-        if not isinstance(row, dict):
-            raise ValueError("expected point objects with name, x, y, z keys")
-        x, y, z = row.get("x"), row.get("y"), row.get("z")
-        if x is None or y is None or z is None:
-            continue
-        points.append((x, y, z))
-        labels.append(str(row.get("name", f"electrode {len(labels)}")))
-    if not points:
-        raise ValueError("no electrode points found; expected objects with name, x, y, z keys")
-    return LabeledPoints(np.asarray(points, dtype=np.float64), tuple(labels))
+def load_electrode_points(path: Path) -> LabeledPoints:
+    """Read an electrode point CSV (pipeline format) into labeled points."""
+    rows = import_electrode_points(path)
+    points = np.asarray([row.coordinates for row in rows], dtype=np.float64)
+    labels = tuple(row.electrode_id for row in rows)
+    return LabeledPoints(points, labels)
