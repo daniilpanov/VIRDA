@@ -1,6 +1,7 @@
 """Base widget for the pipeline step popups: form, run, apply, advance."""
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import Signal
@@ -26,16 +27,26 @@ class StepPopupBase(QWidget):
     when this step is still current; the hint shows ``"Done."`` and
     ``completed`` carries the step index, which is also the failure payload
     of ``failed``, whose message the hint shows. ``shutdown`` stops any
-    in-flight run before the host closes the popup.
+    in-flight run before the host closes the popup. ``project`` is the
+    open project directory; popups that persist their outputs hand it to
+    the artifact savers (``None`` keeps save-free runs, as in tests).
     """
 
     completed = Signal(int)  # noqa: N815
     failed = Signal(str)
 
-    def __init__(self, step: Step, manager: StepsManager, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        step: Step,
+        manager: StepsManager,
+        parent: QWidget | None = None,
+        *,
+        project: Path | None = None,
+    ) -> None:
         super().__init__(parent)
         self._step = step
         self._manager = manager
+        self._project = project
         self._runner = TaskRunner(self)
         self._runner.done.connect(self._on_done)
         self._runner.failed.connect(self._on_failed)

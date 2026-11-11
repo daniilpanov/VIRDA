@@ -225,6 +225,20 @@ def test_mocked_run_writes_context_and_advances(qapp, manager, popups, monkeypat
     assert manager.get_current_step() == 3  # base advanced past step 2
 
 
+def test_run_with_project_persists_final_mesh(
+    qapp, manager, popups, monkeypatch, tmp_path: Path
+) -> None:
+    _patch_ops(monkeypatch, [])
+    popup = MeshPostprocessingPopup(MESH_POSTPROCESSING, manager, project=tmp_path)
+    popups.append(popup)
+
+    popup._run_button.click()
+    _settle(qapp, popup)
+
+    assert popup._hint_label.text() == "Done."
+    assert (tmp_path / "scalp" / "final_mesh.ply").is_file()
+
+
 def test_missing_mesh_fails_collect(qapp, popups) -> None:
     steps = StepsManager(tuple(step.required_keys for step in STEPS))
     popup = MeshPostprocessingPopup(MESH_POSTPROCESSING, steps)

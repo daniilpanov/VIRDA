@@ -14,6 +14,7 @@ class ProjectArtifacts:
     measurements: Path | None = None
     coordsystem: Path | None = None
     pipeline_config: Path | None = None
+    head_mask: Path | None = None
     base_mesh: Path | None = None
     scalp_mesh: Path | None = None
     scalp_points: Path | None = None
@@ -43,9 +44,10 @@ class ArtifactRule:
 #: ``mesh.ply`` project format before the legacy ``ese_mesh.ply``).
 #: Whole-project rules find ``fiducials.json``, ``measurements.json``,
 #: ``coordsystem.json``, ``pipeline_config.json``, ``base_mesh.ply`` and
-#: ``final_mesh.ply`` in any folder; ``mesh.ply`` counts as an ESE mesh
-#: only under ``ese/`` and NIfTI volumes only under ``input/``.
-#: Dot-directories are never searched.
+#: ``final_mesh.ply`` in any folder; the segmentation mask only under
+#: ``segmentation/``, ``mesh.ply`` counts as an ESE mesh only under
+#: ``ese/`` and NIfTI volumes only under ``input/``. Dot-directories are
+#: never searched.
 _ARTIFACT_RULES: tuple[ArtifactRule, ...] = (
     ArtifactRule("nifti", "*.nii.gz", ("input",)),
     ArtifactRule("nifti", "*.nii", ("input",)),
@@ -53,6 +55,7 @@ _ARTIFACT_RULES: tuple[ArtifactRule, ...] = (
     ArtifactRule("measurements", "measurements.json"),
     ArtifactRule("coordsystem", "coordsystem.json"),
     ArtifactRule("pipeline_config", "pipeline_config.json"),
+    ArtifactRule("head_mask", "head_mask.nii.gz", ("segmentation",)),
     ArtifactRule("base_mesh", "base_mesh.ply"),
     ArtifactRule("scalp_mesh", "final_mesh.ply"),
     ArtifactRule("ese_mesh", "mesh.ply", ("ese",)),

@@ -26,6 +26,7 @@ class _Host:
         self.logs.append(message)
 
     _forget_filetree = MainWindow._forget_filetree
+    _refresh_filetree = MainWindow._refresh_filetree
     _on_steps_invalidated = MainWindow._on_steps_invalidated
 
 
@@ -64,6 +65,22 @@ def test_steps_invalidated_after_filetree_destroyed_is_guarded(qapp) -> None:
     MainWindow._on_steps_invalidated(host, 1)
 
     assert host.logs == ["Steps after 1 invalidated."]
+
+
+def test_refresh_filetree_rescans_the_project(qapp, tmp_path: Path) -> None:
+    """A fresh scan picks up artifacts written since the last refresh."""
+    host = _Host()
+    host._project_path = tmp_path
+    (tmp_path / "segmentation").mkdir()
+    (tmp_path / "segmentation" / "head_mask.nii.gz").write_text("")
+
+    MainWindow._refresh_filetree(host)
+
+    tree = host._filetree
+    assert tree is not None
+    assert [tree._list.item(i).text() for i in range(tree._list.count())] == [
+        "segmentation/head_mask.nii.gz"
+    ]
 
 
 def test_forget_filetree_wiring(qapp) -> None:

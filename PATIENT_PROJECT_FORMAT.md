@@ -157,6 +157,35 @@ The coordinate tables (`electrodes_scalp.csv`, `electrodes_ese.csv`) carry colum
 (`is_localized == false`).  `flagged` (`yes`/`no`) marks electrodes whose
 residual exceeds `residual_threshold_mm`.
 
+## GUI step outputs and scanner rules
+
+The interactive GUI (`virda-gui-new`) persists the artifacts of every step
+run it completes, using the layout below; the names differ from the batch
+pipeline's Stage 1-3 output where noted.
+
+| Path (GUI writes)                      | Produced by step    | Content |
+|----------------------------------------|---------------------|---------|
+| `segmentation/head_mask.nii.gz`        | Base mesh           | uint8 NIfTI head mask with the MRI affine (as above). |
+| `scalp/base_mesh.ply`                  | Base mesh           | Raw extracted scalp surface (trimesh PLY). |
+| `scalp/final_mesh.ply`                 | Mesh postprocessing | Cleaned, decimated and smoothed mesh (trimesh PLY). |
+| `ese/mesh.ply`                         | ESE mesh            | ESE surface (trimesh PLY); normals stay in memory only. |
+| `localization/fiducials.json`          | Localization        | Fiducial table in the `input/fiducials.json` format. |
+| `localization/measurements.json`       | Localization        | Measured distances in the Stage 3 `measurements.json` format. |
+| `localization/electrodes_scalp.json`   | Localization        | Localized scalp contact points: `[{"name", "x", "y", "z"}, ...]` (scanner RAS mm). |
+| `localization/electrodes_ese.json`     | Localization        | Localized ESE body-center points, same row shape. |
+
+Scanner rules (the GUI's single source of truth): `fiducials.json`,
+`measurements.json`, `coordsystem.json`, `pipeline_config.json`,
+`base_mesh.ply` and `final_mesh.ply` are accepted in any project folder
+(first match fills the slot); `head_mask.nii.gz` only under `segmentation/`,
+`mesh.ply` only under `ese/` (the legacy `ese/ese_mesh.ply` is still found),
+and NIfTI volumes only under `input/` with `*.nii.gz` preferred over
+`*.nii`. Dot-directories are never searched. Precedence when several
+candidates exist: `fiducials.json` wins over `coordsystem.json` as the
+fiducial input (a lone `coordsystem.json` is converted through its MRI
+fiducial coordinates), and `final_mesh.ply` wins over `base_mesh.ply` as
+the scene and postprocessing mesh.
+
 ## `logs/`
 
 `stageN.log` (`stage1.log`, `stage2.log` and `stage3.log`) — pipeline logs:
