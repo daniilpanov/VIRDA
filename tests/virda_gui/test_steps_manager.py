@@ -129,3 +129,48 @@ def test_subscriber_notified_on_every_mutation() -> None:
 
     manager.invalidate_steps_after(0)
     assert len(calls) == 3
+
+
+# --- global store ---
+
+
+def test_set_and_get_global_item() -> None:
+    manager = StepsManager()
+
+    manager.set_global_item("fiducials", "points")
+
+    assert manager.get_global_item("fiducials") == "points"
+    assert manager.get_global_item("other") is None
+
+
+def test_global_item_survives_invalidation_and_next_step() -> None:
+    """The store holds project-level inputs; step contexts do not."""
+    manager = StepsManager()
+    manager.set_global_item("fiducials", "points")
+    manager.next_step()
+
+    manager.invalidate_steps_after(0)
+
+    assert manager.get_global_item("fiducials") == "points"
+    assert manager.get_current_step() == 0
+
+
+def test_setting_global_item_to_none_clears_it() -> None:
+    manager = StepsManager()
+    manager.set_global_item("fiducials", "points")
+
+    manager.set_global_item("fiducials", None)
+
+    assert manager.get_global_item("fiducials") is None
+
+
+def test_global_item_mutation_notifies_subscribers() -> None:
+    calls: list[int] = []
+    manager = StepsManager()
+    manager.subscribe(lambda: calls.append(len(calls)))
+
+    manager.set_global_item("fiducials", "points")
+    assert len(calls) == 1
+
+    manager.set_global_item("fiducials", None)
+    assert len(calls) == 2

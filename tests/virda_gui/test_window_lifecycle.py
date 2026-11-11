@@ -8,6 +8,7 @@ heavy pipeline operation.
 
 import os
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 import shiboken6
@@ -100,3 +101,27 @@ def test_forgotten_steps_window_toggle_is_guarded(qapp, tmp_path: Path) -> None:
 
     assert main._steps_window is None  # noqa: SLF001 - registry under test
     assert not task_runner_module._ORPHANED
+    assert not task_runner_module._ORPHANED
+
+
+def test_fiducials_store_mutation_rebuilds_the_scene(qapp, tmp_path: Path) -> None:
+    """A global-store write triggers the pull-model scene rebuild."""
+    import numpy as np
+
+    from virda_gui_new.dto.viewer3d import LabeledPoints
+
+    main = _build_main_window(tmp_path)
+    try:
+        scenes: list[object] = []
+        main._viewer3d.sceneLoaded.connect(scenes.append)
+
+        points = LabeledPoints(np.array([[0.0, 0.0, 1.0]]), ("NAS",))
+        main._steps.set_global_item("fiducials", points)
+        qapp.processEvents()
+
+        assert scenes, "the store write did not reach the viewer"
+        scene = scenes[-1]
+        assert cast("Any", scene).fiducials is points
+    finally:
+        main.close()
+        qapp.processEvents()
