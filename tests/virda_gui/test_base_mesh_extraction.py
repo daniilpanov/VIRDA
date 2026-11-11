@@ -161,13 +161,26 @@ def test_no_volume_disables_run_and_fails_collect(qapp, popups) -> None:
         popup._collect_run()
 
 
-def test_path_volume_still_fails_collect(qapp, popups) -> None:
+def test_path_volume_loads_lazily_in_the_work_callable(
+    qapp, popups, monkeypatch, tmp_path: Path
+) -> None:
+    """A seeded project stores a Path; the file is read by the work callable."""
+    import nibabel as nib
+
+    (tmp_path / "input").mkdir()
+    nifti_path = tmp_path / "input" / "a.nii"
+    nib.save(nib.Nifti1Image(np.zeros((4, 4, 4), "float32"), np.eye(4)), nifti_path)
+
     steps = StepsManager(tuple(step.required_keys for step in STEPS))
-    steps.set_step_context_item(0, "volume", Path("some.nii.gz"))
+    steps.set_step_context_item(0, "volume", nifti_path)
     steps.next_step()
     popup = BaseMeshExtractionPopup(BASE_MESH, steps)
     popups.append(popup)
+    assert popup._run_button.isEnabled()  # the path alone is enough to run
 
-    with pytest.raises(ValueError) as excinfo:
-        popup._collect_run()
-    assert str(excinfo.value) == _NO_VOLUME
+    calls: list[Any] = []
+    _patch_generate(monkeypatch, calls)
+    popup._collect_run()()
+    loaded, _sealing, _voxel = calls[0]
+    assert isinstance(loaded, MRIVolume)
+    assert loaded.data.size == 64

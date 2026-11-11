@@ -1,6 +1,7 @@
 """Base mesh popup: scalp segmentation options, run, and context writes."""
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from PySide6.QtWidgets import (
@@ -16,6 +17,7 @@ from virda_gui.api.options import SealingOptions
 from virda_gui_new.api import ops
 from virda_gui_new.api.ops import ScalpSurface
 from virda_gui_new.dto.steps import BASE_MESH
+from virda_gui_new.services import artifact_loading
 from virda_gui_new.widgets.popup.abstract import StepPopupBase
 
 _NO_VOLUME = "Base mesh needs the NIfTI volume from step 0 (run NIfTI import first)."
@@ -32,9 +34,15 @@ class BaseMeshExtractionPopup(StepPopupBase):
     pipeline when step 1 is current.
     """
 
-    def build_form(self, layout: QVBoxLayout) -> None:
+    def _volume_source(self) -> MRIVolume | Path | None:
+        """Ready step-0 volume, or its file path for lazy loading."""
         volume = self._manager.get_step_context_item(0, "volume")
-        if not isinstance(volume, MRIVolume):
+        if isinstance(volume, MRIVolume | Path):
+            return volume
+        return None
+
+    def build_form(self, layout: QVBoxLayout) -> None:
+        if self._volume_source() is None:
             layout.addWidget(QLabel("Step 0 has no NIfTI yet."))
             self._run_button.setEnabled(False)
 
@@ -59,8 +67,8 @@ class BaseMeshExtractionPopup(StepPopupBase):
         layout.addWidget(self._radius_spin)
 
     def _collect_run(self) -> Callable[[], ScalpSurface]:
-        volume = self._manager.get_step_context_item(0, "volume")
-        if not isinstance(volume, MRIVolume):
+        source = self._volume_source()
+        if source is None:
             raise ValueError(_NO_VOLUME)
         voxel_size_mm: float | None = self._voxel_spin.value()
         if voxel_size_mm == 0.0:
@@ -69,7 +77,17 @@ class BaseMeshExtractionPopup(StepPopupBase):
             seal_enabled=self._seal_box.isChecked(),
             seal_radius=self._radius_spin.value(),
         )
-        return lambda: ops.generate_scalp_surface(volume, sealing, voxel_size_mm)
+
+        def run() -> ScalpSurface:
+            # A seeded project stores the NIfTI file path; loading it here
+            # keeps the file read on the worker thread.
+            if isinstance(source, MRIVolume):
+                volume = source
+            else:
+                volume = artifact_loading.load_volume(source)
+            return ops.generate_scalp_surface(volume, sealing, voxel_size_mm)
+
+        return run
 
     def _apply_result(self, result: Any) -> None:
         self._manager.set_step_context_item(BASE_MESH.index, "scalp_surface", result.mesh)
