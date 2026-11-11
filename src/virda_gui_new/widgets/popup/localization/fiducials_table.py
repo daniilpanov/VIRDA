@@ -1,11 +1,14 @@
 """Editable fiducial input grid for the localization popup."""
 
+from collections.abc import Sequence
+
 import numpy as np
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QPushButton,
     QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -50,6 +53,23 @@ class FiducialsTable(QWidget):
         """Append one blank editable row."""
         self._table.blockSignals(True)
         self._table.insertRow(self._table.rowCount())
+        self._table.blockSignals(False)
+        self.rowsChanged.emit()
+
+    def set_rows(self, rows: Sequence[tuple[str, Sequence[float]]]) -> None:
+        """Replace the grid with ``(name, xyz)`` rows; one change signal.
+
+        Cells are filled as editable items, so a prefilled row behaves
+        like a manually entered one.
+        """
+        self._table.blockSignals(True)
+        self._table.setRowCount(0)
+        for name, xyz in rows:
+            row = self._table.rowCount()
+            self._table.insertRow(row)
+            cells = (name, *(f"{float(value):g}" for value in xyz))
+            for column, text in enumerate(cells):
+                self._table.setItem(row, column, QTableWidgetItem(text))
         self._table.blockSignals(False)
         self.rowsChanged.emit()
 
