@@ -80,8 +80,6 @@ class MainWindow(QMainWindow):
             self._steps_menu, parent=self, title="Steps"
         )
         self._steps_window.destroyed.connect(self._forget_steps_menu)
-        self._steps_toggle = StepsToggleButton(self)
-        self._steps_toggle.toggleRequested.connect(self._toggle_steps_menu)
         self._popup_factories: dict[int, Callable[[], StepPopupBase]] = {}
         project = self._project_path
         self._popup_factories[1] = lambda: BaseMeshExtractionPopup(
@@ -107,6 +105,9 @@ class MainWindow(QMainWindow):
 
         self._export_windows: dict[ExportKind, WidgetWindow] = {}
         self._build_menu_bar()
+        # Built after the menu bar so the pill can anchor below it.
+        self._steps_toggle = StepsToggleButton(self)
+        self._steps_toggle.toggleRequested.connect(self._toggle_steps_menu)
 
         self.showMaximized()
 
