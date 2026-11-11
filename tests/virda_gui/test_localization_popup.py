@@ -262,8 +262,8 @@ def test_localized_run_persists_localization_files(
     localization = tmp_path / "localization"
     assert (localization / "fiducials.json").is_file()
     assert (localization / "measurements.json").is_file()
-    assert (localization / "electrodes_scalp.json").is_file()
-    assert (localization / "electrodes_ese.json").is_file()
+    assert (localization / "electrodes_scalp.csv").is_file()
+    assert (localization / "electrodes_ese.csv").is_file()
     # The saved fiducials match what the popup shows (and the store holds).
     points = load_fiducial_points(localization / "fiducials.json")
     assert points.labels == ("Nasion", "LPA", "RPA")
