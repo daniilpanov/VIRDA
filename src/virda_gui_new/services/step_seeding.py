@@ -14,7 +14,8 @@ immediately. Keys written per step:
 - step 3 (ESE mesh): ``ese_mesh``; ``normals`` is never written
   because normals are in-memory only
 - step 4 (Localization): ``scalp_points``; ``ese_points``, each when
-  present
+  present; ``measurements`` when the loaded artifact set carries the
+  measurements JSON as an :class:`Electrodes` model
 
 Fiducials are project-level inputs, not step-derived results: they go
 into the manager's global store (``set_global_item("fiducials", ...)``)
@@ -29,6 +30,7 @@ write; the working context of the following step is left uncreated.
 
 from pathlib import Path
 
+from virda.models.electrode import Electrodes
 from virda.models.mesh import Mesh
 from virda.models.mri_volume import MRIVolume
 from virda_gui_new.dto.viewer3d import LabeledPoints
@@ -49,7 +51,7 @@ def seed_steps_from_artifacts(
     advanced with ``next_step()`` up to the last step that received a
     write, leaving no trailing empty contexts.
     """
-    writes: dict[int, dict[str, Path | MRIVolume | Mesh | LabeledPoints]] = {}
+    writes: dict[int, dict[str, Path | MRIVolume | Mesh | LabeledPoints | Electrodes]] = {}
 
     if artifacts.nifti is not None:
         writes[0] = {"volume": artifacts.nifti}
@@ -75,6 +77,16 @@ def seed_steps_from_artifacts(
             writes[4]["scalp_points"] = artifacts.scalp_points
         if artifacts.ese_points is not None:
             writes[4]["ese_points"] = artifacts.ese_points
+
+    if artifacts.measurements is not None:
+        # The measurements JSON is seeded only as a ready Electrodes
+        # model (loaded projects): the export path works on in-memory
+        # models, and a scanned path stays a scan-only artifact. Like
+        # the fiducials, the measurements alone keep step 4 in the
+        # navigation (the context is created, possibly empty).
+        measurements = artifacts.measurements
+        if isinstance(measurements, Electrodes):
+            writes.setdefault(4, {})["measurements"] = measurements
 
     if artifacts.fiducials is not None:
         # Fiducials keep step 4 in the navigation even without electrode
