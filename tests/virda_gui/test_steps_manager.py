@@ -58,6 +58,14 @@ def test_step_done_false_for_step_without_required_keys_entry() -> None:
     assert manager.is_step_done(4) is False
 
 
+def test_step_done_false_for_empty_required_keys_entry() -> None:
+    """A step with a ``()`` keys entry (live step) is never done."""
+    manager = StepsManager((("a",), ()))
+    manager.next_step()
+
+    assert manager.is_step_done(1) is False
+
+
 def test_invalidate_steps_after_truncates_contexts() -> None:
     manager = StepsManager([(), (), ()])
     manager.set_step_context_item(0, "a", 1)

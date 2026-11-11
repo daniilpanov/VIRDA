@@ -13,11 +13,12 @@ class Step:
 
 
 # Steps of the GUI pipeline, in order. required_keys are the context keys
-# that mark the step done.
+# that mark the step done. ESE normals stay in-memory only (never seeded),
+# so they are not required for the done state.
 NIFTI = Step(0, "NIfTI import", ("volume",))
 BASE_MESH = Step(1, "Base mesh", ("scalp_surface",))
 MESH_POSTPROCESSING = Step(2, "Mesh postprocessing", ("mesh",))
-ESE_MESH = Step(3, "ESE mesh", ("ese_mesh", "normals"))
+ESE_MESH = Step(3, "ESE mesh", ("ese_mesh",))
 LOCALIZATION = Step(4, "Localization", ())  # live step: no required keys
 
 STEPS: tuple[Step, ...] = (NIFTI, BASE_MESH, MESH_POSTPROCESSING, ESE_MESH, LOCALIZATION)

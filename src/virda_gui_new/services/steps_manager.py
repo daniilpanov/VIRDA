@@ -45,12 +45,19 @@ class StepsManager:
         self._notify()
 
     def is_step_done(self, step_n: int) -> bool:
-        """True when every required context key of ``step_n`` is present."""
+        """True when every required context key of ``step_n`` is present.
+
+        A step without required keys (or without a keys entry at all)
+        is never done.
+        """
         self._validate_step(step_n)
         if step_n >= len(self._required_keys):
             return False
+        required = self._required_keys[step_n]
+        if not required:
+            return False
         context = self._step_contexts[step_n]
-        return all(key in context for key in self._required_keys[step_n])
+        return all(key in context for key in required)
 
     def next_step(self) -> None:
         self._step_contexts.push_back({})
