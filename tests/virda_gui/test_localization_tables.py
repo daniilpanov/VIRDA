@@ -30,65 +30,107 @@ def _item(text: str) -> object:
     return QTableWidgetItem(text)
 
 
-def test_fiducials_table_collects_complete_rows(qapp) -> None:
-    widget = FiducialsTable()
-    assert widget.collect_fiducial_rows() == []
+def test_fiducials_table_has_three_fixed_named_rows(qapp) -> None:
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QPushButton
 
-    for _row in range(3):
-        widget.add_row()
+    widget = FiducialsTable()
+
+    assert widget._table.rowCount() == 3
+    assert [widget._table.item(row, 0).text() for row in range(3)] == ["NAS", "LPA", "RPA"]
+    for row in range(3):
+        name_item = widget._table.item(row, 0)
+        assert not (name_item.flags() & Qt.ItemFlag.ItemIsEditable)
+    assert widget.collect_fiducial_rows() == []  # coordinates blank
+    buttons = widget.findChildren(QPushButton)
+    assert [button.text() for button in buttons] == ["Empty"]
+
+
+def test_fiducials_table_collects_complete_rows_in_fixed_order(qapp) -> None:
+    widget = FiducialsTable()
     rows = [
-        ("  Nasion  ", "0", "0", "1"),
+        ("NAS", "0", "0", "1"),
         ("LPA", "1.5", "0", "0"),
         ("RPA", "-1", "  ", "0"),  # incomplete row -> skipped
     ]
     for row, cells in enumerate(rows):
-        for column, text in enumerate(cells):
+        for column, text in enumerate(cells[1:], start=1):
             widget._table.setItem(row, column, _item(text))
 
     collected = widget.collect_fiducial_rows()
-    assert len(collected) == 2
-    names = [name for name, _xyz in collected]
-    xyzs = [xyz for _name, xyz in collected]
-    assert names == ["Nasion", "LPA"]
-    assert all(isinstance(name, str) for name in names)
-    assert all(xyz.shape == (3,) and xyz.dtype.kind == "f" for xyz in xyzs)
-    assert collected[0][1][2] == 1.0
-    assert collected[1][1][0] == 1.5
+    assert [name for name, _xyz in collected] == ["NAS", "LPA"]
+    assert all(isinstance(name, str) for name in (name for name, _xyz in collected))
+    assert all(xyz.shape == (3,) and xyz.dtype.kind == "f" for _name, xyz in collected)
+    assert collected[0][1].tolist() == [0.0, 0.0, 1.0]
+    assert collected[1][1].tolist() == [1.5, 0.0, 0.0]
 
 
-def test_fiducials_table_set_rows_fills_editable_grid(qapp) -> None:
+def test_fiducials_table_set_rows_matches_fixed_slots(qapp) -> None:
     widget = FiducialsTable()
     events: list[int] = []
     widget.rowsChanged.connect(lambda: events.append(1))
 
-    widget.set_rows([("Nasion", np.array([0.0, 1.0, 2.0])), ("LPA", np.array([-1.0, 0.0, 0.0]))])
+    widget.set_rows(
+        [
+            ("Nasion", np.array([0.0, 1.0, 2.0])),  # alias of the NAS slot
+            ("LPA", np.array([-1.0, 0.0, 0.0])),
+            ("Extra", np.array([9.0, 9.0, 9.0])),  # unknown name -> ignored
+        ]
+    )
 
     assert len(events) == 1  # one signal for the whole replacement
     collected = widget.collect_fiducial_rows()
     assert [name for name, _xyz in collected] == ["Nasion", "LPA"]
     assert collected[0][1].tolist() == [0.0, 1.0, 2.0]
     assert collected[1][1].tolist() == [-1.0, 0.0, 0.0]
+    # The artifact label is displayed and kept for the round trip.
+    assert widget._table.item(0, 0).text() == "Nasion"
+    assert widget._table.item(2, 1).text() == ""  # unmatched slot cleared
 
-    # A prefilled cell is editable like a manual row.
-    widget._table.item(0, 0).setText("Nz")
-    assert widget.collect_fiducial_rows()[0][0] == "Nz"
+    # A prefilled row is editable like a manually entered one.
+    widget._table.item(0, 1).setText("5")
+    assert widget.collect_fiducial_rows()[0][1].tolist() == [5.0, 1.0, 2.0]
 
 
-def test_fiducials_table_emits_rows_changed(qapp) -> None:
+def test_fiducials_table_set_rows_clears_absent_slots(qapp) -> None:
     widget = FiducialsTable()
-    events: list[int] = []
-    widget.rowsChanged.connect(lambda: events.append(len(events)))
+    widget.set_rows(
+        [
+            ("NAS", np.array([0.0, 0.0, 1.0])),
+            ("LPA", np.array([1.0, 0.0, 0.0])),
+            ("RPA", np.array([-1.0, 0.0, 0.0])),
+        ]
+    )
 
-    widget.add_row()
-    assert events
-    widget._table.setItem(0, 0, _item("Nasion"))
-    assert len(events) >= 2
-    widget._table.selectRow(0)
-    widget.remove_selected_rows()
-    assert len(events) >= 3
-    count = len(events)
-    widget.remove_selected_rows()  # nothing selected: no further emission
-    assert len(events) == count
+    widget.set_rows([("RPA", np.array([7.0, 7.0, 7.0]))])
+
+    collected = widget.collect_fiducial_rows()
+    assert [name for name, _xyz in collected] == ["RPA"]
+    assert collected[0][1].tolist() == [7.0, 7.0, 7.0]
+    assert widget._table.item(0, 0).text() == "NAS"  # name back to canonical
+
+
+def test_fiducials_table_empty_clears_grid_and_signals(qapp) -> None:
+    widget = FiducialsTable()
+    widget.set_rows(
+        [
+            ("NASION", np.array([0.0, 0.0, 1.0])),
+            ("LPA", np.array([1.0, 0.0, 0.0])),
+            ("RPA", np.array([-1.0, 0.0, 0.0])),
+        ]
+    )
+    events: list[str] = []
+    widget.cleared.connect(lambda: events.append("cleared"))
+    widget.rowsChanged.connect(lambda: events.append("rows"))
+
+    widget.clear_grid()
+
+    assert events == ["cleared", "rows"]
+    assert widget.collect_fiducial_rows() == []
+    for row in range(3):
+        assert widget._table.item(row, 0).text() == ("NAS", "LPA", "RPA")[row]
+        for column in (1, 2, 3):
+            assert widget._table.item(row, column).text() == ""
 
 
 def test_measurements_table_last_row_wins(qapp) -> None:
