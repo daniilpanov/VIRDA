@@ -54,9 +54,11 @@ class LocalizationPopupBase(StepPopupBase):
     (``collect_fiducial_rows`` / ``collect_measurement_table``) and, when
     enough inputs exist, submit a debounced background run through a
     :class:`LiveLocalizationRunner`; results land in the step-4 context
-    as ``electrodes`` and the current fiducial table rows are mirrored
-    into the manager's global ``fiducials`` store. Geometry comes from
-    the step-3 context (with a step-2 mesh or step-1 scalp surface
+    as ``electrodes``, the current fiducial table rows are mirrored
+    into the manager's global ``fiducials`` store and the current
+    measurement table into the step-4 context (``measurements``, as an
+    :class:`Electrodes` model for the export popups). Geometry comes
+    from the step-3 context (with a step-2 mesh or step-1 scalp surface
     fallback) at construction; without it the hint shows the
     precondition and no runner is created. Status text flows through the
     base hint label and the ``on_status`` hook for subclasses.
@@ -142,6 +144,7 @@ class LocalizationPopupBase(StepPopupBase):
             return
         try:
             self._manager.set_step_context_item(LOCALIZATION.index, "electrodes", electrodes)
+            self._mirror_measurements_into_context()
         except ValueError:
             self._set_hint(_STALE_CONTEXT)
             return
@@ -149,6 +152,25 @@ class LocalizationPopupBase(StepPopupBase):
         self._set_hint(f"Localized {len(electrodes.items)} electrodes.")
         self.show_localized(electrodes)
         self._save_localization(electrodes)
+
+    def _mirror_measurements_into_context(self) -> None:
+        """Mirror the current measurement table into the step-4 context.
+
+        Like the fiducial table (mirrored into the global store), the
+        measurement table lands in the step-4 context as an
+        :class:`Electrodes` model (``measurements``, next to
+        ``electrodes``), so the export popups can write the last
+        successfully run state without touching disk. An invalid table
+        (empty or duplicate electrode id) is a hint, not a failure: the
+        electrodes result is kept and export falls back to the seeded
+        or last stored state.
+        """
+        try:
+            measurements = build_electrodes(self.collect_measurement_table())
+        except ValueError as exc:
+            self._set_hint(f"Measurements not stored: {exc}")
+            return
+        self._manager.set_step_context_item(LOCALIZATION.index, "measurements", measurements)
 
     def _save_localization(self, electrodes: Electrodes) -> None:
         """Persist the run's outputs; a save failure is a failed status."""

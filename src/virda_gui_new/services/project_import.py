@@ -18,7 +18,8 @@ Precedence rules:
   scalp surface and the step-2 mesh, a lone base mesh seeds only the
   step-1 scalp surface.
 - ``measurements.json`` is loaded into an :class:`Electrodes` model and
-  kept for the localization step's measurement import.
+  kept for the localization step: seeding writes it into the step-4
+  context (``measurements``) so the export path can use it in memory.
 - ``pipeline_config.json`` stays a scanned path: nothing in this GUI
   consumes it yet, so it is not loaded.
 """
@@ -133,12 +134,13 @@ def _load[T](
 
 def _last_seeded_step(loaded: LoadedArtifacts) -> int:
     """Mirror the seeding contract: the last step that receives a write."""
-    any_points = (
+    any_localization_inputs = (
         loaded.fiducials is not None
         or loaded.scalp_points is not None
         or loaded.ese_points is not None
+        or loaded.measurements is not None
     )
-    if any_points:
+    if any_localization_inputs:
         return 4
     if loaded.ese_mesh is not None:
         return 3

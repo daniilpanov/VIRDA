@@ -166,7 +166,19 @@ def test_prepare_project_loads_measurements_and_base_mesh(project: Path) -> None
     assert prepared.loaded.measurements.items[0].electrode_id == "Fz"
     # pipeline_config stays a scanned path: nothing loads it yet.
     assert prepared.loaded.pipeline_config == project / "input" / "pipeline_config.json"
-    assert prepared.recoverable_step == 1
+    # The measurements are a localization input: step 4 stays reachable.
+    assert prepared.recoverable_step == 4
+
+
+def test_prepare_project_measurements_only_reaches_step_4(project: Path) -> None:
+    """A lone measurements file seeds step 4, like a lone fiducials file."""
+    _write_measurements(project / "input" / "measurements.json")
+
+    prepared = prepare_project(project)
+
+    assert prepared.failures == ()
+    assert isinstance(prepared.loaded.measurements, Electrodes)
+    assert prepared.recoverable_step == 4
 
 
 def test_prepare_project_converts_coordsystem_to_fiducials(project: Path) -> None:
