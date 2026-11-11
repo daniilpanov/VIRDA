@@ -1,10 +1,12 @@
 """Live localization popup: thin view over the localization service."""
 
+import numpy as np
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from virda.models.electrode import Electrodes
 from virda.models.mesh import Mesh, Normals
 from virda_gui_new.dto.steps import ESE_MESH, LOCALIZATION, MESH_POSTPROCESSING, Step
+from virda_gui_new.dto.viewer3d import LabeledPoints
 from virda_gui_new.services.localization import (
     FiducialRows,
     LiveLocalizationRunner,
@@ -12,12 +14,15 @@ from virda_gui_new.services.localization import (
     blocked_reason,
     build_electrodes,
     build_fiducials,
+    labeled_points_from_rows,
 )
 from virda_gui_new.services.steps_manager import StepsManager
 from virda_gui_new.widgets.popup.abstract import StepPopupBase
 
 _NO_GEOMETRY = "Localization needs the ESE mesh and normals (run the ESE mesh step first)."
 _STALE_CONTEXT = "Pipeline changed; results dropped."
+
+_FIDUCIALS_KEY = "fiducials"
 
 
 def _as_mesh(value: object) -> Mesh | None:
@@ -30,6 +35,15 @@ def _as_normals(value: object) -> Normals | None:
     return value if isinstance(value, Normals) else None
 
 
+def _same_points(left: LabeledPoints, right: LabeledPoints) -> bool:
+    """Structural equality of two labeled point sets."""
+    return (
+        left.points.shape == right.points.shape
+        and bool(np.array_equal(left.points, right.points))
+        and left.labels == right.labels
+    )
+
+
 class LocalizationPopupBase(StepPopupBase):
     """Base popup for the live localization step.
 
@@ -37,11 +51,12 @@ class LocalizationPopupBase(StepPopupBase):
     (``collect_fiducial_rows`` / ``collect_measurement_table``) and, when
     enough inputs exist, submit a debounced background run through a
     :class:`LiveLocalizationRunner`; results land in the step-4 context
-    as ``electrodes``. Geometry comes from the step-3 context (with a
-    step-2 mesh or step-1 scalp surface fallback) at construction;
-    without it the hint shows the precondition and no runner is created.
-    Status text flows through the base hint label and the ``on_status``
-    hook for subclasses.
+    as ``electrodes`` and the current fiducial table rows are mirrored
+    into the manager's global ``fiducials`` store. Geometry comes from
+    the step-3 context (with a step-2 mesh or step-1 scalp surface
+    fallback) at construction; without it the hint shows the
+    precondition and no runner is created. Status text flows through the
+    base hint label and the ``on_status`` hook for subclasses.
     """
 
     def __init__(self, step: Step, manager: StepsManager, parent: QWidget | None = None) -> None:
@@ -120,8 +135,23 @@ class LocalizationPopupBase(StepPopupBase):
         except ValueError:
             self._set_hint(_STALE_CONTEXT)
             return
+        self._refresh_fiducial_store()
         self._set_hint(f"Localized {len(electrodes.items)} electrodes.")
         self.show_localized(electrodes)
+
+    def _refresh_fiducial_store(self) -> None:
+        """Mirror the current fiducial table into the global store.
+
+        A successful run proves the table rows are valid, so the store is
+        refreshed from them; this keeps store ~= table ~= what a save
+        writes. An unchanged store is left alone so the pull-model
+        listeners (scene rebuild) are not re-triggered needlessly.
+        """
+        points = labeled_points_from_rows(self.collect_fiducial_rows())
+        current = self._manager.get_global_item(_FIDUCIALS_KEY)
+        if isinstance(current, LabeledPoints) and _same_points(current, points):
+            return
+        self._manager.set_global_item(_FIDUCIALS_KEY, points)
 
     def _on_run_failed(self, message: str) -> None:
         self._set_hint(message)

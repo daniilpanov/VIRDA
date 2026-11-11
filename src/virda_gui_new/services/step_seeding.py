@@ -1,11 +1,10 @@
-"""Seeding pipeline step contexts from project artifacts.
+"""Seeding pipeline step contexts and the global store from project artifacts.
 
-Contexts store whatever the given artifact set holds: file
-:class:`~pathlib.Path` values for a scanned set
-(:class:`ProjectArtifacts`) or ready in-memory objects for a loaded
-set (:class:`LoadedArtifacts`). Loading paths stays with later
-commits; loaded objects are runnable immediately. Keys written per
-step:
+Step contexts store whatever the given artifact set holds: file
+:class:`~pathlib.Path` values for a scanned set (:class:`ProjectArtifacts`)
+or ready in-memory objects for a loaded set (:class:`LoadedArtifacts`).
+Loading paths stays with later commits; loaded objects are runnable
+immediately. Keys written per step:
 
 - step 0 (NIfTI import): ``volume``
 - step 1 (Base mesh): ``scalp_surface``; ``scalp_points`` when present
@@ -13,8 +12,15 @@ step:
   which the pipeline overwrites in place)
 - step 3 (ESE mesh): ``ese_mesh``; ``normals`` is never written
   because normals are in-memory only
-- step 4 (Localization): ``fiducials``; ``scalp_points``; ``ese_points``,
-  each when present
+- step 4 (Localization): ``scalp_points``; ``ese_points``, each when
+  present
+
+Fiducials are project-level inputs, not step-derived results: they go
+into the manager's global store (``set_global_item("fiducials", ...)``)
+instead of the step-4 context. They still count as a step-4 artifact for
+navigation: a project with only a fiducials file gets a step-4 context
+(created, possibly empty) and the manager is advanced to step 4, keeping
+the steps-menu state of earlier versions.
 
 Contexts are created for steps 0 through the last step that received a
 write; the working context of the following step is left uncreated.
@@ -37,9 +43,10 @@ def seed_steps_from_artifacts(
     """Write artifact values into matching :class:`StepsManager` contexts.
 
     Only present artifacts are written; missing (or dropped) ones leave
-    their keys unset. The manager is advanced with ``next_step()`` up to
-    the last step that received a write, leaving no trailing empty
-    contexts.
+    their keys unset. Fiducials are written to the global store; every
+    other value goes into the step context of its step. The manager is
+    advanced with ``next_step()`` up to the last step that received a
+    write, leaving no trailing empty contexts.
     """
     writes: dict[int, dict[str, Path | MRIVolume | Mesh | LabeledPoints]] = {}
 
@@ -56,18 +63,17 @@ def seed_steps_from_artifacts(
     if artifacts.ese_mesh is not None:
         writes[3] = {"ese_mesh": artifacts.ese_mesh}
 
-    if (
-        artifacts.fiducials is not None
-        or artifacts.scalp_points is not None
-        or (artifacts.ese_points is not None)
-    ):
+    if artifacts.scalp_points is not None or artifacts.ese_points is not None:
         writes[4] = {}
-        if artifacts.fiducials is not None:
-            writes[4]["fiducials"] = artifacts.fiducials
         if artifacts.scalp_points is not None:
             writes[4]["scalp_points"] = artifacts.scalp_points
         if artifacts.ese_points is not None:
             writes[4]["ese_points"] = artifacts.ese_points
+
+    if artifacts.fiducials is not None:
+        # Fiducials keep step 4 in the navigation even without electrode
+        # points: the context is created (empty) and the menu shows it.
+        writes.setdefault(4, {})
 
     if not writes:
         return
@@ -78,3 +84,6 @@ def seed_steps_from_artifacts(
             manager.next_step()
         for key, value in writes.get(step_n, {}).items():
             manager.set_step_context_item(step_n, key, value)
+
+    if artifacts.fiducials is not None:
+        manager.set_global_item("fiducials", artifacts.fiducials)

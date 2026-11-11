@@ -164,6 +164,63 @@ def test_full_path_localizes(qapp, popups, monkeypatch) -> None:
     assert manager.get_step_context_item(LOCALIZATION.index, "electrodes") is payload
 
 
+def test_localized_run_refreshes_fiducial_store(qapp, popups, monkeypatch) -> None:
+    """The global store mirrors the current table rows after each run."""
+    from virda_gui_new.dto.viewer3d import LabeledPoints
+
+    payload = Electrodes([Electrode("A", {"LPA": 10.0})])
+    _patch_localize(monkeypatch, [], payload)
+    manager = _make_manager()
+    popup = RecordingPopup(manager, fiducial_rows=_FIDUCIAL_ROWS, table=_MEASUREMENTS)
+    popups.append(popup)
+
+    popup._on_inputs_changed()
+    _settle(qapp, popup, "Localized 1 electrode.")
+
+    points = manager.get_global_item("fiducials")
+    assert isinstance(points, LabeledPoints)
+    assert points.labels == ("Nasion", "LPA", "RPA")
+    assert points.points.tolist() == [[0.0, 0.0, 1.0], [1.0, 0.0, 0.0], [-1.0, 0.0, 0.0]]
+
+
+def test_unchanged_fiducials_skip_the_store_write(qapp, popups, monkeypatch) -> None:
+    """An equal store is not rewritten, so listeners are not re-triggered."""
+
+    from virda_gui_new.services.localization import labeled_points_from_rows
+
+    payload = Electrodes([Electrode("A", {"LPA": 10.0})])
+    _patch_localize(monkeypatch, [], payload)
+    manager = _make_manager()
+    manager.set_global_item("fiducials", labeled_points_from_rows(_FIDUCIAL_ROWS))
+    notifications: list[int] = []
+    manager.subscribe(lambda: notifications.append(len(notifications)))
+    popup = RecordingPopup(manager, fiducial_rows=_FIDUCIAL_ROWS, table=_MEASUREMENTS)
+    popups.append(popup)
+
+    popup._on_inputs_changed()
+    _settle(qapp, popup, "Localized 1 electrode.")
+
+    # Only the electrodes context write notified; the store was untouched.
+    assert len(notifications) == 1
+
+
+def test_stale_context_run_keeps_fiducial_store(qapp, popups) -> None:
+    """A dropped (stale) result leaves the global store untouched."""
+    from virda_gui_new.dto.viewer3d import LabeledPoints
+
+    manager = _make_manager()
+    points = LabeledPoints(np.array([[0.0, 0.0, 2.0]]), ("NAS",))
+    manager.set_global_item("fiducials", points)
+    popup = RecordingPopup(manager, fiducial_rows=_FIDUCIAL_ROWS, table=_MEASUREMENTS)
+    popups.append(popup)
+    manager.invalidate_steps_after(3)
+
+    popup._on_localized(Electrodes([Electrode("A", {"LPA": 1.0})]))
+
+    assert popup._hint_label.text() == "Pipeline changed; results dropped."
+    assert manager.get_global_item("fiducials") is points
+
+
 def test_stale_context_drop(qapp, popups) -> None:
     manager = _make_manager()
     popup = RecordingPopup(manager)
@@ -185,13 +242,13 @@ def test_shutdown_is_safe(qapp, popups, monkeypatch) -> None:
     popup.shutdown()
 
 
-def test_concrete_popup_prefills_fiducials_from_context(qapp, popups) -> None:
-    """Seeded step-4 fiducials land in the table as editable rows."""
+def test_concrete_popup_prefills_fiducials_from_store(qapp, popups) -> None:
+    """Seeded global-store fiducials land in the table as editable rows."""
     from virda_gui_new.dto.viewer3d import LabeledPoints
 
     manager = _make_manager()
     points = LabeledPoints(np.array([[0.0, 0.0, 1.0], [1.0, 0.0, 0.0]]), ("Nasion", "LPA"))
-    manager.set_step_context_item(LOCALIZATION.index, "fiducials", points)
+    manager.set_global_item("fiducials", points)
     popup = LocalizationPopup(LOCALIZATION, manager)
     popups.append(popup)
 
@@ -216,7 +273,7 @@ def test_concrete_popup_prefill_precedes_runner_setup(qapp, popups) -> None:
 
     manager = _make_manager(normals=False)
     points = LabeledPoints(np.array([[0.0, 0.0, 1.0]]), ("Nasion",))
-    manager.set_step_context_item(LOCALIZATION.index, "fiducials", points)
+    manager.set_global_item("fiducials", points)
 
     popup = LocalizationPopup(LOCALIZATION, manager)
     popups.append(popup)
