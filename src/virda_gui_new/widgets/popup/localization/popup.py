@@ -2,11 +2,14 @@
 
 from pathlib import Path
 
+import numpy as np
 from PySide6.QtWidgets import QFileDialog, QLabel, QVBoxLayout
 
 from virda.models.electrode import Electrodes
+from virda.models.mri_volume import MRIVolume
+from virda_gui_new.dto.steps import NIFTI
 from virda_gui_new.dto.viewer3d import LabeledPoints
-from virda_gui_new.services import artifact_importing
+from virda_gui_new.services import artifact_importing, artifact_loading
 from virda_gui_new.services.coordinates import CoordinateFrame, CoordinateService
 from virda_gui_new.services.localization import FiducialRows, MeasurementTable
 from virda_gui_new.widgets.popup.localization.abstract import LocalizationPopupBase
@@ -105,21 +108,31 @@ class LocalizationPopup(LocalizationPopupBase):
     def _import_fiducials_from_file(self) -> None:
         """ "From file": fill the fixed slots from a fiducials/coordsystem JSON.
 
-        The imported rows are canonical world coordinates, so the table
-        and the global store stay in sync (the store is refreshed only
-        when the import actually changed it). Read or matching errors
-        show in the hint label instead of crashing.
+        The imported rows are canonical world coordinates (voxel rows
+        convert through the step-0 MRI affine), so the table and the
+        global store stay in sync (the store is refreshed only when the
+        import actually changed it). Read or matching errors show in the
+        hint label instead of crashing.
         """
         path = self._ask_json_path(_FIDUCIALS_IMPORT_TITLE)
         if path is None:
             return
         try:
-            rows = artifact_importing.import_fiducial_rows(path)
+            rows = artifact_importing.import_fiducial_rows(path, self._volume_affine())
         except Exception as error:  # noqa: BLE001 - any import error is user-facing
             self._set_hint(f"Failed to import fiducials: {error}")
             return
         self._fiducials_table.set_rows(rows)
         self._refresh_fiducial_store()
+
+    def _volume_affine(self) -> np.ndarray | None:
+        """Affine of the step-0 volume, or ``None`` when it is absent."""
+        volume = self._read_context_item(NIFTI.index, "volume")
+        if isinstance(volume, MRIVolume):
+            return volume.affine
+        if isinstance(volume, Path):
+            return artifact_loading.load_volume(volume).affine
+        return None
 
     def _import_measurements_from_file(self) -> None:
         """ "From file": fill the measurement grid from a measurements JSON."""

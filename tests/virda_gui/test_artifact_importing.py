@@ -54,7 +54,7 @@ def test_import_fiducial_rows_matches_fixed_slots(tmp_path: Path) -> None:
         },
     )
 
-    rows = import_fiducial_rows(path)
+    rows = import_fiducial_rows(path, None)
 
     assert [name for name, _xyz in rows] == ["NASION", "LPA", "RPA"]  # fixed slot order
     assert rows[0][1].tolist() == [3.0, 94.0, 32.0]
@@ -84,7 +84,7 @@ def test_import_fiducial_rows_matches_aliases_case_insensitively(tmp_path: Path)
         },
     )
 
-    rows = import_fiducial_rows(path)
+    rows = import_fiducial_rows(path, None)
 
     assert [name for name, _xyz in rows] == ["nasion", "lpa"]
     assert rows[0][1].tolist() == [0.0, 0.0, 0.0]
@@ -103,7 +103,7 @@ def test_import_fiducial_rows_reads_mne_coordsystem(tmp_path: Path) -> None:
         },
     )
 
-    rows = import_fiducial_rows(path)
+    rows = import_fiducial_rows(path, None)
 
     assert [name for name, _xyz in rows] == ["NAS", "LPA", "RPA"]
     assert rows[0][1].tolist() == [1.0, 2.0, 3.0]
@@ -126,7 +126,7 @@ def test_import_fiducial_rows_rejects_unknown_fiducials(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ValueError, match="no NAS/LPA/RPA fiducials"):
-        import_fiducial_rows(path)
+        import_fiducial_rows(path, None)
 
 
 def test_import_fiducial_rows_rejects_invalid_files(tmp_path: Path) -> None:
@@ -134,9 +134,9 @@ def test_import_fiducial_rows_rejects_invalid_files(tmp_path: Path) -> None:
     broken.write_text("{not json", encoding="utf-8")
 
     with pytest.raises(ValueError):
-        import_fiducial_rows(broken)
+        import_fiducial_rows(broken, None)
     with pytest.raises(OSError):
-        import_fiducial_rows(tmp_path / "missing.json")
+        import_fiducial_rows(tmp_path / "missing.json", None)
 
 
 def test_import_measurement_table_reads_electrode_distances(tmp_path: Path) -> None:
@@ -198,6 +198,77 @@ def test_import_fiducial_rows_values_are_float_arrays(tmp_path: Path) -> None:
         },
     )
 
-    rows = import_fiducial_rows(path)
+    rows = import_fiducial_rows(path, None)
 
     assert rows[0][1].dtype == np.float64
+
+
+_AFFINE = np.array(
+    [
+        [2.0, 0.0, 0.0, 10.0],
+        [0.0, 2.0, 0.0, 20.0],
+        [0.0, 0.0, 2.0, 30.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+)
+
+
+def test_import_fiducial_rows_converts_voxel_via_affine(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path / "fiducials.json",
+        {
+            "fiducials": [
+                {
+                    "fiducial_id": "NAS",
+                    "name": "NAS",
+                    "coordinates": [1.0, 2.0, 3.0],
+                    "coordinate_system": "voxel",
+                    "definition_method": "manual",
+                }
+            ]
+        },
+    )
+
+    rows = import_fiducial_rows(path, _AFFINE)
+
+    assert rows[0][1].tolist() == [12.0, 24.0, 36.0]
+
+
+def test_import_fiducial_rows_voxel_without_affine_raises(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path / "fiducials.json",
+        {
+            "fiducials": [
+                {
+                    "fiducial_id": "NAS",
+                    "name": "NAS",
+                    "coordinates": [1.0, 2.0, 3.0],
+                    "coordinate_system": "voxel",
+                    "definition_method": "manual",
+                }
+            ]
+        },
+    )
+
+    with pytest.raises(ValueError, match="NIfTI volume"):
+        import_fiducial_rows(path, None)
+
+
+def test_import_fiducial_rows_rejects_unknown_coordinate_system(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path / "fiducials.json",
+        {
+            "fiducials": [
+                {
+                    "fiducial_id": "NAS",
+                    "name": "NAS",
+                    "coordinates": [1.0, 2.0, 3.0],
+                    "coordinate_system": "mri",
+                    "definition_method": "manual",
+                }
+            ]
+        },
+    )
+
+    with pytest.raises(ValueError, match="coordinate_system"):
+        import_fiducial_rows(path, _AFFINE)
