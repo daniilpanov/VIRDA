@@ -213,3 +213,16 @@ def test_collect_scene_kwargs_reports_unparsable_file(project: Path) -> None:
 
     with pytest.raises(ValueError, match="electrodes_scalp.json"):
         collect_scene_kwargs(_make_manager(project))
+
+
+def test_collect_scene_kwargs_collects_failures_instead_of_raising(project: Path) -> None:
+    (project / "localization" / "electrodes_scalp.json").write_text("not json", encoding="utf-8")
+    _write_nifti(project / "input" / "a.nii")
+
+    failures: list[str] = []
+    kwargs = collect_scene_kwargs(_make_manager(project), failures)
+
+    assert len(failures) == 1
+    assert "electrodes_scalp.json" in failures[0]
+    assert isinstance(kwargs["nifti"], MRIVolume)
+    assert "scalp_points" not in kwargs

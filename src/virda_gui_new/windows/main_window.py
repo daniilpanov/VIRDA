@@ -7,7 +7,7 @@ from typing import Any
 from PySide6.QtWidgets import QMainWindow
 
 from virda_gui_new.dto.steps import BASE_MESH, ESE_MESH, LOCALIZATION, MESH_POSTPROCESSING, STEPS
-from virda_gui_new.services.project_scan import find_project_artifacts
+from virda_gui_new.services.project_scan import ProjectArtifacts, find_project_artifacts
 from virda_gui_new.services.scene_builder import collect_scene_kwargs
 from virda_gui_new.services.step_seeding import seed_steps_from_artifacts
 from virda_gui_new.services.steps_manager import StepsManager
@@ -27,7 +27,7 @@ class MainWindow(QMainWindow):
     # the attribute here keeps the steps-invalidated handler typed before it.
     _filetree: Any
 
-    def __init__(self, project_path: Path) -> None:
+    def __init__(self, project_path: Path, artifacts: ProjectArtifacts | None = None) -> None:
         super().__init__()
 
         self.setWindowTitle("VIRDA: Electrode Localization System")
@@ -39,7 +39,9 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self._viewer3d)
 
         self._steps = StepsManager(tuple(step.required_keys for step in STEPS))
-        seed_steps_from_artifacts(self._steps, find_project_artifacts(project_path))
+        if artifacts is None:
+            artifacts = find_project_artifacts(project_path)
+        seed_steps_from_artifacts(self._steps, artifacts)
         self._steps.subscribe(self._rebuild_scene)
         self._steps.subscribe(self._on_steps_changed)
         self._rebuild_scene()
@@ -64,7 +66,10 @@ class MainWindow(QMainWindow):
         self.showMaximized()
 
     def _rebuild_scene(self) -> None:
-        kwargs = collect_scene_kwargs(self._steps)
+        failures: list[str] = []
+        kwargs = collect_scene_kwargs(self._steps, failures)
+        for failure in failures:
+            self._log(failure)
         if kwargs:
             self._viewer3d.set_scene(**kwargs)
         else:
