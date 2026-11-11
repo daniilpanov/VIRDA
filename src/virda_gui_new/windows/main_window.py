@@ -80,6 +80,11 @@ class MainWindow(QMainWindow):
         popup.completed.connect(self._on_step_completed)
         popup.failed.connect(lambda msg, s=step_n: self._log(f"Step {s} failed: {msg}"))
         window = open_widget_window(popup, title=STEPS[step_n].name)
+
+        def on_window_destroyed(*_args: object) -> None:
+            self._forget_popup(step_n)
+
+        window.destroyed.connect(on_window_destroyed)
         self._popups[step_n] = popup
         self._popup_windows[step_n] = window
 
@@ -111,6 +116,11 @@ class MainWindow(QMainWindow):
             popup.shutdown()
         if window is not None:
             window.close()
+
+    def _forget_popup(self, step_n: int) -> None:
+        """Drop tracking of a popup window destroyed outside the dispatcher."""
+        self._popup_windows.pop(step_n, None)
+        self._popups.pop(step_n, None)
 
     def _log(self, message: str) -> None:
         self.statusBar().showMessage(message)
