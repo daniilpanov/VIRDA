@@ -47,7 +47,20 @@ def test_fiducials_table_has_three_fixed_named_rows(qapp) -> None:
         assert not (cast("QTableWidgetItem", name_item).flags() & Qt.ItemFlag.ItemIsEditable)
     assert widget.collect_fiducial_rows() == []  # coordinates blank
     buttons = widget.findChildren(QPushButton)
-    assert [button.text() for button in buttons] == ["Empty"]
+    assert [button.text() for button in buttons] == ["From file", "Empty"]
+
+
+def test_fiducials_table_import_button_signals(qapp) -> None:
+    from PySide6.QtWidgets import QPushButton
+
+    widget = FiducialsTable()
+    events: list[int] = []
+    widget.importRequested.connect(lambda: events.append(1))
+
+    from_file = widget.findChildren(QPushButton)[0]
+    from_file.click()
+
+    assert events == [1]
 
 
 def test_fiducials_table_collects_complete_rows_in_fixed_order(qapp) -> None:
@@ -156,6 +169,43 @@ def test_measurements_table_last_row_wins(qapp) -> None:
     widget._table.setItem(2, 2, _item("12"))
     # Same electrode id + fiducial name appearing twice: the later row wins.
     assert widget.collect_measurement_table() == {"A": {"1": 12.0}, "B": {"1": 8.0}}
+
+
+def test_measurements_table_set_rows_replaces_the_grid(qapp) -> None:
+    widget = MeasurementsTable()
+    widget.add_row()
+    widget._table.setItem(0, 0, _item("Old"))
+    events: list[int] = []
+    widget.rowsChanged.connect(lambda: events.append(1))
+
+    widget.set_rows({"EEG 001": {"NAS": 62.5, "LPA": 111.25}, "EEG 002": {"NAS": 53.0}})
+
+    assert len(events) == 1
+    assert widget._table.rowCount() == 3  # one row per (electrode, fiducial) pair
+    assert widget.collect_measurement_table() == {
+        "EEG 001": {"NAS": 62.5, "LPA": 111.25},
+        "EEG 002": {"NAS": 53.0},
+    }
+    assert cast("QTableWidgetItem", widget._table.item(0, 0)).text() == "EEG 001"
+    assert cast("QTableWidgetItem", widget._table.item(0, 2)).text() == "62.5"
+
+
+def test_measurements_table_import_button_signals(qapp) -> None:
+    from PySide6.QtWidgets import QPushButton
+
+    widget = MeasurementsTable()
+    events: list[int] = []
+    widget.importRequested.connect(lambda: events.append(1))
+
+    buttons = widget.findChildren(QPushButton)
+    assert [button.text() for button in buttons] == [
+        "From file",
+        "+ Add",
+        "- Remove selected",
+    ]
+    buttons[0].click()
+
+    assert events == [1]
 
 
 def test_electrodes_table_renders_model(qapp) -> None:
