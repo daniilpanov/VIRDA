@@ -86,7 +86,8 @@ class StepsMenu(QWidget):
         if step_n > current:  # disabled row; guarded for programmatic clicks
             return
         if step_n < current or self._manager.is_step_done(step_n):
-            discarded = [STEPS[later].name for later in range(step_n + 1, current + 1)]
+            last = min(current + 1, len(STEPS))
+            discarded = [STEPS[later].name for later in range(step_n + 1, last)]
             if discarded and not confirm_step_redo(self, STEPS[step_n].name, discarded):
                 return
             if discarded:

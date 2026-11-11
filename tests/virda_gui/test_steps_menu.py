@@ -244,6 +244,22 @@ def test_done_current_step_reopens_without_confirmation(qapp, manager, menu, mon
     assert requested == [1]
 
 
+def test_click_beyond_last_step_is_guarded(qapp, manager, menu, monkeypatch) -> None:
+    """A current step past the pipeline end must not break the redo list."""
+    manager.next_step()  # current = 1
+    manager.set_step_context_item(1, "scalp_surface", "ready")
+    for _ in range(4):
+        manager.next_step()  # current = 5, beyond the last step
+    monkeypatch.setattr(main_menu, "confirm_step_redo", lambda *a, **k: True)
+    requested, invalidated = _connect(menu)
+
+    menu._on_step_clicked(1)
+
+    assert manager.get_current_step() == 1
+    assert invalidated == [1]
+    assert requested == [1]
+
+
 def test_seeded_ese_mesh_shows_done(qapp, manager, menu) -> None:
     """ESE mesh is done by its ``ese_mesh`` artifact; normals are not required."""
     manager.set_step_context_item(0, "volume", "ready")
