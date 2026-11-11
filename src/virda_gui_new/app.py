@@ -27,7 +27,7 @@ def main() -> None:
         ):
             continue
 
-        window = MainWindow(project, artifacts=prepared.artifacts)
+        window = MainWindow(project, prepared=prepared)
         window.show()
         app.exec()
         return

@@ -1,83 +1,108 @@
-"""Project import preparation: scan artifacts and validate their files.
+"""Project import preparation: scan, load, and validate artifact files.
 
-Each scanned artifact file is loaded once through the same loader the
-scene builder uses, so unsupported or outdated formats fail here, before
-any step context is seeded. The result carries the validated artifacts
-and a per-file failure report for the user.
+Every scanned artifact file is loaded into its ready in-memory object
+through the same loaders the popups use, so unsupported or outdated
+formats fail at open time, before any step context is seeded. Seeding
+then writes ready objects: a step marked done (or opened) is
+guaranteed to hold runnable inputs.
 """
 
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TypeVar
 
+from virda.models.mesh import Mesh
+from virda.models.mri_volume import MRIVolume
+from virda_gui_new.dto.viewer3d import LabeledPoints
 from virda_gui_new.services import artifact_loading
-from virda_gui_new.services.project_scan import ProjectArtifacts, find_project_artifacts
+from virda_gui_new.services.project_scan import find_project_artifacts
 
-# ProjectArtifacts field -> (step index, context key, file loader), matching
-# the seeding contract and the scene builder's rules table.
-_FIELDS: tuple[tuple[str, int, str, Callable[[Path], Any]], ...] = (
-    ("nifti", 0, "volume", artifact_loading.load_volume),
-    ("scalp_mesh", 1, "scalp_surface", artifact_loading.load_mesh),
-    ("ese_mesh", 3, "ese_mesh", artifact_loading.load_mesh),
-    ("fiducials", 4, "fiducials", artifact_loading.load_fiducial_points),
-    ("scalp_points", 4, "scalp_points", artifact_loading.load_point_rows),
-    ("ese_points", 4, "ese_points", artifact_loading.load_point_rows),
-)
+_T = TypeVar("_T")
+
+
+@dataclass(frozen=True)
+class LoadedArtifacts:
+    """Ready in-memory pipeline artifacts; ``None`` where absent or invalid.
+
+    Field names match :class:`ProjectArtifacts`, so the same seeding
+    contract applies; the values are ready objects instead of paths.
+    """
+
+    nifti: MRIVolume | None = None
+    scalp_mesh: Mesh | None = None
+    ese_mesh: Mesh | None = None
+    fiducials: LabeledPoints | None = None
+    scalp_points: LabeledPoints | None = None
+    ese_points: LabeledPoints | None = None
 
 
 @dataclass(frozen=True)
 class PreparedProject:
-    """A scanned project with validated artifact files.
+    """A scanned project with every loadable artifact in memory.
 
-    ``artifacts`` only holds paths whose files loaded successfully;
-    ``failures`` reports the dropped ones as ``"<relative path>: <reason>"``;
+    ``failures`` reports dropped files as ``"<relative path>: <reason>"``;
     ``recoverable_step`` is the last step that still receives a seeding
-    write from the filtered artifacts (``-1`` when nothing is left).
+    write from the loaded artifacts (``-1`` when nothing is left).
     """
 
-    artifacts: ProjectArtifacts
+    loaded: LoadedArtifacts
     failures: tuple[str, ...] = ()
     recoverable_step: int = -1
 
 
 def prepare_project(project: Path) -> PreparedProject:
-    """Scan ``project`` and validate every artifact file it contains."""
+    """Scan ``project`` and load every artifact file it contains."""
     scanned = find_project_artifacts(project)
-    dropped: set[str] = set()
     failures: list[str] = []
-    for name, _step_n, _key, loader in _FIELDS:
-        path = getattr(scanned, name)
-        if path is None:
-            continue
-        try:
-            loader(path)
-        except Exception as error:  # noqa: BLE001 - any load error is user-facing
-            dropped.add(name)
-            failures.append(f"{path.relative_to(project)}: {error}")
-
-    artifacts = ProjectArtifacts(
-        **{
-            name: None if name in dropped else getattr(scanned, name)
-            for name in ProjectArtifacts.__dataclass_fields__
-        }
+    loaded = LoadedArtifacts(
+        nifti=_load(scanned.nifti, artifact_loading.load_volume, project, failures),
+        scalp_mesh=_load(scanned.scalp_mesh, artifact_loading.load_mesh, project, failures),
+        ese_mesh=_load(scanned.ese_mesh, artifact_loading.load_mesh, project, failures),
+        fiducials=_load(
+            scanned.fiducials, artifact_loading.load_fiducial_points, project, failures
+        ),
+        scalp_points=_load(
+            scanned.scalp_points, artifact_loading.load_point_rows, project, failures
+        ),
+        ese_points=_load(scanned.ese_points, artifact_loading.load_point_rows, project, failures),
     )
     return PreparedProject(
-        artifacts=artifacts,
+        loaded=loaded,
         failures=tuple(failures),
-        recoverable_step=_last_seeded_step(artifacts),
+        recoverable_step=_last_seeded_step(loaded),
     )
 
 
-def _last_seeded_step(artifacts: ProjectArtifacts) -> int:
+def _load[T](
+    path: Path | None,
+    loader: Callable[[Path], T],
+    project: Path,
+    failures: list[str],
+) -> T | None:
+    """Load one artifact file; a failure is reported and yields ``None``."""
+    if path is None:
+        return None
+    try:
+        return loader(path)
+    except Exception as error:  # noqa: BLE001 - any load error is user-facing
+        failures.append(f"{path.relative_to(project)}: {error}")
+        return None
+
+
+def _last_seeded_step(loaded: LoadedArtifacts) -> int:
     """Mirror the seeding contract: the last step that receives a write."""
-    any_points = artifacts.fiducials is not None or artifacts.ese_points is not None
-    if any_points or artifacts.scalp_points is not None:
+    any_points = (
+        loaded.fiducials is not None
+        or loaded.scalp_points is not None
+        or loaded.ese_points is not None
+    )
+    if any_points:
         return 4
-    if artifacts.ese_mesh is not None:
+    if loaded.ese_mesh is not None:
         return 3
-    if artifacts.scalp_mesh is not None:
+    if loaded.scalp_mesh is not None:
         return 2
-    if artifacts.nifti is not None:
+    if loaded.nifti is not None:
         return 0
     return -1
