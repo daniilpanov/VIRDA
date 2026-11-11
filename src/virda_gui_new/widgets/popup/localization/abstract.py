@@ -92,7 +92,9 @@ class LocalizationPopupBase(StepPopupBase):
 
     def _on_inputs_changed(self) -> None:
         """Rebuild the snapshot and schedule a run when inputs suffice."""
-        if self._localization_runner is None:
+        if getattr(self, "_localization_runner", None) is None:
+            # Still constructing: a build-time prefill emits before the
+            # runner (or the attribute itself) exists.
             return
         rows = self.collect_fiducial_rows()
         table = self.collect_measurement_table()

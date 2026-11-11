@@ -210,6 +210,21 @@ def test_concrete_popup_prefill_absent_keeps_empty_grid(qapp, popups) -> None:
     assert popup.collect_fiducial_rows() == []
 
 
+def test_concrete_popup_prefill_precedes_runner_setup(qapp, popups) -> None:
+    """No geometry: the prefill emits before the runner exists; no crash."""
+    from virda_gui_new.dto.viewer3d import LabeledPoints
+
+    manager = _make_manager(normals=False)
+    points = LabeledPoints(np.array([[0.0, 0.0, 1.0]]), ("Nasion",))
+    manager.set_step_context_item(LOCALIZATION.index, "fiducials", points)
+
+    popup = LocalizationPopup(LOCALIZATION, manager)
+    popups.append(popup)
+
+    assert popup._localization_runner is None
+    assert [name for name, _xyz in popup.collect_fiducial_rows()] == ["Nasion"]
+
+
 def test_concrete_popup_blocked_states(qapp, popups, monkeypatch) -> None:
     calls: list = []
 
