@@ -95,15 +95,15 @@ def test_scan_finds_whole_project_artifacts_in_any_folder(tmp_path: Path) -> Non
         assert getattr(artifacts, slot) == nested / name
 
 
-def test_scan_nifti_only_in_input(tmp_path: Path) -> None:
+def test_scan_nifti_found_anywhere(tmp_path: Path) -> None:
     outside = tmp_path / "elsewhere"
     outside.mkdir()
     (outside / "head.nii.gz").write_text("")
 
-    assert find_project_artifacts(tmp_path).nifti is None
+    assert find_project_artifacts(tmp_path).nifti == outside / "head.nii.gz"
 
 
-def test_scan_ese_mesh_from_new_name(tmp_path: Path) -> None:
+def test_scan_ese_mesh_new_name_only_in_ese(tmp_path: Path) -> None:
     ese = tmp_path / "ese"
     ese.mkdir()
     (ese / "mesh.ply").write_text("")
@@ -111,16 +111,17 @@ def test_scan_ese_mesh_from_new_name(tmp_path: Path) -> None:
     assert find_project_artifacts(tmp_path).ese_mesh == ese / "mesh.ply"
 
 
-def test_scan_ese_mesh_keeps_legacy_name(tmp_path: Path) -> None:
-    """Old projects store the ESE mesh as ``ese/ese_mesh.ply``; still found."""
-    ese = tmp_path / "ese"
-    ese.mkdir()
-    (ese / "ese_mesh.ply").write_text("")
+def test_scan_ese_mesh_old_name_anywhere(tmp_path: Path) -> None:
+    """``ese_mesh.ply`` is a first-class rule searched in every folder."""
+    outside = tmp_path / "mesh"
+    outside.mkdir()
+    (outside / "ese_mesh.ply").write_text("")
 
-    assert find_project_artifacts(tmp_path).ese_mesh == ese / "ese_mesh.ply"
+    assert find_project_artifacts(tmp_path).ese_mesh == outside / "ese_mesh.ply"
 
 
-def test_scan_ese_mesh_prefers_new_name_over_legacy(tmp_path: Path) -> None:
+def test_scan_ese_mesh_new_name_outranks_old_name(tmp_path: Path) -> None:
+    """Rule order decides: ``ese/mesh.ply`` before an ``ese_mesh.ply``."""
     ese = tmp_path / "ese"
     ese.mkdir()
     (ese / "ese_mesh.ply").write_text("")
@@ -129,27 +130,16 @@ def test_scan_ese_mesh_prefers_new_name_over_legacy(tmp_path: Path) -> None:
     assert find_project_artifacts(tmp_path).ese_mesh == ese / "mesh.ply"
 
 
-def test_scan_prefers_canonical_folder_over_stray_copy(tmp_path: Path) -> None:
-    """A GUI-written canonical file wins over a stray or legacy copy."""
-    stray = tmp_path / "mesh"
-    stray.mkdir()
-    (stray / "final_mesh.ply").write_text("")
-    canonical = tmp_path / "scalp"
-    canonical.mkdir()
-    (canonical / "final_mesh.ply").write_text("")
+def test_scan_duplicate_names_resolve_to_first_sorted_match(tmp_path: Path) -> None:
+    """Several matching files fill the slot deterministically (sorted)."""
+    (tmp_path / "z").mkdir()
+    (tmp_path / "a").mkdir()
+    (tmp_path / "z" / "final_mesh.ply").write_text("")
+    (tmp_path / "a" / "final_mesh.ply").write_text("")
 
     artifacts = find_project_artifacts(tmp_path)
 
-    assert artifacts.scalp_mesh == canonical / "final_mesh.ply"
-
-
-def test_scan_falls_back_to_any_folder(tmp_path: Path) -> None:
-    """Without a canonical copy the file is still found anywhere."""
-    stray = tmp_path / "mesh"
-    stray.mkdir()
-    (stray / "final_mesh.ply").write_text("")
-
-    assert find_project_artifacts(tmp_path).scalp_mesh == stray / "final_mesh.ply"
+    assert artifacts.scalp_mesh == tmp_path / "a" / "final_mesh.ply"
 
 
 def test_scan_mesh_ply_outside_ese_is_not_an_ese_mesh(tmp_path: Path) -> None:
@@ -182,6 +172,18 @@ def test_scan_plain_nii_when_no_gz(tmp_path: Path) -> None:
     artifacts = find_project_artifacts(tmp_path)
 
     assert artifacts.nifti == input_dir / "a.nii"
+
+
+def test_scan_head_mask_is_not_a_nifti(tmp_path: Path) -> None:
+    """The head mask is excluded from the NIfTI globs by name."""
+    segmentation = tmp_path / "segmentation"
+    segmentation.mkdir()
+    (segmentation / "head_mask.nii.gz").write_text("")
+
+    artifacts = find_project_artifacts(tmp_path)
+
+    assert artifacts.nifti is None
+    assert artifacts.head_mask == segmentation / "head_mask.nii.gz"
 
 
 def test_scan_reports_partial_artifacts(tmp_path: Path) -> None:
