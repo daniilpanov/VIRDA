@@ -4,6 +4,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
 
+from PySide6.QtCore import QEvent
 from PySide6.QtGui import QAction, QCloseEvent
 from PySide6.QtWidgets import QMainWindow, QWidget
 
@@ -30,7 +31,7 @@ from virda_gui_new.widgets.popup.main_menu import StepsMenu
 from virda_gui_new.widgets.popup.mesh_postprocessing import MeshPostprocessingPopup
 from virda_gui_new.widgets.steps_toggle_button import StepsToggleButton
 from virda_gui_new.widgets.viewer3d import SceneViewer3D
-from virda_gui_new.windows.widget_windows import WidgetWindow, open_widget_window
+from virda_gui_new.windows.widget_windows import WidgetWindow, is_alive, open_widget_window
 
 
 class _ExportPopupFactory(Protocol):
@@ -54,17 +55,36 @@ _EXPORT_POPUPS: dict[ExportKind, _ExportPopupFactory] = {
     ExportKind.MESH: MeshExportPopup,
 }
 
+#: Events that mean the main window came to the front and has to bring
+#: its tool windows up with it.
+_RAISE_EVENTS = frozenset(
+    {
+        QEvent.Type.WindowActivate,
+        QEvent.Type.ActivationChange,
+        QEvent.Type.ZOrderChange,
+    }
+)
+
 
 class MainWindow(QMainWindow):
     # The file tree widget arrives with the project file tree step; declaring
     # the attribute here keeps the steps-invalidated handler typed before it.
     _filetree: Any
 
+    #: Guards the raise of the tracked tool windows against recursion.
+    _raising_tool_windows = False
+
     def __init__(self, project_path: Path, prepared: PreparedProject | None = None) -> None:
         super().__init__()
 
         self.setWindowTitle("VIRDA: Electrode Localization System")
         self._project_path = project_path
+        # The tool windows tracked next to their owner: they are raised
+        # together with this window.
+        self._steps_window: WidgetWindow | None = None
+        self._filetree_window: WidgetWindow | None = None
+        self._popup_windows: dict[int, WidgetWindow] = {}
+        self._export_windows: dict[ExportKind, WidgetWindow] = {}
 
         self._viewer3d = SceneViewer3D(self, log=self._log)
         self._viewer3d.sceneLoaded.connect(self._on_scene_loaded)
@@ -80,9 +100,7 @@ class MainWindow(QMainWindow):
         self._rebuild_scene()
 
         self._steps_menu = StepsMenu(self._steps)
-        self._steps_window: WidgetWindow | None = open_widget_window(
-            self._steps_menu, parent=self, title="Steps"
-        )
+        self._steps_window = open_widget_window(self._steps_menu, parent=self, title="Steps")
         self._steps_window.destroyed.connect(self._forget_steps_menu)
         self._popup_factories: dict[int, Callable[[], StepPopupBase]] = {}
         project = self._project_path
@@ -96,7 +114,6 @@ class MainWindow(QMainWindow):
         self._popup_factories[4] = lambda: LocalizationPopup(
             LOCALIZATION, self._steps, project=project
         )
-        self._popup_windows: dict[int, WidgetWindow] = {}
         self._popups: dict[int, StepPopupBase] = {}
         self._steps_menu.stepRequested.connect(self._open_step_popup)
         self._steps_menu.stepsInvalidated.connect(self._on_steps_invalidated)
@@ -107,7 +124,6 @@ class MainWindow(QMainWindow):
         self._filetree.set_artifacts(find_project_artifacts(self._project_path))
         self._filetree.fileActivated.connect(lambda path: self._log(f"File selected: {path}"))
 
-        self._export_windows: dict[ExportKind, WidgetWindow] = {}
         self._build_menu_bar()
         # Built after the menu bar so the pill can anchor below it.
         self._steps_toggle = StepsToggleButton(self)
@@ -195,7 +211,7 @@ class MainWindow(QMainWindow):
         window = self._popup_windows.pop(step_n, None)
         if popup is not None:
             popup.shutdown()
-        if window is not None:
+        if window is not None and is_alive(window):
             window.close()
 
     def _forget_popup(self, step_n: int) -> None:
@@ -252,12 +268,54 @@ class MainWindow(QMainWindow):
     def _close_export_popup(self, kind: ExportKind) -> None:
         """Close this kind's export popup window, if open."""
         window = self._export_windows.pop(kind, None)
-        if window is not None:
+        if window is not None and is_alive(window):
             window.close()
 
     def _forget_export_popup(self, kind: ExportKind) -> None:
         """Drop tracking of an export window destroyed outside the dispatcher."""
         self._export_windows.pop(kind, None)
+
+    def _tool_windows(self) -> list[WidgetWindow]:
+        """Every tracked tool window that is still alive.
+
+        Dead windows (destroyed outside the dispatchers) are filtered
+        out, so they are never touched again.
+        """
+        tracked: list[WidgetWindow] = []
+        for window in (self._steps_window, self._filetree_window):
+            if window is not None:
+                tracked.append(window)
+        tracked.extend(self._popup_windows.values())
+        tracked.extend(self._export_windows.values())
+        return [window for window in tracked if is_alive(window)]
+
+    def _raise_tool_windows(self) -> None:
+        """Bring every tracked tool window up with the main window.
+
+        The tool windows are separate top-level windows: without this
+        the main window would cover them whenever it is raised or
+        activated (e.g. by a click on its title bar).
+        """
+        if self._raising_tool_windows:
+            return
+        self._raising_tool_windows = True
+        try:
+            for window in self._tool_windows():
+                window.raise_()
+        finally:
+            self._raising_tool_windows = False
+
+    def event(self, event: QEvent) -> bool:
+        """Keep the tool windows above the main window when it comes up.
+
+        PySide6 exposes neither ``raiseEvent`` nor ``activateEvent``, so
+        the window level events that precede them are handled here: the
+        main window was activated, its activation state changed or its
+        stacking order changed.
+        """
+        if event.type() in _RAISE_EVENTS:
+            self._raise_tool_windows()
+        return super().event(event)
 
     def _log(self, message: str) -> None:
         self.statusBar().showMessage(message)
@@ -280,6 +338,6 @@ class MainWindow(QMainWindow):
         for kind in list(self._export_windows):
             self._close_export_popup(kind)
         for window in (self._steps_window, self._filetree_window):
-            if window is not None:
+            if window is not None and is_alive(window):
                 window.close()
         super().closeEvent(event)
