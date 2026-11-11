@@ -19,6 +19,7 @@ from virda_gui_new.widgets.popup.ese_mesh import EseMeshPopup
 from virda_gui_new.widgets.popup.localization import LocalizationPopup
 from virda_gui_new.widgets.popup.main_menu import StepsMenu
 from virda_gui_new.widgets.popup.mesh_postprocessing import MeshPostprocessingPopup
+from virda_gui_new.widgets.steps_toggle_button import StepsToggleButton
 from virda_gui_new.widgets.viewer3d import SceneViewer3D
 from virda_gui_new.windows.widget_windows import WidgetWindow, open_widget_window
 
@@ -48,7 +49,12 @@ class MainWindow(QMainWindow):
         self._rebuild_scene()
 
         self._steps_menu = StepsMenu(self._steps)
-        self._steps_window = open_widget_window(self._steps_menu, title="Steps")
+        self._steps_window: WidgetWindow | None = open_widget_window(
+            self._steps_menu, title="Steps"
+        )
+        self._steps_window.destroyed.connect(self._forget_steps_menu)
+        self._steps_toggle = StepsToggleButton(self)
+        self._steps_toggle.toggleRequested.connect(self._toggle_steps_menu)
         self._popup_factories: dict[int, Callable[[], StepPopupBase]] = {}
         self._popup_factories[1] = lambda: BaseMeshExtractionPopup(BASE_MESH, self._steps)
         self._popup_factories[2] = lambda: MeshPostprocessingPopup(MESH_POSTPROCESSING, self._steps)
@@ -114,6 +120,22 @@ class MainWindow(QMainWindow):
     def _forget_filetree(self) -> None:
         """Drop the file tree reference once its window was destroyed."""
         self._filetree = None
+
+    def _toggle_steps_menu(self) -> None:
+        """Show (or re-raise) / hide the steps menu from the toggle button."""
+        window = self._steps_window
+        if window is None:
+            return
+        if window.isVisible():
+            window.hide()
+        else:
+            window.show()
+            window.raise_()
+            window.activateWindow()
+
+    def _forget_steps_menu(self) -> None:
+        """Drop the steps menu reference once its window was destroyed."""
+        self._steps_window = None
 
     def _close_stale_popups(self, step_n: int) -> None:
         """Close open popup windows of steps beyond the current step."""
