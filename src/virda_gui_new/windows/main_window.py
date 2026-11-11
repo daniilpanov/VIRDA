@@ -75,12 +75,7 @@ class MainWindow(QMainWindow):
         if factory is None:
             self._log(f"Step {step_n}: editor not implemented yet.")
             return
-        old_window = self._popup_windows.get(step_n)
-        if old_window is not None:
-            self._popups[step_n].shutdown()
-            old_window.close()
-            del self._popups[step_n]
-            del self._popup_windows[step_n]
+        self._close_popup(step_n)
         popup = factory()
         popup.completed.connect(self._on_step_completed)
         popup.failed.connect(lambda msg, s=step_n: self._log(f"Step {s} failed: {msg}"))
@@ -90,6 +85,7 @@ class MainWindow(QMainWindow):
 
     def _on_step_completed(self, step_n: int) -> None:
         self._log(f"Step {step_n} done.")
+        self._close_popup(step_n)
         if step_n + 1 < len(STEPS):
             self._open_step_popup(step_n + 1)
         elif step_n == len(STEPS) - 1:
@@ -105,8 +101,16 @@ class MainWindow(QMainWindow):
     def _close_stale_popups(self, step_n: int) -> None:
         """Close open popup windows of steps beyond the current step."""
         for step in [s for s in self._popup_windows if s > step_n]:
-            self._popups.pop(step).shutdown()
-            self._popup_windows.pop(step).close()
+            self._close_popup(step)
+
+    def _close_popup(self, step_n: int) -> None:
+        """Shut down and close this step's popup window, if open."""
+        popup = self._popups.pop(step_n, None)
+        window = self._popup_windows.pop(step_n, None)
+        if popup is not None:
+            popup.shutdown()
+        if window is not None:
+            window.close()
 
     def _log(self, message: str) -> None:
         self.statusBar().showMessage(message)

@@ -186,6 +186,9 @@ class _Host:
     def _open_step_popup(self, step_n: int) -> None:
         MainWindow._open_step_popup(cast("MainWindow", self), step_n)
 
+    def _close_popup(self, step_n: int) -> None:
+        MainWindow._close_popup(cast("MainWindow", self), step_n)
+
 
 def test_dispatcher_missing_factory_logs(qapp) -> None:
     host = _Host()
@@ -199,6 +202,8 @@ def test_dispatcher_missing_factory_logs(qapp) -> None:
 def test_dispatcher_full_flow(qapp, manager, popups) -> None:
     host = _Host()
     host._popup_factories[BASE_MESH.index] = lambda: _ProbePopup(BASE_MESH, manager)
+    next_step = BASE_MESH.index + 1
+    host._popup_factories[next_step] = lambda: _ProbePopup(STEPS[next_step], manager)
     for _ in range(BASE_MESH.index):
         manager.next_step()
 
@@ -208,15 +213,20 @@ def test_dispatcher_full_flow(qapp, manager, popups) -> None:
     window = host._popup_windows[BASE_MESH.index]
     assert window.windowTitle() == "Base mesh"
     assert window.isVisible()
+    gone = []
+    window.destroyed.connect(lambda: gone.append(True))
 
     popup._run_button.click()
     _settle(qapp, popup)
-    assert host.logs == [
-        f"Step {BASE_MESH.index} done.",
-        f"Step {BASE_MESH.index + 1}: editor not implemented yet.",
-    ]
-    assert manager.get_current_step() == 2
+    qapp.processEvents()
+
+    # The finished popup is closed and destroyed; the next popup took over.
+    assert gone == [True]
+    assert list(host._popups) == [next_step]
+    assert list(host._popup_windows) == [next_step]
+    assert host._popup_windows[next_step].windowTitle() == STEPS[next_step].name
+    assert manager.get_current_step() == next_step
+    assert host.logs == [f"Step {BASE_MESH.index} done."]
 
     popup.shutdown()
-    window.close()
     qapp.processEvents()
