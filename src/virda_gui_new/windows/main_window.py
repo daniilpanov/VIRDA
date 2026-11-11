@@ -57,10 +57,17 @@ class MainWindow(QMainWindow):
         self._steps_toggle = StepsToggleButton(self)
         self._steps_toggle.toggleRequested.connect(self._toggle_steps_menu)
         self._popup_factories: dict[int, Callable[[], StepPopupBase]] = {}
-        self._popup_factories[1] = lambda: BaseMeshExtractionPopup(BASE_MESH, self._steps)
-        self._popup_factories[2] = lambda: MeshPostprocessingPopup(MESH_POSTPROCESSING, self._steps)
-        self._popup_factories[3] = lambda: EseMeshPopup(ESE_MESH, self._steps)
-        self._popup_factories[4] = lambda: LocalizationPopup(LOCALIZATION, self._steps)
+        project = self._project_path
+        self._popup_factories[1] = lambda: BaseMeshExtractionPopup(
+            BASE_MESH, self._steps, project=project
+        )
+        self._popup_factories[2] = lambda: MeshPostprocessingPopup(
+            MESH_POSTPROCESSING, self._steps, project=project
+        )
+        self._popup_factories[3] = lambda: EseMeshPopup(ESE_MESH, self._steps, project=project)
+        self._popup_factories[4] = lambda: LocalizationPopup(
+            LOCALIZATION, self._steps, project=project
+        )
         self._popup_windows: dict[int, WidgetWindow] = {}
         self._popups: dict[int, StepPopupBase] = {}
         self._steps_menu.stepRequested.connect(self._open_step_popup)
@@ -104,6 +111,7 @@ class MainWindow(QMainWindow):
 
     def _on_step_completed(self, step_n: int) -> None:
         self._log(f"Step {step_n} done.")
+        self._refresh_filetree()
         self._close_popup(step_n)
         if step_n + 1 < len(STEPS):
             self._open_step_popup(step_n + 1)
@@ -115,6 +123,10 @@ class MainWindow(QMainWindow):
 
     def _on_steps_invalidated(self, n: int) -> None:
         self._log(f"Steps after {n} invalidated.")
+        self._refresh_filetree()
+
+    def _refresh_filetree(self) -> None:
+        """Re-scan the project and rebuild the file tree rows."""
         if self._filetree is not None:
             self._filetree.set_artifacts(find_project_artifacts(self._project_path))
 

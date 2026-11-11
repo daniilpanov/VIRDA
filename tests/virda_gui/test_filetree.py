@@ -95,6 +95,37 @@ def test_missing_artifacts_are_absent(qapp, tree) -> None:
     assert _row_texts(tree) == []
 
 
+def test_new_artifact_rows_use_real_subdirectories(qapp, tree, tmp_path) -> None:
+    from virda_gui_new.services.project_scan import ProjectArtifacts
+
+    measurements = tmp_path / "input" / "measurements.json"
+    config = tmp_path / "somewhere" / "pipeline_config.json"
+    head_mask = tmp_path / "segmentation" / "head_mask.nii.gz"
+    base_mesh = tmp_path / "scalp" / "base_mesh.ply"
+    final_mesh = tmp_path / "scalp" / "final_mesh.ply"
+    for path in (measurements, config, head_mask, base_mesh, final_mesh):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+
+    tree.set_artifacts(
+        ProjectArtifacts(
+            measurements=measurements,
+            pipeline_config=config,
+            head_mask=head_mask,
+            base_mesh=base_mesh,
+            scalp_mesh=final_mesh,
+        )
+    )
+
+    assert _row_texts(tree) == [
+        "input/measurements.json",
+        "somewhere/pipeline_config.json",
+        "segmentation/head_mask.nii.gz",
+        "scalp/base_mesh.ply",
+        "scalp/final_mesh.ply",
+    ]
+
+
 def test_double_click_on_existing_file_emits_path(qapp, tree, tmp_path) -> None:
     from virda_gui_new.services.project_scan import ProjectArtifacts
 
@@ -127,7 +158,8 @@ def test_set_artifacts_rebuild_resets_rows(qapp, tree, tmp_path) -> None:
     tree.set_artifacts(ProjectArtifacts(nifti=tmp_path / "a.nii"))
     tree._list.setCurrentRow(0)
 
-    mesh = tmp_path / "final_mesh.ply"
+    mesh = tmp_path / "mesh" / "final_mesh.ply"
+    mesh.parent.mkdir()
     mesh.touch()
     tree.set_artifacts(ProjectArtifacts(scalp_mesh=mesh))
 
