@@ -1,4 +1,4 @@
-"""Host one widget in a non-modal top-level window."""
+"""Host one widget in a non-modal tool window."""
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QCloseEvent
@@ -6,7 +6,7 @@ from PySide6.QtWidgets import QMainWindow, QWidget
 
 
 class WidgetWindow(QMainWindow):
-    """Frameless-of-opinions top-level host: only wraps a widget."""
+    """Non-modal Qt.Tool host: only wraps a widget."""
 
     def __init__(
         self,
@@ -15,7 +15,14 @@ class WidgetWindow(QMainWindow):
         *,
         title: str | None = None,
     ) -> None:
-        super().__init__(parent)
+        # Only a real widget can parent a window; anything else (e.g. a
+        # duck-typed test host standing in for the dispatcher) is ignored.
+        qt_parent = parent if isinstance(parent, QWidget) else None
+        super().__init__(qt_parent)
+        # Tool windows keep the hosted widget attached to its parent window
+        # (typically the MainWindow) instead of looking like a free-standing
+        # application window.
+        self.setWindowFlag(Qt.WindowType.Tool, True)
         orphan = widget.parent() is None
         self.widget = widget
         self.setCentralWidget(widget)
@@ -42,7 +49,7 @@ def open_widget_window(
     *,
     title: str | None = None,
 ) -> WidgetWindow:
-    """Build, show and return a non-modal window hosting ``widget``."""
+    """Build, show and return a non-modal tool window hosting ``widget``."""
     window = WidgetWindow(widget, parent, title=title)
     window.show()
     return window

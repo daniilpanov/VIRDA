@@ -64,6 +64,41 @@ def test_open_widget_window_shows_hosted_widget(qapp):
     qapp.processEvents()
 
 
+def test_open_widget_window_is_tool_window_of_parent(qapp):
+    """With a parent the window is a Qt.Tool tool window of that parent."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QWidget
+
+    parent = QWidget()
+    widget = QWidget()
+
+    window = open_widget_window(widget, parent=parent, title="Step 1")
+    try:
+        assert window.windowType() == Qt.WindowType.Tool
+        assert window.parent() is parent
+        assert window.windowModality() == Qt.WindowModality.NonModal
+        assert window.isVisible()
+        assert widget.isVisible()
+    finally:
+        window.close()
+        parent.deleteLater()
+    qapp.processEvents()
+
+
+def test_open_widget_window_defaults_to_parentless_tool(qapp):
+    """Without a parent the window is still a Qt.Tool tool window."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QWidget
+
+    window = open_widget_window(QWidget())
+    try:
+        assert window.windowType() == Qt.WindowType.Tool
+        assert window.parent() is None
+    finally:
+        window.close()
+    qapp.processEvents()
+
+
 def test_widget_window_title_derived_from_widget(qapp):
     """Without an explicit title the widget's own windowTitle() is used."""
     from PySide6.QtWidgets import QWidget
