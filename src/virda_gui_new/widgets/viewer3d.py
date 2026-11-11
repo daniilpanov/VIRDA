@@ -321,7 +321,10 @@ class SceneViewer3D(_SceneViewBase):
 
     A NIfTI volume, fiducials, scalp and ESE mesh groups with optional labeled
     points, and a layers panel that toggles their visibility (with a Scalp <->
-    ESE surface switcher when both meshes are present).
+    ESE surface switcher when both meshes are present). The mesh and
+    electrode toggles apply to whichever surface is active and survive both
+    a surface switch and a scene rebuild; the other checkboxes reset per
+    scene as before.
     """
 
     def __init__(
@@ -354,8 +357,11 @@ class SceneViewer3D(_SceneViewBase):
         self._mode = "scalp"
         self._nifti_visible = False
         self._fiducials_visible = True
-        self._points_visible = True
+        self._electrodes_visible = True
         self._labels_visible = True
+        # Stable across scene rebuilds: they apply to whichever surface is
+        # active, so a scalp <-> ESE switch must not reset them.
+        self._mesh_visible = True
 
         self._volume_actor: Actor | None = None
         self._fid_points_actor: Actor | None = None
@@ -439,7 +445,6 @@ class SceneViewer3D(_SceneViewBase):
             and (scene.scalp_mesh is None and scene.ese_mesh is None)
         )
         self._fiducials_visible = scene.fiducials is not None
-        self._points_visible = True
         self._labels_visible = True
         self._mode = "scalp" if scene.scalp_mesh is not None else "ese"
 
@@ -516,7 +521,9 @@ class SceneViewer3D(_SceneViewBase):
             self._add_check("Show fiducials", self._fiducials_visible, self._set_fiducials_visible)
             has_controls = True
         if scene.scalp_points is not None or scene.ese_points is not None:
-            self._add_check("Show points", self._points_visible, self._set_points_visible)
+            self._add_check(
+                "Show electrodes", self._electrodes_visible, self._set_electrodes_visible
+            )
             has_controls = True
 
         if (
@@ -525,6 +532,11 @@ class SceneViewer3D(_SceneViewBase):
             or (scene.ese_points is not None and scene.ese_points.labels is not None)
         ):
             self._add_check("Show labels", self._labels_visible, self._set_labels_visible)
+            has_controls = True
+
+        if self._mesh_actors:
+            # Near the surface group: it acts on whichever surface is active.
+            self._add_check("Show mesh", self._mesh_visible, self._set_mesh_visible)
             has_controls = True
 
         if scene.scalp_mesh is not None and scene.ese_mesh is not None:
@@ -561,8 +573,12 @@ class SceneViewer3D(_SceneViewBase):
         self._fiducials_visible = bool(flag)
         self._apply_visibility()
 
-    def _set_points_visible(self, flag: bool) -> None:
-        self._points_visible = bool(flag)
+    def _set_electrodes_visible(self, flag: bool) -> None:
+        self._electrodes_visible = bool(flag)
+        self._apply_visibility()
+
+    def _set_mesh_visible(self, flag: bool) -> None:
+        self._mesh_visible = bool(flag)
         self._apply_visibility()
 
     def _set_labels_visible(self, flag: bool) -> None:
@@ -589,9 +605,9 @@ class SceneViewer3D(_SceneViewBase):
         for key, active in (("scalp", scalp_active), ("ese", ese_active)):
             mesh_actor = self._mesh_actors.get(key)
             if mesh_actor is not None:
-                mesh_actor.SetVisibility(active)
+                mesh_actor.SetVisibility(active and self._mesh_visible)
 
-            visible = active and self._points_visible
+            visible = active and self._electrodes_visible
             points_actor = self._mesh_points_actors.get(key)
             if points_actor is not None:
                 points_actor.SetVisibility(visible)
