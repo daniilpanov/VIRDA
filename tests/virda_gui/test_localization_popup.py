@@ -19,14 +19,21 @@ from virda.models.mesh import Mesh
 from virda_gui_new.api import ops
 from virda_gui_new.dto.steps import LOCALIZATION, STEPS
 from virda_gui_new.services import artifact_saving
+from virda_gui_new.services.coordinates import CoordinateFrame
 from virda_gui_new.services.steps_manager import StepsManager
 from virda_gui_new.widgets.popup.localization import LocalizationPopup
 from virda_gui_new.widgets.popup.localization.abstract import (
     LocalizationPopupBase,
 )
+from virda_gui_new.widgets.popup.localization.frame_selector import FrameSelector
 
 _ESE = Mesh(np.zeros((4, 3)), np.zeros((1, 3), dtype=int))
 _SCALP = Mesh(np.zeros((3, 3)), np.zeros((1, 3), dtype=int))
+# World fiducials whose frame comes out axis-aligned (NAS at the origin).
+_WORLD_FIDUCIALS = np.array([[0.0, 100.0, 0.0], [-70.0, 0.0, 0.0], [70.0, 0.0, 0.0]])
+_FIDUCIAL_LABELS = ("NASION", "LPA", "RPA")
+# Mesh whose centroid is (7.5, 7.5, 7.5): the head frame shifts by that.
+_MESH_VERTICES = np.array([[0.0, 0.0, 0.0], [30.0, 0.0, 0.0], [0.0, 30.0, 0.0], [0.0, 0.0, 30.0]])
 _FIDUCIAL_ROWS = [
     ("Nasion", cast("Any", np.array([0.0, 0.0, 1.0]))),
     ("LPA", cast("Any", np.array([1.0, 0.0, 0.0]))),
@@ -480,6 +487,105 @@ def test_concrete_popup_measurements_import_error_is_a_hint(qapp, popups, monkey
 
     assert popup._hint_label.text().startswith("Failed to import measurements:")
     assert popup.collect_measurement_table() == {}
+
+
+def _fiducials_item_enabled(selector: FrameSelector) -> bool:
+    """Whether the selector's fiducials item is enabled."""
+    from PySide6.QtGui import QStandardItemModel
+
+    index = selector.findData(CoordinateFrame.FIDUCIALS)
+    model = selector.model()
+    assert isinstance(model, QStandardItemModel)
+    return bool(model.item(index).isEnabled())
+
+
+def test_concrete_popup_frame_selectors_default_to_head(qapp, popups) -> None:
+    """Both selectors default to head; head is available (scalp mesh set)."""
+    popup = LocalizationPopup(LOCALIZATION, _make_manager())
+    popups.append(popup)
+
+    assert popup._fiducials_frames.frame() == CoordinateFrame.HEAD
+    assert popup._electrodes_frames.frame() == CoordinateFrame.HEAD
+    assert popup._fiducials_table._frame is CoordinateFrame.HEAD
+    assert popup._electrodes_table._frame is CoordinateFrame.HEAD
+
+
+def test_concrete_popup_fiducials_frame_needs_three_fiducials(qapp, popups) -> None:
+    """The fiducials frame option is greyed out without all three points."""
+    from virda_gui_new.dto.viewer3d import LabeledPoints
+
+    manager = _make_manager()
+    manager.set_global_item("fiducials", LabeledPoints(_WORLD_FIDUCIALS, _FIDUCIAL_LABELS))
+
+    bare = LocalizationPopup(LOCALIZATION, _make_manager())
+    popups.append(bare)
+    assert not _fiducials_item_enabled(bare._fiducials_frames)
+
+    popup = LocalizationPopup(LOCALIZATION, manager)
+    popups.append(popup)
+    assert _fiducials_item_enabled(popup._fiducials_frames)
+
+    popup._fiducials_frames.setCurrentIndex(
+        popup._fiducials_frames.findData(CoordinateFrame.FIDUCIALS)
+    )
+
+    # NAS sits at the fiducials-frame origin; collection stays world.
+    assert [cast("QTableWidgetItem", popup._fiducials_table._table.item(0, c)).text() for c in (1, 2, 3)] == ["0", "0", "0"]
+    assert popup.collect_fiducial_rows()[0][1].tolist() == _WORLD_FIDUCIALS[0].tolist()
+
+
+def test_concrete_popup_empty_resets_fiducials_frame(qapp, popups) -> None:
+    """Clearing the store makes the fiducials frame unavailable -> fallback."""
+    from virda_gui_new.dto.viewer3d import LabeledPoints
+
+    manager = _make_manager()
+    manager.set_global_item("fiducials", LabeledPoints(_WORLD_FIDUCIALS, _FIDUCIAL_LABELS))
+    popup = LocalizationPopup(LOCALIZATION, manager)
+    popups.append(popup)
+
+    popup._fiducials_frames.setCurrentIndex(
+        popup._fiducials_frames.findData(CoordinateFrame.FIDUCIALS)
+    )
+    popup._fiducials_table.clear_grid()
+
+    assert popup._fiducials_frames.frame() == CoordinateFrame.HEAD  # head fallback
+    assert not _fiducials_item_enabled(popup._fiducials_frames)
+
+
+def test_localized_save_is_world_canonical_in_head_display(
+    qapp, popups, monkeypatch, tmp_path: Path
+) -> None:
+    """A run with head-frame display still saves world-canonical files."""
+    from virda_gui_new.dto.viewer3d import LabeledPoints
+    from virda_gui_new.services.artifact_loading import load_fiducial_points
+
+    payload = Electrodes(
+        [Electrode("A", {"LPA": 10.0}, ese_coords=np.zeros(3), scalp_coords=np.zeros(3))]
+    )
+    _patch_localize(monkeypatch, [], payload)
+    manager = _make_manager()
+    mesh = Mesh(_MESH_VERTICES, np.zeros((1, 3), dtype=int))
+    manager.set_step_context_item(2, "mesh", mesh)
+    manager.set_global_item("fiducials", LabeledPoints(_WORLD_FIDUCIALS, _FIDUCIAL_LABELS))
+    popup = LocalizationPopup(LOCALIZATION, manager, project=tmp_path)
+    popups.append(popup)
+
+    assert popup._fiducials_frames.frame() == CoordinateFrame.HEAD
+    assert [cast("QTableWidgetItem", popup._fiducials_table._table.item(0, c)).text() for c in (1, 2, 3)] == [
+        "-7.5",
+        "92.5",
+        "-7.5",
+    ]
+
+    popup._measurements_table.add_row()
+    for column, text in enumerate(("A", "LPA", "10")):
+        popup._measurements_table._table.setItem(0, column, QTableWidgetItem(text))
+
+    _settle(qapp, popup, "Localized 1 electrode.")
+
+    points = load_fiducial_points(tmp_path / "localization" / "fiducials.json")
+    assert points.labels == _FIDUCIAL_LABELS
+    assert points.points.tolist() == _WORLD_FIDUCIALS.tolist()
 
 
 def test_concrete_popup_prefill_precedes_runner_setup(qapp, popups) -> None:
