@@ -33,6 +33,7 @@ class LocalizationPopup(LocalizationPopupBase):
             layout.addWidget(QLabel(caption, self))
             layout.addWidget(widget)
         self._fiducials_table.rowsChanged.connect(self._on_inputs_changed)
+        self._fiducials_table.cleared.connect(self._clear_fiducial_store)
         self._measurements_table.rowsChanged.connect(self._on_inputs_changed)
         self._prefill_fiducials()
 

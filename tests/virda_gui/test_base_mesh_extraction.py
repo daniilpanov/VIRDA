@@ -9,7 +9,6 @@ import os
 import time
 from pathlib import Path
 from typing import Any
-from virda_gui_new.services import artifact_saving
 
 import numpy as np
 import pytest
@@ -21,6 +20,7 @@ from virda_gui.api.options import SealingOptions
 from virda_gui_new.api import ops
 from virda_gui_new.api.ops import ScalpSurface
 from virda_gui_new.dto.steps import BASE_MESH, STEPS
+from virda_gui_new.services import artifact_saving
 from virda_gui_new.services.steps_manager import StepsManager
 from virda_gui_new.widgets.popup.base_mesh_extraction import BaseMeshExtractionPopup
 
@@ -168,7 +168,6 @@ def test_run_with_project_persists_mask_and_base_mesh(
 
 
 def test_save_failure_fails_the_run(qapp, manager, popups, monkeypatch, tmp_path: Path) -> None:
-    import virda_gui_new.widgets.popup.base_mesh_extraction as module
 
     _patch_generate(monkeypatch, [])
     failed: list[str] = []
