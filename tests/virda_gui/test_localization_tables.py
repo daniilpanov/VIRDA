@@ -56,6 +56,24 @@ def test_fiducials_table_collects_complete_rows(qapp) -> None:
     assert collected[1][1][0] == 1.5
 
 
+def test_fiducials_table_set_rows_fills_editable_grid(qapp) -> None:
+    widget = FiducialsTable()
+    events: list[int] = []
+    widget.rowsChanged.connect(lambda: events.append(1))
+
+    widget.set_rows([("Nasion", np.array([0.0, 1.0, 2.0])), ("LPA", np.array([-1.0, 0.0, 0.0]))])
+
+    assert len(events) == 1  # one signal for the whole replacement
+    collected = widget.collect_fiducial_rows()
+    assert [name for name, _xyz in collected] == ["Nasion", "LPA"]
+    assert collected[0][1].tolist() == [0.0, 1.0, 2.0]
+    assert collected[1][1].tolist() == [-1.0, 0.0, 0.0]
+
+    # A prefilled cell is editable like a manual row.
+    widget._table.item(0, 0).setText("Nz")
+    assert widget.collect_fiducial_rows()[0][0] == "Nz"
+
+
 def test_fiducials_table_emits_rows_changed(qapp) -> None:
     widget = FiducialsTable()
     events: list[int] = []

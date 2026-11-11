@@ -185,6 +185,31 @@ def test_shutdown_is_safe(qapp, popups, monkeypatch) -> None:
     popup.shutdown()
 
 
+def test_concrete_popup_prefills_fiducials_from_context(qapp, popups) -> None:
+    """Seeded step-4 fiducials land in the table as editable rows."""
+    from virda_gui_new.dto.viewer3d import LabeledPoints
+
+    manager = _make_manager()
+    points = LabeledPoints(np.array([[0.0, 0.0, 1.0], [1.0, 0.0, 0.0]]), ("Nasion", "LPA"))
+    manager.set_step_context_item(LOCALIZATION.index, "fiducials", points)
+    popup = LocalizationPopup(LOCALIZATION, manager)
+    popups.append(popup)
+
+    rows = popup.collect_fiducial_rows()
+    assert [name for name, _xyz in rows] == ["Nasion", "LPA"]
+    assert rows[0][1].tolist() == [0.0, 0.0, 1.0]
+    assert rows[1][1].tolist() == [1.0, 0.0, 0.0]
+    assert popup._fiducials_table._table.item(0, 0).text() == "Nasion"
+
+
+def test_concrete_popup_prefill_absent_keeps_empty_grid(qapp, popups) -> None:
+    """Without seeded fiducials the table starts empty as before."""
+    popup = LocalizationPopup(LOCALIZATION, _make_manager())
+    popups.append(popup)
+
+    assert popup.collect_fiducial_rows() == []
+
+
 def test_concrete_popup_blocked_states(qapp, popups, monkeypatch) -> None:
     calls: list = []
 
