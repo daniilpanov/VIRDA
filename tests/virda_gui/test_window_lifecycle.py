@@ -83,6 +83,37 @@ def test_menu_bar_has_file_export_with_four_actions(qapp, tmp_path: Path) -> Non
         qapp.processEvents()
 
 
+def test_steps_pill_sits_below_the_menu_bar(qapp, tmp_path: Path) -> None:
+    """The Steps pill is anchored below the menu bar of the main window."""
+    main = _build_main_window(tmp_path)
+    try:
+        menu_bar = main.menuBar()
+        pill = main._steps_toggle  # noqa: SLF001 - overlay under test
+        assert menu_bar.isVisible()
+        assert pill.geometry().top() > menu_bar.geometry().bottom()
+    finally:
+        main.close()
+        qapp.processEvents()
+
+
+def test_steps_pill_stays_below_the_menu_bar_after_a_resize(qapp, tmp_path: Path) -> None:
+    """Resizing the main window keeps the pill clear of the menu bar."""
+    main = _build_main_window(tmp_path)
+    try:
+        pill = main._steps_toggle  # noqa: SLF001 - overlay under test
+        before = pill.pos()
+
+        main.resize(900, 700)
+        qapp.processEvents()
+
+        menu_bar = main.menuBar()
+        assert pill.geometry().top() > menu_bar.geometry().bottom()
+        assert pill.pos() == before
+    finally:
+        main.close()
+        qapp.processEvents()
+
+
 def test_export_actions_open_tool_windows_parented_to_main(qapp, tmp_path: Path) -> None:
     """Every File -> Export action opens its popup as a Qt.Tool child window."""
     from PySide6.QtCore import Qt
