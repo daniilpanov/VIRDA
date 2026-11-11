@@ -86,9 +86,11 @@ def prepare_project(project: Path) -> PreparedProject:
         ese_mesh=_load(scanned.ese_mesh, artifact_loading.load_mesh, project, failures),
         fiducials=_resolve_fiducials(scanned, project, failures),
         scalp_points=_load(
-            scanned.scalp_points, artifact_loading.load_point_rows, project, failures
+            scanned.scalp_points, artifact_loading.load_electrode_points, project, failures
         ),
-        ese_points=_load(scanned.ese_points, artifact_loading.load_point_rows, project, failures),
+        ese_points=_load(
+            scanned.ese_points, artifact_loading.load_electrode_points, project, failures
+        ),
         measurements=_load(
             scanned.measurements, artifact_loading.load_measurements, project, failures
         ),
