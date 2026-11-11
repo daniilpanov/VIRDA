@@ -64,6 +64,78 @@ def test_popup_windows_are_tool_windows_parented_to_main(qapp, tmp_path: Path) -
         qapp.processEvents()
 
 
+def test_menu_bar_has_file_export_with_four_actions(qapp, tmp_path: Path) -> None:
+    """File -> Export holds one action per export kind."""
+    main = _build_main_window(tmp_path)
+    try:
+        menubar = main.menuBar()
+        assert [action.text() for action in menubar.actions()] == ["&File"]
+        file_menu = menubar.actions()[0].menu()
+        assert file_menu is not None
+        assert [action.text() for action in file_menu.actions()] == ["&Export"]
+        export_menu = file_menu.actions()[0].menu()
+        assert export_menu is not None
+        titles = [action.text() for action in export_menu.actions()]
+        assert titles == ["&Measurements", "&Electrodes", "&Fiducials", "&Mesh"]
+    finally:
+        main.close()
+        qapp.processEvents()
+
+
+def test_export_actions_open_tool_windows_parented_to_main(qapp, tmp_path: Path) -> None:
+    """Every File -> Export action opens its popup as a Qt.Tool child window."""
+    from PySide6.QtCore import Qt
+
+    from virda_gui_new.services.artifact_exporting import ExportKind
+
+    main = _build_main_window(tmp_path)
+    try:
+        for kind in ExportKind:
+            main._open_export_popup(kind)  # noqa: SLF001 - dispatcher under test
+            window = main._export_windows[kind]  # noqa: SLF001 - registry under test
+            assert window.windowType() == Qt.WindowType.Tool
+            assert window.parent() is main
+            assert window.windowModality() == Qt.WindowModality.NonModal
+            assert window.windowTitle() == f"Export {kind.value}"
+    finally:
+        main.close()
+        qapp.processEvents()
+
+
+def test_reopening_an_export_popup_replaces_the_open_one(qapp, tmp_path: Path) -> None:
+    from virda_gui_new.services.artifact_exporting import ExportKind
+
+    main = _build_main_window(tmp_path)
+    try:
+        main._open_export_popup(ExportKind.MESH)  # noqa: SLF001 - dispatcher under test
+        first = main._export_windows[ExportKind.MESH]  # noqa: SLF001
+
+        main._open_export_popup(ExportKind.MESH)  # noqa: SLF001 - dispatcher under test
+        qapp.processEvents()
+
+        assert not shiboken6.isValid(first)
+        assert main._export_windows[ExportKind.MESH] is not first  # noqa: SLF001
+    finally:
+        main.close()
+        qapp.processEvents()
+
+
+def test_closing_main_window_closes_export_windows(qapp, tmp_path: Path) -> None:
+    """The close-everything exit path includes the export popups."""
+    from virda_gui_new.services.artifact_exporting import ExportKind
+
+    main = _build_main_window(tmp_path)
+    main._open_export_popup(ExportKind.FIDUCIALS)  # noqa: SLF001 - dispatcher under test
+    export_window = main._export_windows[ExportKind.FIDUCIALS]  # noqa: SLF001
+
+    main.close()
+    qapp.processEvents()
+
+    assert not shiboken6.isValid(export_window)
+    assert main._export_windows == {}  # noqa: SLF001 - registry under test
+    assert not task_runner_module._ORPHANS  # noqa: SLF001 - registry under test
+
+
 def test_closing_main_window_closes_all_popup_windows(qapp, tmp_path: Path) -> None:
     """Closing MainWindow closes every popup and drops the dead references."""
     main = _build_main_window(tmp_path)
