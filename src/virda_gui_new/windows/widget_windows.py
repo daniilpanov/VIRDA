@@ -5,6 +5,23 @@ from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import QMainWindow, QWidget
 
 
+def is_alive(window: QWidget | None) -> bool:
+    """True when ``window`` still has a live C++ counterpart.
+
+    A tool window can be destroyed (by its own close button, by the
+    window manager or by the embedder) while the embedder still holds a
+    reference to it. Touching such a dead wrapper raises a
+    ``RuntimeError``, so callers check it before using a window.
+    """
+    if window is None:
+        return False
+    try:
+        window.objectName()
+    except RuntimeError:
+        return False
+    return True
+
+
 class WidgetWindow(QMainWindow):
     """Non-modal Qt.Tool host: only wraps a widget."""
 
@@ -49,7 +66,13 @@ def open_widget_window(
     *,
     title: str | None = None,
 ) -> WidgetWindow:
-    """Build, show and return a non-modal tool window hosting ``widget``."""
+    """Build, show and raise a non-modal tool window hosting ``widget``.
+
+    The window is raised right after it was shown, so it lands above
+    its parent window instead of behind it.
+    """
     window = WidgetWindow(widget, parent, title=title)
     window.show()
+    window.raise_()
+    window.activateWindow()
     return window
