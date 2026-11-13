@@ -1,5 +1,7 @@
 """Entry point of the new GUI: pick a project, seed its steps, open the window."""
 
+from typing import cast
+
 from PySide6.QtWidgets import QApplication
 
 from virda_gui_new.dialogs.project_dialog import ProjectStartDialog
@@ -13,7 +15,10 @@ from virda_gui_new.windows.main_window import MainWindow
 
 
 def main() -> None:
-    app = QApplication.instance() or QApplication([])
+    app = cast(QApplication, QApplication.instance() or QApplication([]))
+    # Quitting with the last (primary) window closed: closing the MainWindow
+    # also closes its tool popups, so the event loop ends with it.
+    app.setQuitOnLastWindowClosed(True)
     prefs = Preferences()
 
     while True:

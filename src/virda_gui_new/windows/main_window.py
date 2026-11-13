@@ -3,6 +3,7 @@
 from collections.abc import Callable
 from pathlib import Path
 
+from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import QMainWindow
 
 from virda_gui_new.dto.steps import BASE_MESH, ESE_MESH, LOCALIZATION, MESH_POSTPROCESSING, STEPS
@@ -52,7 +53,7 @@ class MainWindow(QMainWindow):
 
         self._steps_menu = StepsMenu(self._steps)
         self._steps_window: WidgetWindow | None = open_widget_window(
-            self._steps_menu, title="Steps"
+            self._steps_menu, parent=self, title="Steps"
         )
         self._steps_window.destroyed.connect(self._forget_steps_menu)
         self._steps_toggle = StepsToggleButton(self)
@@ -88,7 +89,7 @@ class MainWindow(QMainWindow):
         popup = factory()
         popup.completed.connect(self._on_step_completed)
         popup.failed.connect(lambda msg, s=step_n: self._log(f"Step {s} failed: {msg}"))
-        window = open_widget_window(popup, title=STEPS[step_n].name)
+        window = open_widget_window(popup, parent=self, title=STEPS[step_n].name)
 
         def on_window_destroyed(*_args: object) -> None:
             self._forget_popup(step_n)
@@ -145,6 +146,19 @@ class MainWindow(QMainWindow):
         """Drop tracking of a popup window destroyed outside the dispatcher."""
         self._popup_windows.pop(step_n, None)
         self._popups.pop(step_n, None)
+
+    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt override
+        """Close every tracked popup so nothing outlives the main window.
+
+        Closing each host stops its hosted widget's background work
+        (including any running :class:`~virda_gui_new.services.task_runner.
+        TaskRunner` thread) before the application exits.
+        """
+        for step_n in list(self._popup_windows):
+            self._close_popup(step_n)
+        if self._steps_window is not None:
+            self._steps_window.close()
+        super().closeEvent(event)
 
     def _log(self, message: str) -> None:
         self.statusBar().showMessage(message)
