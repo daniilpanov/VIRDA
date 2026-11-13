@@ -11,10 +11,11 @@ from virda.models.electrode import Electrode, Electrodes
 from virda.models.mesh import Mesh
 from virda_gui_new.dto.steps import STEPS
 from virda_gui_new.dto.viewer3d import LabeledPoints
-from virda_gui_new.services.coordinates import CoordinateService
+from virda_gui_new.services.coordinates import CoordinateFrame, CoordinateService
 from virda_gui_new.services.steps_manager import StepsManager
 from virda_gui_new.widgets.popup.localization.electrodes_table import ElectrodesTable
 from virda_gui_new.widgets.popup.localization.fiducials_table import FiducialsTable
+from virda_gui_new.widgets.popup.localization.frame_selector import FrameSelector
 from virda_gui_new.widgets.popup.localization.measurements_table import MeasurementsTable
 
 # World fiducials whose frame comes out axis-aligned (NAS at the origin).
@@ -261,3 +262,156 @@ def test_electrodes_table_renders_model(qapp) -> None:
     ]
     assert texts[0] == ["A", "1.00", "2.00", "3.00", "4.00", "5.00", "6.00", "0.12", "yes"]
     assert texts[1] == ["B", "", "", "", "", "", "", "", "no"]
+
+
+def test_frame_selector_defaults_to_head_and_signals(qapp) -> None:
+    widget = FrameSelector()
+    frames: list[CoordinateFrame] = []
+    widget.frameChanged.connect(frames.append)
+
+    assert widget.frame() == CoordinateFrame.HEAD
+    widget.setCurrentIndex(widget.findData(CoordinateFrame.WORLD))
+
+    assert frames == [CoordinateFrame.WORLD]
+    assert widget.frame() == CoordinateFrame.WORLD
+
+
+def test_frame_selector_greys_out_unavailable_frames(qapp) -> None:
+    from PySide6.QtGui import QStandardItemModel
+
+    widget = FrameSelector()
+    fiducials_index = widget.findData(CoordinateFrame.FIDUCIALS)
+
+    widget.set_frame_enabled(CoordinateFrame.FIDUCIALS, False)
+
+    model = widget.model()
+    assert isinstance(model, QStandardItemModel)
+    assert not model.item(fiducials_index).isEnabled()
+    assert model.item(widget.findData(CoordinateFrame.HEAD)).isEnabled()
+
+    widget.set_frame_enabled(CoordinateFrame.FIDUCIALS, True)
+
+    assert model.item(fiducials_index).isEnabled()
+
+
+def test_fiducials_table_head_frame_display_keeps_world_canonical(qapp) -> None:
+    widget = FiducialsTable(_service())
+    widget.set_rows([("NASION", _WORLD_FIDUCIALS[0]), ("LPA", _WORLD_FIDUCIALS[1])])
+
+    widget.set_display_frame(CoordinateFrame.HEAD)
+
+    # Displayed values shift by the head origin; collected rows do not.
+    head_display = [
+        cast("QTableWidgetItem", widget._table.item(0, column)).text() for column in (1, 2, 3)
+    ]
+    assert head_display == ["-7.5", "92.5", "-7.5"]
+    assert widget.collect_fiducial_rows()[0][1].tolist() == [0.0, 100.0, 0.0]
+    assert [name for name, _xyz in widget.collect_fiducial_rows()] == ["NASION", "LPA"]
+
+    widget.set_display_frame(CoordinateFrame.WORLD)
+
+    assert [
+        cast("QTableWidgetItem", widget._table.item(0, column)).text() for column in (1, 2, 3)
+    ] == ["0", "100", "0"]
+    assert widget.collect_fiducial_rows()[0][1].tolist() == [0.0, 100.0, 0.0]
+
+
+def test_fiducials_table_edits_in_head_frame_store_world(qapp) -> None:
+    widget = FiducialsTable(_service())
+    widget.set_display_frame(CoordinateFrame.HEAD)
+
+    for column, text in enumerate(("1", "2", "3"), start=1):
+        widget._table.setItem(0, column, _item(text))
+
+    collected = widget.collect_fiducial_rows()
+    assert collected[0][1].tolist() == [1.0 + 7.5, 2.0 + 7.5, 3.0 + 7.5]
+    assert (
+        cast("QTableWidgetItem", widget._table.item(0, 1)).text() == "1"
+    )  # display untouched while typing
+
+
+def test_fiducials_table_fiducials_frame_shows_nas_at_the_origin(qapp) -> None:
+    widget = FiducialsTable(_service())
+    widget.set_rows(
+        [(label, xyz) for label, xyz in zip(_FIDUCIAL_LABELS, _WORLD_FIDUCIALS, strict=True)]
+    )
+
+    widget.set_display_frame(CoordinateFrame.FIDUCIALS)
+
+    assert [
+        cast("QTableWidgetItem", widget._table.item(0, column)).text() for column in (1, 2, 3)
+    ] == ["0", "0", "0"]
+    assert [
+        cast("QTableWidgetItem", widget._table.item(1, column)).text() for column in (1, 2, 3)
+    ] == ["-70", "-100", "0"]
+    # Canonical rows stay world.
+    assert widget.collect_fiducial_rows()[0][1].tolist() == [0.0, 100.0, 0.0]
+
+
+def test_fiducials_table_unavailable_frame_falls_back_to_world(qapp) -> None:
+    widget = FiducialsTable(_service(fiducials=False))
+    widget.set_rows([("NASION", _WORLD_FIDUCIALS[0])])
+
+    widget.set_display_frame(CoordinateFrame.FIDUCIALS)
+
+    assert widget._frame is CoordinateFrame.WORLD
+    assert cast("QTableWidgetItem", widget._table.item(0, 1)).text() == "0"
+
+
+def test_fiducials_table_frame_change_clears_incomplete_rows(qapp) -> None:
+    widget = FiducialsTable(_service())
+    widget.set_rows([("NASION", _WORLD_FIDUCIALS[0]), ("LPA", _WORLD_FIDUCIALS[1])])
+    cast("QTableWidgetItem", widget._table.item(0, 2)).setText("")  # NAS row becomes incomplete
+
+    widget.set_display_frame(CoordinateFrame.HEAD)
+
+    # Incomplete rows cannot be converted cell-wise; the frame change blanks them.
+    assert [name for name, _xyz in widget.collect_fiducial_rows()] == ["LPA"]
+    assert cast("QTableWidgetItem", widget._table.item(0, 1)).text() == ""
+    # Complete rows keep their values across the switch.
+    assert cast("QTableWidgetItem", widget._table.item(1, 1)).text() == f"{-70.0 - 7.5:g}"
+
+
+def test_electrodes_table_renders_in_display_frame(qapp) -> None:
+    widget = ElectrodesTable(_service())
+    electrodes = Electrodes(
+        [
+            Electrode(
+                "A",
+                {"LPA": 10.0},
+                ese_coords=_WORLD_FIDUCIALS[0],
+                scalp_coords=np.array([1.0, 2.0, 3.0]),
+                residual_error=0.125,
+            )
+        ]
+    )
+
+    widget.show_electrodes(electrodes)
+    widget.set_display_frame(CoordinateFrame.HEAD)
+
+    grid = widget._table
+    assert (
+        cast("QTableWidgetItem", grid.item(0, 1)).text() == f"{0.0 - 7.5:.2f}"
+    )  # ESE X in head frame
+    assert cast("QTableWidgetItem", grid.item(0, 2)).text() == f"{100.0 - 7.5:.2f}"
+    assert (
+        cast("QTableWidgetItem", grid.item(0, 7)).text() == "0.12"
+    )  # residuals are frame-independent
+
+    widget.set_display_frame(CoordinateFrame.FIDUCIALS)
+
+    # NAS is the fiducials-frame origin.
+    assert cast("QTableWidgetItem", grid.item(0, 1)).text() == "0.00"
+    assert cast("QTableWidgetItem", grid.item(0, 2)).text() == "0.00"
+
+
+def test_electrodes_table_without_converter_stays_world(qapp) -> None:
+    widget = ElectrodesTable()
+    widget.show_electrodes(
+        Electrodes([Electrode("A", {"LPA": 1.0}, ese_coords=np.array([1.0, 2.0, 3.0]))])
+    )
+
+    widget.set_display_frame(CoordinateFrame.HEAD)
+
+    assert widget._frame is CoordinateFrame.WORLD
+    assert cast("QTableWidgetItem", widget._table.item(0, 1)).text() == "1.00"
