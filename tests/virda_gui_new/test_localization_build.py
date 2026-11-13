@@ -34,10 +34,10 @@ def test_build_fiducials_rejects_empty_name() -> None:
 
 
 def test_build_fiducials_rejects_duplicate_names() -> None:
-    rows = [("Nasion", np.zeros(3)), ("  Nasion ", np.ones(3))]
+    rows = [("Nasion", np.zeros(3)), ["Nasion", np.ones(3)]]
 
     with pytest.raises(ValueError, match="unique"):
-        build_fiducials(rows)
+        build_fiducials(rows)  # type: ignore[arg-type]
 
 
 def test_build_fiducials_rejects_bad_shape() -> None:

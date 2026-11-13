@@ -5,6 +5,7 @@ Runs under the offscreen Qt platform; skips without a Qt install. The
 runs; only form values flow to the mocks and a tiny real result back.
 """
 
+import os
 import time
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,19 @@ from virda_gui_new.widgets.popup.mesh_postprocessing import MeshPostprocessingPo
 
 _NO_MESH = "Mesh postprocessing needs an in-memory mesh (run the previous steps first)."
 _MESH = Mesh(np.zeros((4, 3)), np.zeros((1, 3), dtype=int))
+
+
+@pytest.fixture
+def qapp():
+    """Yield an offscreen ``QApplication``, skipping without a Qt install."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    try:
+        from PySide6.QtWidgets import QApplication
+    except Exception as exc:  # pragma: no cover - depends on local Qt install
+        pytest.skip(f"Qt platform unavailable: {exc}")
+
+    app = QApplication.instance() or QApplication([])
+    return app
 
 
 def _make_manager(mesh: Mesh | None) -> StepsManager:
@@ -40,7 +54,16 @@ def manager(qapp) -> StepsManager:
     return _make_manager(None)
 
 
-def _patch_ops(monkeypatch, calls: list[tuple[str, Any, Any]]) -> None:
+@pytest.fixture
+def popups(qapp):
+    """Collect popups and stop their runner threads at teardown."""
+    created: list[Any] = []
+    yield created
+    for popup in created:
+        popup.shutdown()
+
+
+def _patch_ops(monkeypatch, calls: list[Any]) -> None:
     def fake_clean(mesh, options):
         calls.append(("clean", mesh, options))
         return _MESH
@@ -111,7 +134,7 @@ def test_input_resolution(qapp, popups, manager) -> None:
 
 
 def test_collect_run_step1_fallback(qapp, manager, popups, monkeypatch) -> None:
-    calls: list[tuple[str, Any, Any]] = []
+    calls: list[Any] = []
     _patch_ops(monkeypatch, calls)
     popup = MeshPostprocessingPopup(MESH_POSTPROCESSING, manager)
     popups.append(popup)
@@ -132,7 +155,7 @@ def test_collect_run_step1_fallback(qapp, manager, popups, monkeypatch) -> None:
 
 
 def test_collect_run_maps_form_values(qapp, manager, popups, monkeypatch) -> None:
-    calls: list[tuple[str, Any, Any]] = []
+    calls: list[Any] = []
     _patch_ops(monkeypatch, calls)
     popup = MeshPostprocessingPopup(MESH_POSTPROCESSING, manager)
     popups.append(popup)
@@ -159,7 +182,7 @@ def test_collect_run_maps_form_values(qapp, manager, popups, monkeypatch) -> Non
 
 
 def test_collect_run_none_smoother_still_calls_smooth(qapp, manager, popups, monkeypatch) -> None:
-    calls: list[tuple[str, Any, Any]] = []
+    calls: list[Any] = []
     _patch_ops(monkeypatch, calls)
     popup = MeshPostprocessingPopup(MESH_POSTPROCESSING, manager)
     popups.append(popup)
@@ -187,11 +210,11 @@ def test_apply_result_writes_mesh(qapp, manager, popups) -> None:
 
 
 def test_mocked_run_writes_context_and_advances(qapp, manager, popups, monkeypatch) -> None:
-    calls: list[tuple[str, Any, Any]] = []
+    calls: list[Any] = []
     _patch_ops(monkeypatch, calls)
     popup = MeshPostprocessingPopup(MESH_POSTPROCESSING, manager)
     popups.append(popup)
-    completed: list[int] = []
+    completed: list[Any] = []
     popup.completed.connect(completed.append)
 
     popup._run_button.click()
@@ -201,6 +224,20 @@ def test_mocked_run_writes_context_and_advances(qapp, manager, popups, monkeypat
     assert completed == [2]
     assert manager.get_step_context_item(2, "mesh") is _MESH
     assert manager.get_current_step() == 3  # base advanced past step 2
+
+
+def test_run_with_project_persists_final_mesh(
+    qapp, manager, popups, monkeypatch, tmp_path: Path
+) -> None:
+    _patch_ops(monkeypatch, [])
+    popup = MeshPostprocessingPopup(MESH_POSTPROCESSING, manager, project=tmp_path)
+    popups.append(popup)
+
+    popup._run_button.click()
+    _settle(qapp, popup)
+
+    assert popup._hint_label.text() == "Done."
+    assert (tmp_path / "scalp" / "final_mesh.ply").is_file()
 
 
 def test_missing_mesh_fails_collect(qapp, popups) -> None:

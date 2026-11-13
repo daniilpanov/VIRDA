@@ -5,7 +5,9 @@ Runs under the offscreen Qt platform; skips without a Qt install. The
 form values flow to the mock and a tiny real result back.
 """
 
+import os
 import time
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -27,6 +29,19 @@ def _result() -> tuple[Mesh, np.ndarray]:
     return Mesh(np.zeros((4, 3)), np.zeros((1, 3), dtype=int)), np.ones((4, 3))
 
 
+@pytest.fixture
+def qapp():
+    """Yield an offscreen ``QApplication``, skipping without a Qt install."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    try:
+        from PySide6.QtWidgets import QApplication
+    except Exception as exc:  # pragma: no cover - depends on local Qt install
+        pytest.skip(f"Qt platform unavailable: {exc}")
+
+    app = QApplication.instance() or QApplication([])
+    return app
+
+
 def _make_manager(mesh: Mesh | None) -> StepsManager:
     """Manager at step 3; sets the step-1 scalp surface plus a step-2 mesh."""
     steps = StepsManager(tuple(step.required_keys for step in STEPS))
@@ -45,7 +60,16 @@ def manager(qapp) -> StepsManager:
     return _make_manager(_MESH)
 
 
-def _patch_ops(monkeypatch, calls: list[tuple[str, Any, Any]]) -> None:
+@pytest.fixture
+def popups(qapp):
+    """Collect popups and stop their runner threads at teardown."""
+    created: list[Any] = []
+    yield created
+    for popup in created:
+        popup.shutdown()
+
+
+def _patch_ops(monkeypatch, calls: list[Any]) -> None:
     def fake_generate_ese(mesh, options):
         calls.append(("generate_ese", mesh, options))
         return _result()
@@ -107,7 +131,7 @@ def test_input_resolution(qapp, popups, manager) -> None:
 
 
 def test_collect_run_maps_form_values(qapp, manager, popups, monkeypatch) -> None:
-    calls: list[tuple[str, Any, Any]] = []
+    calls: list[Any] = []
     _patch_ops(monkeypatch, calls)
     popup = EseMeshPopup(ESE_MESH, manager)
     popups.append(popup)
@@ -143,7 +167,7 @@ def test_collect_run_maps_form_values(qapp, manager, popups, monkeypatch) -> Non
 
 
 def test_collect_run_auto_k_gives_none(qapp, manager, popups, monkeypatch) -> None:
-    calls: list[tuple[str, Any, Any]] = []
+    calls: list[Any] = []
     _patch_ops(monkeypatch, calls)
     popup = EseMeshPopup(ESE_MESH, manager)
     popups.append(popup)
@@ -173,11 +197,11 @@ def test_apply_result_writes_both_keys(qapp, manager, popups) -> None:
 
 
 def test_mocked_run_writes_context_and_advances(qapp, manager, popups, monkeypatch) -> None:
-    calls: list[tuple[str, Any, Any]] = []
+    calls: list[Any] = []
     _patch_ops(monkeypatch, calls)
     popup = EseMeshPopup(ESE_MESH, manager)
     popups.append(popup)
-    completed: list[int] = []
+    completed: list[Any] = []
     popup.completed.connect(completed.append)
 
     popup._run_button.click()
@@ -189,6 +213,20 @@ def test_mocked_run_writes_context_and_advances(qapp, manager, popups, monkeypat
     assert manager.get_step_context_item(3, "normals").shape == (4, 3)
     assert manager.is_step_done(3)
     assert manager.get_current_step() == 4  # base advanced past step 3
+
+
+def test_run_with_project_persists_ese_mesh(
+    qapp, manager, popups, monkeypatch, tmp_path: Path
+) -> None:
+    _patch_ops(monkeypatch, [])
+    popup = EseMeshPopup(ESE_MESH, manager, project=tmp_path)
+    popups.append(popup)
+
+    popup._run_button.click()
+    _settle(qapp, popup)
+
+    assert popup._hint_label.text() == "Done."
+    assert (tmp_path / "ese" / "mesh.ply").is_file()
 
 
 def test_missing_mesh_fails_collect(qapp, popups) -> None:

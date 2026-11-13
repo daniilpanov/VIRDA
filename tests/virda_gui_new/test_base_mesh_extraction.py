@@ -5,6 +5,7 @@ Runs under the offscreen Qt platform; skips without a Qt install. The
 runs; only form values flow to the mock and a tiny real result back.
 """
 
+import os
 import time
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,7 @@ from virda_gui.api.options import SealingOptions
 from virda_gui_new.api import ops
 from virda_gui_new.api.ops import ScalpSurface
 from virda_gui_new.dto.steps import BASE_MESH, STEPS
+from virda_gui_new.services import artifact_saving
 from virda_gui_new.services.steps_manager import StepsManager
 from virda_gui_new.widgets.popup.base_mesh_extraction import BaseMeshExtractionPopup
 
@@ -29,12 +31,34 @@ _VOLUME = MRIVolume(
 
 
 @pytest.fixture
+def qapp():
+    """Yield an offscreen ``QApplication``, skipping without a Qt install."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    try:
+        from PySide6.QtWidgets import QApplication
+    except Exception as exc:  # pragma: no cover - depends on local Qt install
+        pytest.skip(f"Qt platform unavailable: {exc}")
+
+    app = QApplication.instance() or QApplication([])
+    return app
+
+
+@pytest.fixture
 def manager(qapp) -> StepsManager:
     """Manager at step 1 with a ready NIfTI volume in the step-0 context."""
     steps = StepsManager(tuple(step.required_keys for step in STEPS))
     steps.set_step_context_item(0, "volume", _VOLUME)
     steps.next_step()
     return steps
+
+
+@pytest.fixture
+def popups(qapp):
+    """Collect popups and stop their runner threads at teardown."""
+    created: list[Any] = []
+    yield created
+    for popup in created:
+        popup.shutdown()
 
 
 def _fake_result() -> ScalpSurface:
@@ -47,7 +71,7 @@ def _fake_result() -> ScalpSurface:
 _RESULT = _fake_result()
 
 
-def _patch_generate(monkeypatch, calls: list[tuple[str, Any, Any]]) -> None:
+def _patch_generate(monkeypatch, calls: list[Any]) -> None:
     def fake(volume, sealing, voxel_size_mm=None):
         calls.append((volume, sealing, voxel_size_mm))
         return _RESULT
@@ -77,7 +101,7 @@ def test_form_defaults(qapp, manager, popups) -> None:
 
 
 def test_collect_run_defaults_stay_native_and_sealed(qapp, manager, popups, monkeypatch) -> None:
-    calls: list[tuple[Any, Any, Any]] = []
+    calls: list[Any] = []
     _patch_generate(monkeypatch, calls)
     popup = BaseMeshExtractionPopup(BASE_MESH, manager)
     popups.append(popup)
@@ -90,7 +114,7 @@ def test_collect_run_defaults_stay_native_and_sealed(qapp, manager, popups, monk
 
 
 def test_collect_run_maps_voxel_and_seal(qapp, manager, popups, monkeypatch) -> None:
-    calls: list[tuple[Any, Any, Any]] = []
+    calls: list[Any] = []
     _patch_generate(monkeypatch, calls)
     popup = BaseMeshExtractionPopup(BASE_MESH, manager)
     popups.append(popup)
@@ -114,7 +138,7 @@ def test_apply_result_writes_mesh_and_mask(qapp, manager, popups) -> None:
 
 
 def test_mocked_run_writes_context_and_advances(qapp, manager, popups, monkeypatch) -> None:
-    calls: list[tuple[Any, Any, Any]] = []
+    calls: list[Any] = []
     _patch_generate(monkeypatch, calls)
     popup = BaseMeshExtractionPopup(BASE_MESH, manager)
     popups.append(popup)
@@ -126,6 +150,42 @@ def test_mocked_run_writes_context_and_advances(qapp, manager, popups, monkeypat
     assert manager.get_step_context_item(1, "scalp_surface") is _RESULT.mesh
     assert manager.get_step_context_item(1, "scalp_mask") is _RESULT.mask
     assert manager.get_current_step() == 2  # base advanced past step 1
+
+
+def test_run_with_project_persists_mask_and_base_mesh(
+    qapp, manager, popups, monkeypatch, tmp_path: Path
+) -> None:
+    _patch_generate(monkeypatch, [])
+    popup = BaseMeshExtractionPopup(BASE_MESH, manager, project=tmp_path)
+    popups.append(popup)
+
+    popup._run_button.click()
+    _settle(qapp, popup)
+
+    assert popup._hint_label.text() == "Done."
+    assert (tmp_path / "segmentation" / "head_mask.nii.gz").is_file()
+    assert (tmp_path / "scalp" / "base_mesh.ply").is_file()
+
+
+def test_save_failure_fails_the_run(qapp, manager, popups, monkeypatch, tmp_path: Path) -> None:
+
+    _patch_generate(monkeypatch, [])
+    failed: list[str] = []
+
+    def fail_save(*args: Any) -> None:
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(artifact_saving, "save_scalp_surface", fail_save)
+    popup = BaseMeshExtractionPopup(BASE_MESH, manager, project=tmp_path)
+    popups.append(popup)
+    popup.failed.connect(failed.append)
+
+    popup._run_button.click()
+    _settle(qapp, popup)
+
+    assert popup._hint_label.text() == "disk full"
+    assert failed == ["disk full"]
+    assert manager.get_current_step() == 1  # the step did not advance
 
 
 def test_no_volume_disables_run_and_fails_collect(qapp, popups) -> None:
@@ -155,7 +215,7 @@ def test_path_volume_loads_lazily_in_the_work_callable(
     popups.append(popup)
     assert popup._run_button.isEnabled()  # the path alone is enough to run
 
-    calls: list[tuple[str, Any, Any]] = []
+    calls: list[Any] = []
     _patch_generate(monkeypatch, calls)
     popup._collect_run()()
     loaded, _sealing, _voxel = calls[0]

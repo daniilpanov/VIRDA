@@ -4,13 +4,45 @@ Runs under the offscreen Qt platform; dialogs and file pickers are stubbed,
 so no real window pops up and a real tiny NIfTI file drives the import flow.
 """
 
+import os
 from pathlib import Path
 
 import nibabel as nib
 import numpy as np
+import pytest
+from PySide6.QtWidgets import QFileDialog
 
 from virda.models.mri_volume import MRIVolume
+from virda_gui_new.dto.steps import STEPS
+from virda_gui_new.services.steps_manager import StepsManager
 from virda_gui_new.widgets.popup import main_menu
+
+
+@pytest.fixture
+def qapp():
+    """Yield an offscreen ``QApplication``, skipping without a Qt install."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    try:
+        from PySide6.QtWidgets import QApplication
+    except Exception as exc:  # pragma: no cover - depends on local Qt install
+        pytest.skip(f"Qt platform unavailable: {exc}")
+
+    app = QApplication.instance() or QApplication([])
+    return app
+
+
+@pytest.fixture
+def manager() -> StepsManager:
+    return StepsManager(tuple(step.required_keys for step in STEPS))
+
+
+@pytest.fixture
+def menu(qapp, manager):
+    from virda_gui_new.widgets.popup.main_menu import StepsMenu
+
+    widget = StepsMenu(manager)
+    yield widget
+    widget.deleteLater()
 
 
 def _write_nifti(path: Path) -> None:
@@ -69,9 +101,7 @@ def test_click_on_future_step_is_guarded(qapp, manager, menu, monkeypatch) -> No
 
     called = []
     monkeypatch.setattr(
-        main_menu.QFileDialog,  # type: ignore[attr-defined]
-        "getOpenFileName",
-        staticmethod(lambda *a, **k: called.append(1)),
+        QFileDialog, "getOpenFileName", staticmethod(lambda *a, **k: called.append(1))
     )
     menu._list.itemClicked.emit(menu._items[3])
 
@@ -83,9 +113,7 @@ def test_fresh_step0_import_advances_and_emits(qapp, manager, menu, monkeypatch,
     nifti = tmp_path / "head.nii"
     _write_nifti(nifti)
     monkeypatch.setattr(
-        main_menu.QFileDialog,  # type: ignore[attr-defined]
-        "getOpenFileName",
-        staticmethod(lambda *a, **k: (str(nifti), "")),
+        QFileDialog, "getOpenFileName", staticmethod(lambda *a, **k: (str(nifti), ""))
     )
     requested, invalidated = _connect(menu)
 
@@ -99,11 +127,7 @@ def test_fresh_step0_import_advances_and_emits(qapp, manager, menu, monkeypatch,
 
 
 def test_fresh_step0_import_cancelled_keeps_state(qapp, manager, menu, monkeypatch) -> None:
-    monkeypatch.setattr(
-        main_menu.QFileDialog,  # type: ignore[attr-defined]
-        "getOpenFileName",
-        staticmethod(lambda *a, **k: ("", "")),
-    )
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", staticmethod(lambda *a, **k: ("", "")))
     requested, invalidated = _connect(menu)
 
     menu._on_step_clicked(0)
@@ -117,9 +141,7 @@ def test_failed_import_warns_and_keeps_state(qapp, manager, menu, monkeypatch, t
     bad = tmp_path / "head.nii"
     bad.write_text("not a nifti", encoding="utf-8")
     monkeypatch.setattr(
-        main_menu.QFileDialog,  # type: ignore[attr-defined]
-        "getOpenFileName",
-        staticmethod(lambda *a, **k: (str(bad), "")),
+        QFileDialog, "getOpenFileName", staticmethod(lambda *a, **k: (str(bad), ""))
     )
 
     warnings: list[tuple[object, str, str]] = []
@@ -143,9 +165,7 @@ def test_redo_declined_on_done_step(qapp, manager, menu, monkeypatch, tmp_path) 
     nifti = tmp_path / "head.nii"
     _write_nifti(nifti)
     monkeypatch.setattr(
-        main_menu.QFileDialog,  # type: ignore[attr-defined]
-        "getOpenFileName",
-        staticmethod(lambda *a, **k: (str(nifti), "")),
+        QFileDialog, "getOpenFileName", staticmethod(lambda *a, **k: (str(nifti), ""))
     )
     menu._on_step_clicked(0)
     old_volume = manager.get_step_context_item(0, "volume")
@@ -166,7 +186,7 @@ def test_redo_agreed_on_done_step0_reimports_and_advances(
     second = tmp_path / "second.nii"
     _write_nifti(first)
     monkeypatch.setattr(
-        main_menu.QFileDialog,  # type: ignore[attr-defined]
+        QFileDialog,
         "getOpenFileName",
         staticmethod(lambda *a, **k: (str(first), "")),
     )
@@ -175,7 +195,7 @@ def test_redo_agreed_on_done_step0_reimports_and_advances(
     _write_nifti(second)
     monkeypatch.setattr(main_menu, "confirm_step_redo", lambda *a, **k: True)
     monkeypatch.setattr(
-        main_menu.QFileDialog,  # type: ignore[attr-defined]
+        QFileDialog,
         "getOpenFileName",
         staticmethod(lambda *a, **k: (str(second), "")),
     )

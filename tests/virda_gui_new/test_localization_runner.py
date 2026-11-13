@@ -4,8 +4,9 @@ Runs under the offscreen Qt platform; ``ops.localize`` is mocked, so no
 heavy mesh work runs; only payload delivery is exercised.
 """
 
+import os
 import time
-from typing import cast
+from typing import Any, cast
 
 import numpy as np
 import pytest
@@ -24,9 +25,22 @@ _ELECTRODES = Electrodes([Electrode(electrode_id="A", measured_distances={"a": 1
 
 
 @pytest.fixture
+def qapp():
+    """Yield an offscreen ``QApplication``, skipping without a Qt install."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    try:
+        from PySide6.QtWidgets import QApplication
+    except Exception as exc:  # pragma: no cover - depends on local Qt install
+        pytest.skip(f"Qt platform unavailable: {exc}")
+
+    app = QApplication.instance() or QApplication([])
+    return app
+
+
+@pytest.fixture
 def runners(qapp):
     """Collect runners and stop their worker threads at teardown."""
-    created: list[LiveLocalizationRunner] = []
+    created: list[Any] = []
     yield created
     for runner in created:
         runner.stop()
@@ -49,13 +63,13 @@ def _pump(qapp, deadline_s: float) -> None:
 
 def test_missing_ese_mesh_raises(qapp) -> None:
     with pytest.raises(ValueError, match="run the ESE mesh step first"):
-        LiveLocalizationRunner(cast(Mesh, None), _NORMALS, _SCALP)
+        LiveLocalizationRunner(cast("Mesh", None), _NORMALS, _SCALP)
 
 
 def test_submit_delivers_latest_result(qapp, runners, monkeypatch) -> None:
-    results: list[object] = []
-    failures: list[str] = []
-    calls: list[tuple[object, ...]] = []
+    results: list[Any] = []
+    failures: list[Any] = []
+    calls: list[Any] = []
 
     def fake_localize(ese, normals, scalp, fiducials, electrodes, options):
         calls.append((ese, normals, scalp, fiducials, electrodes, options))
@@ -79,8 +93,8 @@ def test_submit_delivers_latest_result(qapp, runners, monkeypatch) -> None:
 
 
 def test_failed_path(qapp, runners, monkeypatch) -> None:
-    results: list[object] = []
-    failures: list[str] = []
+    results: list[Any] = []
+    failures: list[Any] = []
 
     def boom(*_args):
         raise RuntimeError("no fiducials on surface")
@@ -99,7 +113,7 @@ def test_failed_path(qapp, runners, monkeypatch) -> None:
 
 
 def test_stop_silences_pending_submit(qapp, runners, monkeypatch) -> None:
-    results: list[object] = []
+    results: list[Any] = []
     monkeypatch.setattr(ops, "localize", lambda *_args: None)
     runner = _make_runner(runners)
     runner.localized.connect(results.append)

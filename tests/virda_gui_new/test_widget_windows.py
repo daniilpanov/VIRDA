@@ -3,10 +3,27 @@
 Runs under the offscreen Qt platform; skips without a Qt install.
 """
 
+import os
 import time
+from typing import Any, cast
+
+import pytest
 
 from virda_gui_new.services import task_runner as task_runner_module
 from virda_gui_new.windows.widget_windows import WidgetWindow, open_widget_window
+
+
+@pytest.fixture
+def qapp():
+    """Yield an offscreen ``QApplication``, skipping without a Qt install."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    try:
+        from PySide6.QtWidgets import QApplication
+    except Exception as exc:  # pragma: no cover - depends on local Qt install
+        pytest.skip(f"Qt platform unavailable: {exc}")
+
+    app = QApplication.instance() or QApplication([])
+    return app
 
 
 def _spin(app, seconds: float = 2.0) -> None:
@@ -45,6 +62,84 @@ def test_open_widget_window_shows_hosted_widget(qapp):
     finally:
         window.close()
     qapp.processEvents()
+
+
+def test_open_widget_window_is_tool_window_of_parent(qapp):
+    """With a parent the window is a Qt.Tool tool window of that parent."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QWidget
+
+    parent = QWidget()
+    widget = QWidget()
+
+    window = open_widget_window(widget, parent=parent, title="Step 1")
+    try:
+        assert window.windowType() == Qt.WindowType.Tool
+        assert window.parent() is parent
+        assert window.windowModality() == Qt.WindowModality.NonModal
+        assert window.isVisible()
+        assert widget.isVisible()
+    finally:
+        window.close()
+        parent.deleteLater()
+    qapp.processEvents()
+
+
+def test_open_widget_window_defaults_to_parentless_tool(qapp):
+    """Without a parent the window is still a Qt.Tool tool window."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QWidget
+
+    window = open_widget_window(QWidget())
+    try:
+        assert window.windowType() == Qt.WindowType.Tool
+        assert window.parent() is None
+    finally:
+        window.close()
+    qapp.processEvents()
+
+
+def test_open_widget_window_raises_the_window(qapp, monkeypatch):
+    """Opening a window raises it, so it lands above the parent window."""
+    from PySide6.QtWidgets import QWidget
+
+    from virda_gui_new.windows import widget_windows
+
+    class _RaiseSpy(widget_windows.WidgetWindow):
+        """Tool window that counts how often it was raised."""
+
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            self.raises = 0
+
+        def raise_(self) -> None:
+            self.raises += 1
+            super().raise_()
+
+    monkeypatch.setattr(widget_windows, "WidgetWindow", _RaiseSpy)
+    window = widget_windows.open_widget_window(QWidget())
+    try:
+        assert cast("Any", window).raises >= 1
+        assert window.isVisible()
+    finally:
+        window.close()
+    qapp.processEvents()
+
+
+def test_is_alive_reports_destroyed_windows(qapp):
+    """A destroyed window is not alive anymore."""
+    from PySide6.QtWidgets import QWidget
+
+    from virda_gui_new.windows.widget_windows import is_alive
+
+    assert not is_alive(None)
+
+    window = open_widget_window(QWidget())
+    assert is_alive(window)
+
+    window.close()
+    qapp.processEvents()
+    assert not is_alive(window)
 
 
 def test_widget_window_title_derived_from_widget(qapp):
@@ -163,9 +258,9 @@ def test_widget_window_close_stops_running_task(qapp):
         def __init__(self) -> None:
             super().__init__()
             self.runner = TaskRunner(self)
-            self.results: list[object] = []
+            self.results: list[Any] = []
             self.shutdowns = 0
-            self.runner.done.connect(self.results.append)
+            self.runner.done.connect(lambda result: self.results.append(result))
 
         def shutdown(self) -> None:
             self.shutdowns += 1
