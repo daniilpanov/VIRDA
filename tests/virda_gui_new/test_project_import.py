@@ -1,6 +1,5 @@
 """Unit tests for :mod:`virda_gui_new.services.project_import`."""
 
-import json
 from pathlib import Path
 
 import nibabel as nib
@@ -30,20 +29,10 @@ def _write_fiducials(path: Path) -> None:
     save_fiducials(path, fiducials)
 
 
-def _write_legacy_point_rows(path: Path) -> None:
-    """Write the outdated electrode format (electrode_id / coords keys)."""
-    path.write_text(
-        json.dumps(
-            [
-                {
-                    "electrode_id": "EEG 002",
-                    "coords": [-20.5, 76.6, 62.7],
-                    "flagged": True,
-                }
-            ]
-        ),
-        encoding="utf-8",
-    )
+def _write_point_csv(path: Path, rows: list[str]) -> None:
+    """Write the pipeline coords CSV header plus the given raw rows."""
+    lines = ["electrode_id,x,y,z,residual_mm,flagged", *rows]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 @pytest.fixture()
@@ -71,17 +60,17 @@ def test_prepare_project_loads_valid_artifacts(project: Path) -> None:
     assert prepared.loaded.fiducials.labels == ("nas",)
 
 
-def test_prepare_project_rejects_legacy_point_format(project: Path) -> None:
+def test_prepare_project_rejects_invalid_point_rows(project: Path) -> None:
     _write_nifti(project / "input" / "a.nii")
     _write_ply(project / "mesh" / "final_mesh.ply")
     _write_ply(project / "ese" / "ese_mesh.ply")
-    _write_legacy_point_rows(project / "localization" / "electrodes_scalp.json")
+    _write_point_csv(project / "localization" / "electrodes_scalp.csv", ["A1,oops,2.0,3.0,,no"])
 
     prepared = prepare_project(project)
 
     assert len(prepared.failures) == 1
-    assert "electrodes_scalp.json" in prepared.failures[0]
-    assert "electrode points" in prepared.failures[0]
+    assert "electrodes_scalp.csv" in prepared.failures[0]
+    assert "coordinate" in prepared.failures[0]
     assert prepared.loaded.scalp_points is None
     # Everything else still seeds; recovery follows the loaded artifacts.
     assert prepared.loaded.nifti is not None
@@ -90,22 +79,41 @@ def test_prepare_project_rejects_legacy_point_format(project: Path) -> None:
 
 def test_prepare_project_rejects_empty_point_file(project: Path) -> None:
     _write_nifti(project / "input" / "a.nii")
-    (project / "localization" / "electrodes_scalp.json").write_text("[]", encoding="utf-8")
+    _write_point_csv(project / "localization" / "electrodes_scalp.csv", [])
 
     prepared = prepare_project(project)
 
     assert len(prepared.failures) == 1
+    assert "no electrode points found" in prepared.failures[0]
     assert prepared.loaded.scalp_points is None
 
 
-def test_prepare_project_rejects_non_array_point_file(project: Path) -> None:
+def test_prepare_project_rejects_point_file_without_coordinate_columns(project: Path) -> None:
     _write_nifti(project / "input" / "a.nii")
-    (project / "localization" / "electrodes_scalp.json").write_text("{}", encoding="utf-8")
+    (project / "localization" / "electrodes_scalp.csv").write_text(
+        "not a table\n", encoding="utf-8"
+    )
 
     prepared = prepare_project(project)
 
     assert len(prepared.failures) == 1
     assert prepared.loaded.scalp_points is None
+
+
+def test_prepare_project_loads_electrode_point_csvs(project: Path) -> None:
+    _write_point_csv(project / "localization" / "electrodes_scalp.csv", ["A1,1.0,2.0,3.0,,no"])
+    _write_point_csv(project / "localization" / "electrodes_ese.csv", ["E1,9.0,8.0,7.0,,no"])
+
+    prepared = prepare_project(project)
+
+    assert prepared.failures == ()
+    scalp = prepared.loaded.scalp_points
+    ese = prepared.loaded.ese_points
+    assert scalp is not None
+    assert ese is not None
+    assert scalp.labels == ("A1",)
+    assert scalp.points.tolist() == [[1.0, 2.0, 3.0]]
+    assert ese.points.tolist() == [[9.0, 8.0, 7.0]]
 
 
 def test_prepare_project_empty_directory(project: Path) -> None:

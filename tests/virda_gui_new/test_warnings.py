@@ -96,13 +96,13 @@ def test_confirm_partial_import_ok_lists_failures_and_step(qapp, monkeypatch) ->
 
     monkeypatch.setattr(QMessageBox, "question", staticmethod(fake_question))
 
-    failures = ["localization/electrodes_scalp.json: no electrode points found"]
+    failures = ["localization/electrodes_scalp.csv: no electrode points found"]
     assert confirm_partial_import(None, failures, 2) is True
     assert captured["parent"] is None
     assert captured["title"] == "Partial import"
     assert captured["text"] == (
         "Some project files could not be imported:\n"
-        "- localization/electrodes_scalp.json: no electrode points found\n\n"
+        "- localization/electrodes_scalp.csv: no electrode points found\n\n"
         "The pipeline continues from step 2 (Mesh postprocessing).\n\n"
         "Open the project anyway?"
     )

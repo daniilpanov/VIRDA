@@ -23,12 +23,12 @@ from virda_gui_new.services.steps_manager import StepsManager
 _RULES: tuple[tuple[int, str, str, Callable[[Path], Any]], ...] = (
     (0, "volume", "nifti", artifact_loading.load_volume),
     (1, "scalp_surface", "scalp", artifact_loading.load_mesh),
-    (1, "scalp_points", "scalp_points", artifact_loading.load_point_rows),
+    (1, "scalp_points", "scalp_points", artifact_loading.load_electrode_points),
     (2, "mesh", "scalp", artifact_loading.load_mesh),
     (3, "ese_mesh", "ese", artifact_loading.load_mesh),
     (4, "fiducials", "fiducials", artifact_loading.load_fiducial_points),
-    (4, "scalp_points", "scalp_points", artifact_loading.load_point_rows),
-    (4, "ese_points", "ese_points", artifact_loading.load_point_rows),
+    (4, "scalp_points", "scalp_points", artifact_loading.load_electrode_points),
+    (4, "ese_points", "ese_points", artifact_loading.load_electrode_points),
 )
 
 _READY_SOURCE_TYPES = (MRIVolume, Mesh, LabeledPoints)
