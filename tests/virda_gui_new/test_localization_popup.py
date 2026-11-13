@@ -334,6 +334,30 @@ def test_concrete_popup_prefill_absent_keeps_empty_grid(qapp, popups) -> None:
     assert popup.collect_fiducial_rows() == []
 
 
+def test_concrete_popup_empty_clears_fiducial_store(qapp, popups) -> None:
+    """The Empty action clears the grid and the global store (one write)."""
+    from virda_gui_new.dto.viewer3d import LabeledPoints
+
+    manager = _make_manager()
+    points = LabeledPoints(
+        np.array([[3.0, 94.0, 32.0], [-69.0, 10.0, -25.0], [77.0, 12.0, -30.0]]),
+        ("NASION", "LPA", "RPA"),
+    )
+    manager.set_global_item("fiducials", points)
+    notifications: list[int] = []
+    manager.subscribe(lambda: notifications.append(1))
+    popup = LocalizationPopup(LOCALIZATION, manager)
+    popups.append(popup)
+
+    assert [name for name, _xyz in popup.collect_fiducial_rows()] == ["NASION", "LPA", "RPA"]
+
+    popup._fiducials_table.clear_grid()
+
+    assert popup.collect_fiducial_rows() == []
+    assert manager.get_global_item("fiducials") is None
+    assert len(notifications) == 1  # only the store write notified
+
+
 def test_concrete_popup_prefill_precedes_runner_setup(qapp, popups) -> None:
     """No geometry: the prefill emits before the runner exists; no crash."""
     from virda_gui_new.dto.viewer3d import LabeledPoints
@@ -361,11 +385,7 @@ def test_concrete_popup_blocked_states(qapp, popups, monkeypatch) -> None:
     popups.append(popup)
 
     assert popup._hint_label.text() == "Blocked: not enough fiducials (need 3)."
-    for _row in range(3):
-        popup._fiducials_table.add_row()
-    assert popup._hint_label.text() == "Blocked: not enough fiducials (need 3)."
     for row, coords in enumerate(("0 0 1", "1 0 0", "-1 0 0")):
-        popup._fiducials_table._table.setItem(row, 0, QTableWidgetItem("Nasion"))
         for column, text in enumerate(coords.split(), start=1):
             popup._fiducials_table._table.setItem(row, column, QTableWidgetItem(text))
     assert popup._hint_label.text() == "Blocked: no measurements."
@@ -392,12 +412,7 @@ def test_concrete_popup_live_flow(qapp, popups, monkeypatch) -> None:
     popup = LocalizationPopup(LOCALIZATION, manager)
     popups.append(popup)
 
-    for _row in range(3):
-        popup._fiducials_table.add_row()
-    for row, (name, coords) in enumerate(
-        zip(("Nasion", "LPA", "RPA"), ("0 0 1", "1 0 0", "-1 0 0"), strict=True)
-    ):
-        popup._fiducials_table._table.setItem(row, 0, QTableWidgetItem(name))
+    for row, coords in enumerate(("0 0 1", "1 0 0", "-1 0 0")):
         for column, text in enumerate(coords.split(), start=1):
             popup._fiducials_table._table.setItem(row, column, QTableWidgetItem(text))
     popup._measurements_table.add_row()
