@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from virda_gui_new.dto.steps import STEPS
 from virda_gui_new.services.project_scan import ProjectArtifacts, find_project_artifacts
 from virda_gui_new.services.step_seeding import seed_steps_from_artifacts
@@ -266,6 +268,37 @@ def test_seed_nifti_and_scalp(tmp_path: Path) -> None:
     assert manager.is_step_done(2) is True
 
 
+def test_seed_full_set_without_electrodes(tmp_path: Path) -> None:
+    project = make_project(tmp_path, ese_points=False)
+    manager = new_manager()
+
+    seed_steps_from_artifacts(manager, find_project_artifacts(project))
+
+    assert manager.get_current_step() == 4
+    contexts = manager.all_contexts()
+    assert contexts[3] == {"ese_mesh": project / "ese" / "ese_mesh.ply"}
+    assert contexts[4] == {"scalp_points": project / "localization" / "electrodes_scalp.csv"}
+    assert manager.get_global_item("fiducials") == project / "input" / "fiducials.json"
+    # "normals" is in-memory only and not part of the done state.
+    assert "normals" not in contexts[3]
+    assert manager.is_step_done(3) is True
+
+
+def test_seed_full_set_with_electrodes(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    manager = new_manager()
+
+    seed_steps_from_artifacts(manager, find_project_artifacts(project))
+
+    assert manager.get_current_step() == 4
+    contexts = manager.all_contexts()
+    assert contexts[4] == {
+        "scalp_points": project / "localization" / "electrodes_scalp.csv",
+        "ese_points": project / "localization" / "electrodes_ese.csv",
+    }
+    assert manager.get_global_item("fiducials") == project / "input" / "fiducials.json"
+
+
 def test_seed_nothing_when_no_artifacts(tmp_path: Path) -> None:
     manager = new_manager()
 
@@ -285,3 +318,36 @@ def test_seed_ese_points_without_ese_mesh(tmp_path: Path) -> None:
     contexts = manager.all_contexts()
     assert contexts[3] == {}
     assert contexts[4] == {"ese_points": project / "localization" / "electrodes_ese.csv"}
+
+
+def test_seed_fiducials_only_still_reaches_step_4(tmp_path: Path) -> None:
+    """Fiducials are step-4 artifacts for navigation: the menu shows step 4."""
+    project = make_project(
+        tmp_path,
+        nifti=None,
+        scalp_mesh=False,
+        scalp_points=False,
+        ese_mesh=False,
+        ese_points=False,
+    )
+    manager = new_manager()
+
+    seed_steps_from_artifacts(manager, find_project_artifacts(project))
+
+    assert manager.get_current_step() == 4
+    assert manager.all_contexts() == [{}, {}, {}, {}, {}]
+    assert manager.get_global_item("fiducials") == project / "input" / "fiducials.json"
+
+
+def test_invalidation_preserves_seeded_fiducials_and_wipes_step_4(tmp_path: Path) -> None:
+    """The global store survives; step-4 context items are wiped."""
+    project = make_project(tmp_path)
+    manager = new_manager()
+    seed_steps_from_artifacts(manager, find_project_artifacts(project))
+
+    manager.invalidate_steps_after(1)
+
+    assert manager.get_current_step() == 1
+    assert manager.get_global_item("fiducials") == project / "input" / "fiducials.json"
+    with pytest.raises(ValueError, match="out of bounds"):
+        manager.get_step_context_item(2, "mesh")

@@ -4,6 +4,7 @@ import numpy as np
 
 from virda.models.electrode import Electrode, Electrodes
 from virda.models.fiducial import Fiducial, Fiducials
+from virda_gui_new.dto.viewer3d import LabeledPoints
 
 type FiducialRows = list[tuple[str, np.ndarray]]
 """One ``(name, (3,) xyz)`` row per manual fiducial."""
@@ -12,6 +13,18 @@ type MeasurementTable = dict[str, dict[str, float]]
 """Per electrode id: fiducial name -> measured distance in mm."""
 
 _EMPTY_NAME = "Fiducial name must be non-empty."
+
+
+def labeled_points_from_rows(rows: FiducialRows) -> LabeledPoints:
+    """Bundle ``(name, xyz)`` fiducial rows into labeled points.
+
+    Rows come from the same table :func:`build_fiducials` consumes, so
+    the points match what the popup shows; an empty row list yields an
+    empty point set.
+    """
+    points = np.asarray([xyz for _name, xyz in rows], dtype=np.float64).reshape(-1, 3)
+    labels = tuple(name for name, _xyz in rows)
+    return LabeledPoints(points, labels)
 
 
 def build_fiducials(rows: FiducialRows) -> Fiducials:

@@ -202,6 +202,30 @@ def test_collect_scene_kwargs_passes_ready_objects_through(project: Path) -> Non
     assert kwargs["scalp_points"] is points
 
 
+def test_collect_scene_kwargs_loads_fiducials_from_the_global_store(project: Path) -> None:
+    """Seeded fiducials live in the global store, in any project folder."""
+    fiducials_path = project / "elsewhere" / "fiducials.json"
+    fiducials_path.parent.mkdir()
+    _write_fiducials(fiducials_path)
+    manager = StepsManager(tuple(step.required_keys for step in STEPS))
+
+    manager.set_global_item("fiducials", fiducials_path)
+    kwargs = collect_scene_kwargs(manager)
+
+    assert set(kwargs) == {"fiducials"}
+    assert kwargs["fiducials"].labels == ("nas", "c2")
+
+
+def test_collect_scene_kwargs_passes_store_points_through(project: Path) -> None:
+    points = LabeledPoints(np.array([[0.0, 0.0, 1.0]]), ("NAS",))
+    manager = StepsManager(tuple(step.required_keys for step in STEPS))
+
+    manager.set_global_item("fiducials", points)
+    kwargs = collect_scene_kwargs(manager)
+
+    assert kwargs["fiducials"] is points
+
+
 def test_collect_scene_kwargs_empty_for_empty_project(project: Path) -> None:
     assert collect_scene_kwargs(_make_manager(project)) == {}
 
