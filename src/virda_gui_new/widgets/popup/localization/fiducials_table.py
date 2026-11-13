@@ -19,6 +19,11 @@ state. :meth:`collect_fiducial_rows` returns the slots with valid
 coordinates, always in the fixed NAS/LPA/RPA order, skipping empty or
 incomplete rows -- a partially filled table still prefills and saves
 exactly like before.
+
+Buttons: an "Empty" button that clears the whole grid (emitting
+:attr:`cleared` so the popup can sync the global store and the 3D
+scene) and a "From file" button that only emits :attr:`importRequested`
+-- the popup owns the file dialog and the import service.
 """
 
 from collections.abc import Sequence
@@ -56,6 +61,7 @@ class FiducialsTable(QWidget):
 
     rowsChanged = Signal()  # noqa: N815 - Qt signal API
     cleared = Signal()  # noqa: N815 - Qt signal API
+    importRequested = Signal()  # noqa: N815 - Qt signal API
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -66,9 +72,12 @@ class FiducialsTable(QWidget):
         self._table.setHorizontalHeaderLabels(list(_COLUMNS))
         self._table.itemChanged.connect(self._on_item_changed)
 
+        from_file = QPushButton("From file", self)
+        from_file.clicked.connect(self.importRequested)
         empty = QPushButton("Empty", self)
         empty.clicked.connect(self.clear_grid)
         buttons = QHBoxLayout()
+        buttons.addWidget(from_file)
         buttons.addWidget(empty)
         buttons.addStretch(1)
 
@@ -77,7 +86,7 @@ class FiducialsTable(QWidget):
         layout.addLayout(buttons)
         self._render()
 
-    def set_rows(self, rows: Sequence[tuple[str, Sequence[float]]]) -> None:
+    def set_rows(self, rows: Sequence[tuple[str, np.ndarray | Sequence[float]]]) -> None:
         """Replace the grid from ``(name, xyz)`` rows; one change signal.
 
         Rows are matched onto the fixed slots by name
