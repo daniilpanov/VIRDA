@@ -4,6 +4,7 @@ Runs under the offscreen Qt platform; ``ops.localize`` is mocked, so no
 heavy mesh work runs; only hint text, context writes and hooks flow.
 """
 
+import json
 import time
 from pathlib import Path
 
@@ -352,6 +353,126 @@ def test_concrete_popup_empty_clears_fiducial_store(qapp, popups) -> None:
     assert popup.collect_fiducial_rows() == []
     assert manager.get_global_item("fiducials") is None
     assert len(notifications) == 1  # only the store write notified
+
+
+def _stub_file_dialog(monkeypatch: object, path: str | None) -> None:
+    """Make every QFileDialog.getOpenFileName return ``path`` (or cancel)."""
+
+    def fake_get_open_file_name(*_args: object, **_kwargs: object) -> tuple[str, str]:
+        return ("", "") if path is None else (path, "")
+
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        "virda_gui_new.widgets.popup.localization.popup.QFileDialog.getOpenFileName",
+        staticmethod(fake_get_open_file_name),
+    )
+
+
+def test_concrete_popup_imports_fiducials_from_file(
+    qapp, popups, monkeypatch, tmp_path: Path
+) -> None:
+    """Import fills the fixed slots and refreshes the global store."""
+    from virda_gui_new.dto.viewer3d import LabeledPoints
+
+    source = tmp_path / "other.json"
+    source.write_text(
+        json.dumps(
+            {
+                "fiducials": [
+                    {
+                        "fiducial_id": "NAS",
+                        "name": "NAS",
+                        "coordinates": [10.0, 0.0, 0.0],
+                        "coordinate_system": "world",
+                        "definition_method": "imported",
+                    },
+                    {
+                        "fiducial_id": "LPA",
+                        "name": "LPA",
+                        "coordinates": [0.0, 10.0, 0.0],
+                        "coordinate_system": "world",
+                        "definition_method": "imported",
+                    },
+                    {
+                        "fiducial_id": "RPA",
+                        "name": "RPA",
+                        "coordinates": [0.0, 0.0, 10.0],
+                        "coordinate_system": "world",
+                        "definition_method": "imported",
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    manager = _make_manager()
+    points = LabeledPoints(
+        np.array([[1.0, 1.0, 1.0], [2.0, 2.0, 2.0], [3.0, 3.0, 3.0]]),
+        ("NAS", "LPA", "RPA"),
+    )
+    manager.set_global_item("fiducials", points)
+    popup = LocalizationPopup(LOCALIZATION, manager)
+    popups.append(popup)
+    _stub_file_dialog(monkeypatch, str(source))
+
+    popup._fiducials_table.importRequested.emit()
+
+    rows = popup.collect_fiducial_rows()
+    assert [name for name, _xyz in rows] == ["NAS", "LPA", "RPA"]
+    assert rows[0][1].tolist() == [10.0, 0.0, 0.0]
+    stored = manager.get_global_item("fiducials")
+    assert isinstance(stored, LabeledPoints)
+    assert stored.points.tolist() == [[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]
+
+
+def test_concrete_popup_fiducials_import_error_is_a_hint(qapp, popups, monkeypatch) -> None:
+    """An unreadable import file shows a hint instead of crashing."""
+    popup = LocalizationPopup(LOCALIZATION, _make_manager())
+    popups.append(popup)
+    _stub_file_dialog(monkeypatch, str(Path("missing.json")))
+
+    popup._fiducials_table.importRequested.emit()
+
+    assert popup._hint_label.text().startswith("Failed to import fiducials:")
+    assert popup.collect_fiducial_rows() == []
+
+
+def test_concrete_popup_imports_measurements_from_file(
+    qapp, popups, monkeypatch, tmp_path: Path
+) -> None:
+    """Import fills the measurement grid from the project format."""
+    source = tmp_path / "measurements.json"
+    source.write_text(
+        json.dumps(
+            {
+                "electrodes": [
+                    {"electrode_id": "EEG 001", "measured_distances": {"NAS": 62.5}},
+                    {"electrode_id": "EEG 002", "measured_distances": {"LPA": 111.25}},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    popup = LocalizationPopup(LOCALIZATION, _make_manager())
+    popups.append(popup)
+    _stub_file_dialog(monkeypatch, str(source))
+
+    popup._measurements_table.importRequested.emit()
+
+    assert popup.collect_measurement_table() == {
+        "EEG 001": {"NAS": 62.5},
+        "EEG 002": {"LPA": 111.25},
+    }
+
+
+def test_concrete_popup_measurements_import_error_is_a_hint(qapp, popups, monkeypatch) -> None:
+    popup = LocalizationPopup(LOCALIZATION, _make_manager())
+    popups.append(popup)
+    _stub_file_dialog(monkeypatch, str(Path("missing.json")))
+
+    popup._measurements_table.importRequested.emit()
+
+    assert popup._hint_label.text().startswith("Failed to import measurements:")
+    assert popup.collect_measurement_table() == {}
 
 
 def test_concrete_popup_prefill_precedes_runner_setup(qapp, popups) -> None:
