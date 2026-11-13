@@ -180,6 +180,15 @@ class LocalizationPopupBase(StepPopupBase):
             return
         self._manager.set_global_item(_FIDUCIALS_KEY, points)
 
+    def _clear_fiducial_store(self) -> None:
+        """Drop the global fiducials entry so the scene loses the points.
+
+        The table's Empty action clears the entry; the pull-model
+        listeners (MainWindow scene rebuild) re-read the store after the
+        write, so the rebuilt scene no longer carries fiducial points.
+        """
+        self._manager.set_global_item(_FIDUCIALS_KEY, None)
+
     def _on_run_failed(self, message: str) -> None:
         self._set_hint(message)
 
