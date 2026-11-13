@@ -12,11 +12,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TypeVar
 
+from virda.models.electrode import Electrodes
 from virda.models.mesh import Mesh
 from virda.models.mri_volume import MRIVolume
 from virda_gui_new.dto.viewer3d import LabeledPoints
 from virda_gui_new.services import artifact_loading
-from virda_gui_new.services.project_scan import find_project_artifacts
+from virda_gui_new.services.project_scan import ProjectArtifacts, find_project_artifacts
 
 _T = TypeVar("_T")
 
@@ -35,6 +36,9 @@ class LoadedArtifacts:
     fiducials: LabeledPoints | None = None
     scalp_points: LabeledPoints | None = None
     ese_points: LabeledPoints | None = None
+    measurements: Electrodes | None = None
+    base_mesh: Mesh | None = None
+    pipeline_config: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -59,21 +63,36 @@ def prepare_project(project: Path) -> PreparedProject:
         nifti=_load(scanned.nifti, artifact_loading.load_volume, project, failures),
         scalp_mesh=_load(scanned.scalp_mesh, artifact_loading.load_mesh, project, failures),
         ese_mesh=_load(scanned.ese_mesh, artifact_loading.load_mesh, project, failures),
-        fiducials=_load(
-            scanned.fiducials, artifact_loading.load_fiducial_points, project, failures
-        ),
+        fiducials=_resolve_fiducials(scanned, project, failures),
         scalp_points=_load(
             scanned.scalp_points, artifact_loading.load_electrode_points, project, failures
         ),
         ese_points=_load(
             scanned.ese_points, artifact_loading.load_electrode_points, project, failures
         ),
+        measurements=_load(
+            scanned.measurements, artifact_loading.load_measurements, project, failures
+        ),
+        base_mesh=_load(scanned.base_mesh, artifact_loading.load_mesh, project, failures),
+        pipeline_config=scanned.pipeline_config,
     )
     return PreparedProject(
         loaded=loaded,
         failures=tuple(failures),
         recoverable_step=_last_seeded_step(loaded),
     )
+
+
+def _resolve_fiducials(
+    scanned: ProjectArtifacts, project: Path, failures: list[str]
+) -> LabeledPoints | None:
+    """Load the fiducial input: ``fiducials.json`` wins over the coordsystem.
+
+    Both files are read through the same loader, which converts an MNE
+    ``coordsystem.json`` into fiducials.
+    """
+    path = scanned.fiducials if scanned.fiducials is not None else scanned.coordsystem
+    return _load(path, artifact_loading.load_fiducial_points, project, failures)
 
 
 def _load[T](
@@ -105,6 +124,8 @@ def _last_seeded_step(loaded: LoadedArtifacts) -> int:
         return 3
     if loaded.scalp_mesh is not None:
         return 2
+    if loaded.base_mesh is not None:
+        return 1
     if loaded.nifti is not None:
         return 0
     return -1

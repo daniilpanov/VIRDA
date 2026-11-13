@@ -146,6 +146,18 @@ def test_collect_scene_kwargs_with_ese_mesh(project: Path) -> None:
     assert kwargs["scalp"] is not kwargs["ese"]
 
 
+def test_collect_scene_kwargs_falls_back_to_base_mesh(project: Path) -> None:
+    """Without a final mesh the raw base mesh is shown as the scalp."""
+    base = project / "scalp"
+    base.mkdir(exist_ok=True)
+    _write_ply(base / "base_mesh.ply")
+
+    kwargs = collect_scene_kwargs(_make_manager(project))
+
+    assert set(kwargs) == {"scalp"}
+    assert isinstance(kwargs["scalp"], Mesh)
+
+
 def test_collect_scene_kwargs_with_localization_artifacts(project: Path) -> None:
     _write_nifti(project / "input" / "a.nii")
     _write_ply(project / "mesh" / "final_mesh.ply")
