@@ -174,6 +174,50 @@ def test_full_path_localizes(qapp, popups, monkeypatch) -> None:
     assert manager.get_step_context_item(LOCALIZATION.index, "electrodes") is payload
 
 
+def test_localized_run_mirrors_measurements_into_context(qapp, popups, monkeypatch) -> None:
+    """The measurement table lands next to the electrodes as a model."""
+    from virda.models.electrode import Electrode, Electrodes
+
+    payload = Electrodes(
+        [
+            Electrode("A", {"LPA": 10.0}, ese_coords=np.zeros(3), scalp_coords=np.zeros(3)),
+            Electrode("B", {"RPA": 1.0}, ese_coords=np.zeros(3), scalp_coords=np.zeros(3)),
+        ]
+    )
+    _patch_localize(monkeypatch, [], payload)
+    manager = _make_manager()
+    popup = RecordingPopup(manager, fiducial_rows=_FIDUCIAL_ROWS, table=_MEASUREMENTS)
+    popups.append(popup)
+
+    popup._on_inputs_changed()
+    _settle(qapp, popup, "Localized 2 electrodes.")
+
+    stored = manager.get_step_context_item(LOCALIZATION.index, "measurements")
+    assert isinstance(stored, Electrodes)
+    assert stored.ids == ["A"]
+    stored_a = stored.get("A")
+    assert stored_a is not None
+    assert stored_a.measured_distances == {"LPA": 10.0, "RPA": 12.0}
+
+
+def test_localized_stale_context_keeps_seeded_measurements(qapp, popups) -> None:
+    """A dropped (stale) result leaves the seeded measurements untouched."""
+    from virda.models.electrode import Electrode, Electrodes
+
+    manager = _make_manager()
+    seeded = Electrodes([Electrode("Fz", {"NAS": 120.5})])
+    manager.set_step_context_item(LOCALIZATION.index, "measurements", seeded)
+    popup = RecordingPopup(manager, fiducial_rows=_FIDUCIAL_ROWS, table=_MEASUREMENTS)
+    popups.append(popup)
+    manager.invalidate_steps_after(3)  # step-4 context is gone
+
+    popup._on_localized(Electrodes([Electrode("A", {"LPA": 1.0})]))
+
+    assert popup._hint_label.text() == "Pipeline changed; results dropped."
+    with pytest.raises(ValueError, match="out of bounds"):
+        manager.get_step_context_item(LOCALIZATION.index, "measurements")
+
+
 def test_localized_run_refreshes_fiducial_store(qapp, popups, monkeypatch) -> None:
     """The global store mirrors the current table rows after each run."""
     from virda_gui_new.dto.viewer3d import LabeledPoints
@@ -210,8 +254,9 @@ def test_unchanged_fiducials_skip_the_store_write(qapp, popups, monkeypatch) -> 
     popup._on_inputs_changed()
     _settle(qapp, popup, "Localized 1 electrode.")
 
-    # Only the electrodes context write notified; the store was untouched.
-    assert len(notifications) == 1
+    # The electrodes and measurements context writes notified; the store
+    # was untouched.
+    assert len(notifications) == 2
 
 
 def test_stale_context_run_keeps_fiducial_store(qapp, popups) -> None:

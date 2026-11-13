@@ -5,6 +5,23 @@ through the same loaders the popups use, so unsupported or outdated
 formats fail at open time, before any step context is seeded. Seeding
 then writes ready objects: a step marked done (or opened) is
 guaranteed to hold runnable inputs.
+
+Precedence rules:
+
+- ``fiducials.json`` wins over ``coordsystem.json``; a ``coordsystem.json``
+  alone is converted to fiducials through
+  :meth:`virda.models.coordsystem.Coordsystem.to_fiducials` (millimetre
+  MRI surface-RAS world coordinates). The winner fills the single
+  ``fiducials`` input value that seeds the global store.
+- ``final_mesh.ply`` (the postprocessed mesh) wins over ``base_mesh.ply``
+  (the raw extraction result): the final mesh seeds both the step-1
+  scalp surface and the step-2 mesh, a lone base mesh seeds only the
+  step-1 scalp surface.
+- ``measurements.json`` is loaded into an :class:`Electrodes` model and
+  kept for the localization step: seeding writes it into the step-4
+  context (``measurements``) so the export path can use it in memory.
+- ``pipeline_config.json`` stays a scanned path: nothing in this GUI
+  consumes it yet, so it is not loaded.
 """
 
 from collections.abc import Callable
@@ -26,8 +43,12 @@ _T = TypeVar("_T")
 class LoadedArtifacts:
     """Ready in-memory pipeline artifacts; ``None`` where absent or invalid.
 
-    Field names match :class:`ProjectArtifacts`, so the same seeding
-    contract applies; the values are ready objects instead of paths.
+    Field names follow :class:`ProjectArtifacts`, so the same seeding
+    contract applies; the values are ready objects instead of paths --
+    except ``pipeline_config``, which is scanned but deliberately not
+    loaded (nothing in this GUI consumes it yet). ``fiducials`` is
+    resolved at prepare time from ``fiducials.json`` or
+    ``coordsystem.json`` (see the module precedence rules).
     """
 
     nifti: MRIVolume | None = None
@@ -62,6 +83,7 @@ def prepare_project(project: Path) -> PreparedProject:
     loaded = LoadedArtifacts(
         nifti=_load(scanned.nifti, artifact_loading.load_volume, project, failures),
         scalp_mesh=_load(scanned.scalp_mesh, artifact_loading.load_mesh, project, failures),
+        base_mesh=_load(scanned.base_mesh, artifact_loading.load_mesh, project, failures),
         ese_mesh=_load(scanned.ese_mesh, artifact_loading.load_mesh, project, failures),
         fiducials=_resolve_fiducials(scanned, project, failures),
         scalp_points=_load(
@@ -73,7 +95,6 @@ def prepare_project(project: Path) -> PreparedProject:
         measurements=_load(
             scanned.measurements, artifact_loading.load_measurements, project, failures
         ),
-        base_mesh=_load(scanned.base_mesh, artifact_loading.load_mesh, project, failures),
         pipeline_config=scanned.pipeline_config,
     )
     return PreparedProject(
@@ -113,12 +134,13 @@ def _load[T](
 
 def _last_seeded_step(loaded: LoadedArtifacts) -> int:
     """Mirror the seeding contract: the last step that receives a write."""
-    any_points = (
+    any_localization_inputs = (
         loaded.fiducials is not None
         or loaded.scalp_points is not None
         or loaded.ese_points is not None
+        or loaded.measurements is not None
     )
-    if any_points:
+    if any_localization_inputs:
         return 4
     if loaded.ese_mesh is not None:
         return 3

@@ -390,3 +390,18 @@ def test_seed_final_mesh_wins_over_base_mesh(tmp_path: Path) -> None:
     contexts = manager.all_contexts()
     assert contexts[1] == {"scalp_surface": project / "mesh" / "final_mesh.ply"}
     assert contexts[2] == {"mesh": project / "mesh" / "final_mesh.ply"}
+
+
+def test_seed_loaded_measurements_into_step_4() -> None:
+    """Loaded measurements.json lands in the step-4 context as a model."""
+    from virda.models.electrode import Electrode, Electrodes
+    from virda_gui_new.services.project_import import LoadedArtifacts
+
+    measurements = Electrodes([Electrode("Fz", {"NAS": 120.5})])
+    manager = new_manager()
+
+    seed_steps_from_artifacts(manager, LoadedArtifacts(measurements=measurements))
+
+    assert manager.get_current_step() == 4
+    assert manager.get_step_context_item(4, "measurements") is measurements
+    assert manager.all_contexts() == [{}, {}, {}, {}, {"measurements": measurements}]
