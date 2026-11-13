@@ -157,7 +157,36 @@ The coordinate tables (`electrodes_scalp.csv`, `electrodes_ese.csv`) carry colum
 (`is_localized == false`).  `flagged` (`yes`/`no`) marks electrodes whose
 residual exceeds `residual_threshold_mm`.
 
-## Scanner rules
+## GUI step outputs and scanner rules
+
+The interactive GUI (`virda-gui-new`) persists the artifacts of every step
+run it completes, using the layout below; the names differ from the batch
+pipeline's Stage 1-3 output where noted.
+
+| Path (GUI writes)                      | Produced by step    | Content |
+|----------------------------------------|---------------------|---------|
+| `input/<source>.nii.gz`                | NIfTI import        | Byte-for-byte copy of the imported source MRI, so the project stays self-contained. |
+| `segmentation/head_mask.nii.gz`        | Base mesh           | uint8 NIfTI head mask with the MRI affine (as above). |
+| `scalp/base_mesh.ply`                  | Base mesh           | Raw extracted scalp surface (trimesh PLY). |
+| `scalp/final_mesh.ply`                 | Mesh postprocessing | Cleaned, decimated and smoothed mesh (trimesh PLY). |
+| `ese/mesh.ply`                         | ESE mesh            | ESE surface (trimesh PLY); normals stay in memory only. |
+| `localization/fiducials.json`          | Localization        | Fiducial table in the `input/fiducials.json` format. |
+| `localization/measurements.json`       | Localization        | Measured distances in the Stage 3 `measurements.json` format (no `fiducial_weights`). |
+| `localization/electrodes_scalp.csv`    | Localization        | Localized scalp contact points, in the pipeline's `electrodes_scalp.csv` format (see `localization/` above). |
+| `localization/electrodes_ese.csv`      | Localization        | Localized ESE body-center points, in the pipeline's `electrodes_ese.csv` format. |
+
+A point CSV is written only when at least one electrode carries that
+coordinate set; electrodes without it keep empty coordinate cells, and
+readers skip such rows.
+
+### Step chain rule
+
+The GUI loads a project as a chain: every step needs the artifacts of
+the step before it (`volume` -> `scalp_surface` -> `mesh` -> `ese_mesh`).
+The first step whose artifact is missing is where the pipeline stops:
+the steps after it are not loaded, and the import dialog says so. A
+project therefore needs the source MRI (or its copy in `input/`) to be
+usable, and a mesh postprocessing result to reach the ESE step.
 
 Scanner rules (the GUI's single source of truth): rules run in order and
 the first match fills its slot; every variant name is a first-class rule

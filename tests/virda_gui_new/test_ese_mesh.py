@@ -6,6 +6,7 @@ form values flow to the mock and a tiny real result back.
 """
 
 import time
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -193,6 +194,20 @@ def test_mocked_run_writes_context_and_advances(qapp, manager, popups, monkeypat
     assert manager.get_step_context_item(3, "normals").shape == (4, 3)
     assert manager.is_step_done(3)
     assert manager.get_current_step() == 4  # base advanced past step 3
+
+
+def test_run_with_project_persists_ese_mesh(
+    qapp, manager, popups, monkeypatch, tmp_path: Path
+) -> None:
+    _patch_ops(monkeypatch, [])
+    popup = EseMeshPopup(ESE_MESH, manager, project=tmp_path)
+    popups.append(popup)
+
+    popup._run_button.click()
+    _settle(qapp, popup)
+
+    assert popup._hint_label.text() == "Done."
+    assert (tmp_path / "ese" / "mesh.ply").is_file()
 
 
 def test_missing_mesh_fails_collect(qapp, popups) -> None:

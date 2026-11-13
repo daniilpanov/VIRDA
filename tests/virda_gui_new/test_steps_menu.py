@@ -292,3 +292,27 @@ def test_a_finished_pipeline_keeps_the_last_step_current(qapp, manager, menu) ->
         "3. ESE mesh [done]",
         "4. Localization [current]",
     ]
+
+
+def test_step0_import_copies_the_nifti_into_the_project(
+    qapp, manager, monkeypatch, tmp_path
+) -> None:
+    """The import keeps a copy of the NIfTI inside the project."""
+    project = tmp_path / "project"
+    project.mkdir()
+    project_menu = main_menu.StepsMenu(manager, project=project)
+    nifti = tmp_path / "head.nii"
+    _write_nifti(nifti)
+    monkeypatch.setattr(
+        main_menu.QFileDialog,  # type: ignore[attr-defined]
+        "getOpenFileName",
+        staticmethod(lambda *a, **k: (str(nifti), "")),
+    )
+
+    try:
+        project_menu._on_step_clicked(0)
+    finally:
+        project_menu.deleteLater()
+
+    assert (project / "input" / "head.nii").is_file()
+    assert manager.get_current_step() == 1

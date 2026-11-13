@@ -19,6 +19,7 @@ from virda_gui.api.options import SealingOptions
 from virda_gui_new.api import ops
 from virda_gui_new.api.ops import ScalpSurface
 from virda_gui_new.dto.steps import BASE_MESH, STEPS
+from virda_gui_new.services import artifact_saving
 from virda_gui_new.services.steps_manager import StepsManager
 from virda_gui_new.widgets.popup.base_mesh_extraction import BaseMeshExtractionPopup
 
@@ -126,6 +127,42 @@ def test_mocked_run_writes_context_and_advances(qapp, manager, popups, monkeypat
     assert manager.get_step_context_item(1, "scalp_surface") is _RESULT.mesh
     assert manager.get_step_context_item(1, "scalp_mask") is _RESULT.mask
     assert manager.get_current_step() == 2  # base advanced past step 1
+
+
+def test_run_with_project_persists_mask_and_base_mesh(
+    qapp, manager, popups, monkeypatch, tmp_path: Path
+) -> None:
+    _patch_generate(monkeypatch, [])
+    popup = BaseMeshExtractionPopup(BASE_MESH, manager, project=tmp_path)
+    popups.append(popup)
+
+    popup._run_button.click()
+    _settle(qapp, popup)
+
+    assert popup._hint_label.text() == "Done."
+    assert (tmp_path / "segmentation" / "head_mask.nii.gz").is_file()
+    assert (tmp_path / "scalp" / "base_mesh.ply").is_file()
+
+
+def test_save_failure_fails_the_run(qapp, manager, popups, monkeypatch, tmp_path: Path) -> None:
+
+    _patch_generate(monkeypatch, [])
+    failed: list[str] = []
+
+    def fail_save(*args: object) -> None:
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(artifact_saving, "save_scalp_surface", fail_save)
+    popup = BaseMeshExtractionPopup(BASE_MESH, manager, project=tmp_path)
+    popups.append(popup)
+    popup.failed.connect(failed.append)
+
+    popup._run_button.click()
+    _settle(qapp, popup)
+
+    assert popup._hint_label.text() == "disk full"
+    assert failed == ["disk full"]
+    assert manager.get_current_step() == 1  # the step did not advance
 
 
 def test_no_volume_disables_run_and_fails_collect(qapp, popups) -> None:

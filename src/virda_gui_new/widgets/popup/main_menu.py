@@ -12,7 +12,7 @@ from PySide6.QtWidgets import QFileDialog, QListWidget, QListWidgetItem, QVBoxLa
 
 from virda_gui_new.dialogs.warnings import confirm_step_redo, show_warning
 from virda_gui_new.dto.steps import STEPS
-from virda_gui_new.services import artifact_loading
+from virda_gui_new.services import artifact_loading, artifact_saving
 from virda_gui_new.services.steps_manager import StepsManager
 
 _DONE = " [done]"
@@ -30,15 +30,23 @@ class StepsMenu(QWidget):
     an already-satisfied step asks for a redo confirmation (only when later
     step results would be discarded) and, on agree, discards them. Step 0
     re-imports a NIfTI in place; a fresh step 0 import auto-advances to
-    step 1 and emits ``stepRequested``.
+    step 1 and emits ``stepRequested``. The project directory is optional:
+    when given, a step-0 import also keeps a copy of the NIfTI there.
     """
 
     stepRequested = Signal(int)  # noqa: N815
     stepsInvalidated = Signal(int)  # noqa: N815
 
-    def __init__(self, manager: StepsManager, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        manager: StepsManager,
+        parent: QWidget | None = None,
+        *,
+        project: Path | None = None,
+    ) -> None:
         super().__init__(parent)
         self._manager = manager
+        self._project = project
         self._items: tuple[QListWidgetItem, ...]
 
         self._list = QListWidget(self)
@@ -103,12 +111,31 @@ class StepsMenu(QWidget):
         path, _ = QFileDialog.getOpenFileName(self, _NIFTI_TITLE, "", _NIFTI_FILTER)
         if not path:
             return
+        source = Path(path)
         try:
-            volume = artifact_loading.load_volume(Path(path))
+            volume = artifact_loading.load_volume(source)
         except Exception as error:  # any parse/validation failure is user-facing
             show_warning(self, _NIFTI_TITLE, str(error))
             return
         self._manager.set_step_context_item(0, "volume", volume)
+        self._copy_volume_into_project(source)
         if self._manager.get_current_step() == 0:
             self._manager.next_step()
             self.stepRequested.emit(1)
+
+    def _copy_volume_into_project(self, source: Path) -> None:
+        """Keep a copy of the imported NIfTI inside the project.
+
+        The copy makes the project self-contained: the scanner finds it on
+        the next open, so step 0 is restored. A failed copy is reported
+        but does not undo the import.
+        """
+        if self._project is None:
+            return
+        if artifact_saving.save_volume_copy(self._project, source) is None:
+            show_warning(
+                self,
+                _NIFTI_TITLE,
+                f"Could not copy {source.name} into the project. "
+                "The next open starts at the NIfTI import step again.",
+            )

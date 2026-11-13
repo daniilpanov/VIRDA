@@ -5,6 +5,7 @@ heavy mesh work runs; only hint text, context writes and hooks flow.
 """
 
 import time
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -15,6 +16,7 @@ from virda.models.electrode import Electrode, Electrodes
 from virda.models.mesh import Mesh
 from virda_gui_new.api import ops
 from virda_gui_new.dto.steps import LOCALIZATION, STEPS
+from virda_gui_new.services import artifact_saving
 from virda_gui_new.services.steps_manager import StepsManager
 from virda_gui_new.widgets.popup.localization import LocalizationPopup
 from virda_gui_new.widgets.popup.localization.abstract import (
@@ -60,12 +62,19 @@ def _make_manager(ese=True, normals=True) -> StepsManager:
 class RecordingPopup(LocalizationPopupBase):
     """Concrete popup with canned rows/table and recorded hooks."""
 
-    def __init__(self, manager: StepsManager, fiducial_rows=None, table=None, parent=None) -> None:
+    def __init__(
+        self,
+        manager: StepsManager,
+        fiducial_rows=None,
+        table=None,
+        parent=None,
+        project=None,
+    ) -> None:
         self._rows = [] if fiducial_rows is None else fiducial_rows
         self._table = {} if table is None else table
         self.localized_called: list[Electrodes] = []
         self.statuses: list[str] = []
-        super().__init__(LOCALIZATION, manager)
+        super().__init__(LOCALIZATION, manager, parent, project=project)
 
     def collect_fiducial_rows(self):
         return self._rows
@@ -215,6 +224,66 @@ def test_stale_context_run_keeps_fiducial_store(qapp, popups) -> None:
 
     assert popup._hint_label.text() == "Pipeline changed; results dropped."
     assert manager.get_global_item("fiducials") is points
+
+
+def test_localized_run_persists_localization_files(
+    qapp, popups, monkeypatch, tmp_path: Path
+) -> None:
+    """Each successful run writes fiducials, measurements and electrodes."""
+    from virda_gui_new.services.artifact_loading import load_fiducial_points
+
+    payload = Electrodes(
+        [
+            Electrode("A", {"LPA": 10.0}, ese_coords=np.zeros(3), scalp_coords=np.zeros(3)),
+        ]
+    )
+    _patch_localize(monkeypatch, [], payload)
+    manager = _make_manager()
+    popup = RecordingPopup(
+        manager, fiducial_rows=_FIDUCIAL_ROWS, table=_MEASUREMENTS, project=tmp_path
+    )
+    popups.append(popup)
+
+    popup._on_inputs_changed()
+    _settle(qapp, popup, "Localized 1 electrodes.")
+
+    assert popup._hint_label.text() == "Localized 1 electrodes."
+    localization = tmp_path / "localization"
+    assert (localization / "fiducials.json").is_file()
+    assert (localization / "measurements.json").is_file()
+    assert (localization / "electrodes_scalp.csv").is_file()
+    assert (localization / "electrodes_ese.csv").is_file()
+    # The saved fiducials match what the popup shows (and the store holds).
+    points = load_fiducial_points(localization / "fiducials.json")
+    assert points.labels == ("Nasion", "LPA", "RPA")
+    assert points.points.tolist() == [[0.0, 0.0, 1.0], [1.0, 0.0, 0.0], [-1.0, 0.0, 0.0]]
+
+
+def test_localization_save_failure_is_a_failed_status(
+    qapp, popups, monkeypatch, tmp_path: Path
+) -> None:
+
+    payload = Electrodes([Electrode("A", {"LPA": 10.0})])
+    _patch_localize(monkeypatch, [], payload)
+    failures: list[str] = []
+
+    def fail_save(*_args: object) -> None:
+        raise RuntimeError("cannot write")
+
+    monkeypatch.setattr(artifact_saving, "save_localization", fail_save)
+    manager = _make_manager()
+    popup = RecordingPopup(
+        manager, fiducial_rows=_FIDUCIAL_ROWS, table=_MEASUREMENTS, project=tmp_path
+    )
+    popups.append(popup)
+    popup.failed.connect(failures.append)
+
+    popup._on_inputs_changed()
+    _settle(qapp, popup, "Localized 1 electrode.")
+
+    assert popup._hint_label.text() == "Failed to save localization files: cannot write"
+    assert failures == ["cannot write"]
+    assert manager.get_step_context_item(LOCALIZATION.index, "electrodes") is payload
 
 
 def test_stale_context_drop(qapp, popups) -> None:

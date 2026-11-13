@@ -15,6 +15,7 @@ from virda.models.mesh import Mesh
 from virda_gui.api.options import EseOptions
 from virda_gui_new.api import ops
 from virda_gui_new.dto.steps import BASE_MESH, ESE_MESH, MESH_POSTPROCESSING
+from virda_gui_new.services import artifact_saving
 from virda_gui_new.widgets.popup.abstract import StepPopupBase
 
 _NO_MESH = "ESE mesh needs the postprocessed mesh (run the previous steps first)."
@@ -104,7 +105,15 @@ class EseMeshPopup(StepPopupBase):
             pca_sigma_mm=self._sigma_spin.value(),
             min_neighbors=self._min_neighbors_spin.value(),
         )
-        return lambda: ops.generate_ese(mesh, options)
+
+        def run() -> tuple[Mesh, Any]:
+            ese, normals = ops.generate_ese(mesh, options)
+            # Normals stay in-memory only; only the ESE surface persists.
+            if self._project is not None:
+                artifact_saving.save_ese_mesh(self._project, ese)
+            return ese, normals
+
+        return run
 
     def _apply_result(self, result: Any) -> None:
         mesh, normals = result
