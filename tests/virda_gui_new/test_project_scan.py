@@ -6,7 +6,7 @@ import pytest
 
 from virda_gui_new.dto.steps import STEPS
 from virda_gui_new.services.project_scan import ProjectArtifacts, find_project_artifacts
-from virda_gui_new.services.step_seeding import StepChainIncompleteErrorError, seed_steps_from_artifacts
+from virda_gui_new.services.step_seeding import StepChainIncompleteErrorErrorError, seed_steps_from_artifacts
 from virda_gui_new.services.steps_manager import StepsManager
 
 
@@ -318,7 +318,7 @@ def test_seed_ese_points_without_ese_mesh_stops_at_the_gap(tmp_path: Path) -> No
     project = make_project(tmp_path, ese_mesh=False, fiducials=False, scalp_points=False)
     manager = new_manager()
 
-    with pytest.raises(StepChainIncompleteErrorError) as raised:
+    with pytest.raises(StepChainIncompleteErrorErrorError) as raised:
         seed_steps_from_artifacts(manager, find_project_artifacts(project))
 
     assert raised.value.step_n == 3
@@ -341,7 +341,7 @@ def test_seed_fiducials_only_stops_at_the_missing_nifti(tmp_path: Path) -> None:
     )
     manager = new_manager()
 
-    with pytest.raises(StepChainIncompleteError) as raised:
+    with pytest.raises(StepChainIncompleteErrorError) as raised:
         seed_steps_from_artifacts(manager, find_project_artifacts(project))
 
     assert raised.value.step_n == 0
@@ -399,7 +399,7 @@ def test_seed_base_mesh_without_nifti_stops_at_the_missing_nifti(tmp_path: Path)
     )
     manager = new_manager()
 
-    with pytest.raises(StepChainIncomplete) as raised:
+    with pytest.raises(StepChainIncompleteError) as raised:
         seed_steps_from_artifacts(manager, find_project_artifacts(project))
 
     assert raised.value.step_n == 0
@@ -425,3 +425,21 @@ def test_seed_final_mesh_wins_over_base_mesh(tmp_path: Path) -> None:
     contexts = manager.all_contexts()
     assert contexts[1] == {"scalp_surface": project / "mesh" / "final_mesh.ply"}
     assert contexts[2] == {"mesh": project / "mesh" / "final_mesh.ply"}
+
+
+def test_seed_loaded_measurements_into_the_global_store() -> None:
+    """Loaded measurements.json lands in the global store as a model."""
+    from virda.models.electrode import Electrode, Electrodes
+    from virda_gui_new.services.project_import import LoadedArtifacts
+
+    measurements = Electrodes([Electrode("Fz", {"NAS": 120.5})])
+    manager = new_manager()
+
+    with pytest.raises(StepChainIncompleteError):
+        seed_steps_from_artifacts(manager, LoadedArtifacts(measurements=measurements))
+
+    # The measurements are a project input: they live in the global store
+    # and survive the gap in the chain.
+    assert manager.get_global_item("measurements") is measurements
+    assert manager.get_current_step() == 0
+    assert manager.all_contexts() == [{}]

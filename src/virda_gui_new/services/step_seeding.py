@@ -16,11 +16,12 @@ immediately. Keys written per step:
 - step 4 (Localization): ``scalp_points``; ``ese_points``, each when
   present
 
-Fiducials are project-level inputs, not step-derived results: they go
-into the manager's global store (``set_global_item("fiducials", ...)``)
-instead of the step-4 context. They are stored even when the chain
-stops short of step 4, so a project that is not complete yet keeps its
-fiducials.
+Fiducials and measurements are project-level inputs, not step-derived
+results: they go into the manager's global store
+(``set_global_item("fiducials", ...)`` and
+``set_global_item("measurements", ...)``) instead of the step-4 context.
+They are stored even when the chain stops short of step 4, so a project
+that is not complete yet keeps its inputs.
 
 Contexts are created for steps 0 through the last step that received a
 write, but only while the chain stays complete: ``next_step`` refuses to
@@ -34,6 +35,7 @@ are stored before the walk, so they survive a gap.
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from virda.models.electrode import Electrodes
 from virda.models.mesh import Mesh
 from virda.models.mri_volume import MRIVolume
 from virda_gui_new.dto.steps import STEPS
@@ -86,7 +88,7 @@ def seed_steps_from_artifacts(
     finished: the manager then holds the pipeline up to that gap, and
     the artifacts of the later steps stay unloaded.
     """
-    writes: dict[int, dict[str, Path | MRIVolume | Mesh | LabeledPoints]] = {}
+    writes: dict[int, dict[str, Path | MRIVolume | Mesh | LabeledPoints | Electrodes]] = {}
 
     if artifacts.nifti is not None:
         writes[0] = {"volume": artifacts.nifti}
@@ -113,6 +115,14 @@ def seed_steps_from_artifacts(
         if artifacts.ese_points is not None:
             writes[4]["ese_points"] = artifacts.ese_points
 
+    if artifacts.measurements is not None:
+        # The measurements JSON is seeded only as a ready Electrodes
+        # model (loaded projects): the export path works on in-memory
+        # models, and a scanned path stays a scan-only artifact.
+        measurements = artifacts.measurements
+        if isinstance(measurements, Electrodes):
+            writes.setdefault(4, {})
+
     if artifacts.fiducials is not None:
         # Fiducials are a step-4 artifact as well: they mark step 4 as
         # carrying something, even without electrode points.
@@ -122,6 +132,11 @@ def seed_steps_from_artifacts(
         # The global store is filled before the walk: the fiducials are a
         # project input, so they survive a gap in the chain.
         manager.set_global_item("fiducials", artifacts.fiducials)
+
+    if isinstance(artifacts.measurements, Electrodes):
+        # The measurements are a project input as well: they live in the
+        # global store next to the fiducials and survive a gap too.
+        manager.set_global_item("measurements", artifacts.measurements)
 
     if not writes:
         return
