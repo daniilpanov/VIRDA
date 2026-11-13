@@ -2,11 +2,13 @@
 
 from collections.abc import Callable
 from pathlib import Path
+from typing import Protocol
 
-from PySide6.QtGui import QCloseEvent
-from PySide6.QtWidgets import QMainWindow
+from PySide6.QtGui import QAction, QCloseEvent
+from PySide6.QtWidgets import QMainWindow, QWidget
 
 from virda_gui_new.dto.steps import BASE_MESH, ESE_MESH, LOCALIZATION, MESH_POSTPROCESSING, STEPS
+from virda_gui_new.services.artifact_exporting import ExportKind
 from virda_gui_new.services.project_import import PreparedProject, prepare_project
 from virda_gui_new.services.scene_builder import collect_scene_kwargs
 from virda_gui_new.services.step_seeding import seed_steps_from_artifacts
@@ -14,12 +16,41 @@ from virda_gui_new.services.steps_manager import StepsManager
 from virda_gui_new.widgets.popup.abstract import StepPopupBase
 from virda_gui_new.widgets.popup.base_mesh_extraction import BaseMeshExtractionPopup
 from virda_gui_new.widgets.popup.ese_mesh import EseMeshPopup
+from virda_gui_new.widgets.popup.export import (
+    ElectrodesExportPopup,
+    ExportPopupBase,
+    FiducialsExportPopup,
+    MeasurementsExportPopup,
+    MeshExportPopup,
+)
 from virda_gui_new.widgets.popup.localization import LocalizationPopup
 from virda_gui_new.widgets.popup.main_menu import StepsMenu
 from virda_gui_new.widgets.popup.mesh_postprocessing import MeshPostprocessingPopup
 from virda_gui_new.widgets.steps_toggle_button import StepsToggleButton
 from virda_gui_new.widgets.viewer3d import SceneViewer3D
 from virda_gui_new.windows.widget_windows import WidgetWindow, open_widget_window
+
+
+class _ExportPopupFactory(Protocol):
+    """Constructor shared by every export popup subclass."""
+
+    def __call__(
+        self,
+        manager: StepsManager,
+        parent: QWidget | None = None,
+        *,
+        project: Path | None = None,
+    ) -> ExportPopupBase: ...
+
+
+#: One popup factory per File -> Export action. The subclasses share
+#: ``(manager, parent=None, *, project=None)`` constructors.
+_EXPORT_POPUPS: dict[ExportKind, _ExportPopupFactory] = {
+    ExportKind.MEASUREMENTS: MeasurementsExportPopup,
+    ExportKind.ELECTRODES: ElectrodesExportPopup,
+    ExportKind.FIDUCIALS: FiducialsExportPopup,
+    ExportKind.MESH: MeshExportPopup,
+}
 
 
 class MainWindow(QMainWindow):
@@ -59,14 +90,24 @@ class MainWindow(QMainWindow):
         self._steps_toggle = StepsToggleButton(self)
         self._steps_toggle.toggleRequested.connect(self._toggle_steps_menu)
         self._popup_factories: dict[int, Callable[[], StepPopupBase]] = {}
-        self._popup_factories[1] = lambda: BaseMeshExtractionPopup(BASE_MESH, self._steps)
-        self._popup_factories[2] = lambda: MeshPostprocessingPopup(MESH_POSTPROCESSING, self._steps)
-        self._popup_factories[3] = lambda: EseMeshPopup(ESE_MESH, self._steps)
-        self._popup_factories[4] = lambda: LocalizationPopup(LOCALIZATION, self._steps)
+        project = self._project_path
+        self._popup_factories[1] = lambda: BaseMeshExtractionPopup(
+            BASE_MESH, self._steps, project=project
+        )
+        self._popup_factories[2] = lambda: MeshPostprocessingPopup(
+            MESH_POSTPROCESSING, self._steps, project=project
+        )
+        self._popup_factories[3] = lambda: EseMeshPopup(ESE_MESH, self._steps, project=project)
+        self._popup_factories[4] = lambda: LocalizationPopup(
+            LOCALIZATION, self._steps, project=project
+        )
         self._popup_windows: dict[int, WidgetWindow] = {}
         self._popups: dict[int, StepPopupBase] = {}
         self._steps_menu.stepRequested.connect(self._open_step_popup)
         self._steps_menu.stepsInvalidated.connect(self._on_steps_invalidated)
+
+        self._export_windows: dict[ExportKind, WidgetWindow] = {}
+        self._build_menu_bar()
 
         self.showMaximized()
 
@@ -147,18 +188,61 @@ class MainWindow(QMainWindow):
         self._popup_windows.pop(step_n, None)
         self._popups.pop(step_n, None)
 
-    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt override
-        """Close every tracked popup so nothing outlives the main window.
+    def _build_menu_bar(self) -> None:
+        """Build File -> Export with one action per export kind.
 
-        Closing each host stops its hosted widget's background work
-        (including any running :class:`~virda_gui_new.services.task_runner.
-        TaskRunner` thread) before the application exits.
+        Availability approach: every action always opens its popup; a
+        missing source (e.g. electrodes never localized) is surfaced by
+        the Export click through the popup's error dialog with the
+        reason. The actions are therefore never disabled.
         """
-        for step_n in list(self._popup_windows):
-            self._close_popup(step_n)
-        if self._steps_window is not None:
-            self._steps_window.close()
-        super().closeEvent(event)
+        export_items = (
+            (ExportKind.MEASUREMENTS, "&Measurements"),
+            (ExportKind.ELECTRODES, "&Electrodes"),
+            (ExportKind.FIDUCIALS, "&Fiducials"),
+            (ExportKind.MESH, "&Mesh"),
+        )
+        file_menu = self.menuBar().addMenu("&File")
+        export_menu = file_menu.addMenu("&Export")
+        for kind, label in export_items:
+            action = QAction(label, self)
+            action.triggered.connect(lambda _checked, k=kind: self._open_export_popup(k))
+            export_menu.addAction(action)
+
+    def _open_export_popup(self, kind: ExportKind) -> None:
+        """Open the export popup of ``kind``, replacing an open one.
+
+        Like the step popups, the popup is created fresh on every menu
+        action (parented to this window through ``open_widget_window``)
+        so selectors and default paths reflect the live manager state.
+        """
+        self._close_export_popup(kind)
+        popup = _EXPORT_POPUPS[kind](self._steps, project=self._project_path)
+        popup.exportSucceeded.connect(lambda path, k=kind: self._log(f"Exported {k.value}: {path}"))
+        popup.exportFailed.connect(
+            lambda message, k=kind: self._log(f"Export {k.value} failed: {message}")
+        )
+        window = open_widget_window(popup, parent=self, title=f"Export {kind.value}")
+
+        def on_window_destroyed(*_args: object) -> None:
+            # Only drop the registry entry while it still maps to this
+            # window: the destroyed signal of a replaced popup must not
+            # unregister its successor.
+            if self._export_windows.get(kind) is window:
+                self._forget_export_popup(kind)
+
+        window.destroyed.connect(on_window_destroyed)
+        self._export_windows[kind] = window
+
+    def _close_export_popup(self, kind: ExportKind) -> None:
+        """Close this kind's export popup window, if open."""
+        window = self._export_windows.pop(kind, None)
+        if window is not None:
+            window.close()
+
+    def _forget_export_popup(self, kind: ExportKind) -> None:
+        """Drop tracking of an export window destroyed outside the dispatcher."""
+        self._export_windows.pop(kind, None)
 
     def _log(self, message: str) -> None:
         self.statusBar().showMessage(message)
@@ -168,3 +252,18 @@ class MainWindow(QMainWindow):
 
     def _on_scene_failed(self, message: str) -> None:
         self._log(f"3D viewer failed: {message}")
+
+    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt override
+        """Close every tracked popup so nothing outlives the main window.
+
+        Closing each host stops its hosted widget's background work
+        (including any running :class:`~virda_gui_new.services.task_runner.
+        TaskRunner` thread) before the application exits.
+        """
+        for step_n in list(self._popup_windows):
+            self._close_popup(step_n)
+        for kind in list(self._export_windows):
+            self._close_export_popup(kind)
+        if self._steps_window is not None:
+            self._steps_window.close()
+        super().closeEvent(event)
