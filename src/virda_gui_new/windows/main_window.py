@@ -11,9 +11,12 @@ from PySide6.QtWidgets import QMainWindow, QWidget
 from virda_gui_new.dto.steps import BASE_MESH, ESE_MESH, LOCALIZATION, MESH_POSTPROCESSING, STEPS
 from virda_gui_new.services.artifact_exporting import ExportKind
 from virda_gui_new.services.project_import import PreparedProject, prepare_project
+from virda_gui_new.services.project_scan import find_project_artifacts
 from virda_gui_new.services.scene_builder import collect_scene_kwargs
 from virda_gui_new.services.step_seeding import seed_steps_from_artifacts
 from virda_gui_new.services.steps_manager import StepsManager
+from virda_gui_new.widgets.files_toggle_button import FilesToggleButton
+from virda_gui_new.widgets.filetree import FileTree
 from virda_gui_new.widgets.popup.abstract import StepPopupBase
 from virda_gui_new.widgets.popup.base_mesh_extraction import BaseMeshExtractionPopup
 from virda_gui_new.widgets.popup.ese_mesh import EseMeshPopup
@@ -81,6 +84,7 @@ class MainWindow(QMainWindow):
         # The tool windows tracked next to their owner: they are raised
         # together with this window.
         self._steps_window: WidgetWindow | None = None
+        self._filetree_window: WidgetWindow | None = None
         self._popup_windows: dict[int, WidgetWindow] = {}
         self._export_windows: dict[ExportKind, WidgetWindow] = {}
 
@@ -120,10 +124,17 @@ class MainWindow(QMainWindow):
         self._steps_menu.stepRequested.connect(self._open_step_popup)
         self._steps_menu.stepsInvalidated.connect(self._on_steps_invalidated)
 
+        self._filetree: FileTree | None = FileTree()
+        self._filetree.set_artifacts(find_project_artifacts(self._project_path))
+        self._filetree.fileActivated.connect(lambda path: self._log(f"File selected: {path}"))
+
         self._build_menu_bar()
         # Built after the menu bar so the pill can anchor below it.
         self._steps_toggle = StepsToggleButton(self)
         self._steps_toggle.toggleRequested.connect(self._toggle_steps_menu)
+        # The file tree pill sits in the same column, below the steps pill.
+        self._files_toggle = FilesToggleButton(self, below=self._steps_toggle)
+        self._files_toggle.toggleRequested.connect(self._toggle_filetree)
 
         self.showMaximized()
 
@@ -157,6 +168,7 @@ class MainWindow(QMainWindow):
 
     def _on_step_completed(self, step_n: int) -> None:
         self._log(f"Step {step_n} done.")
+        self._refresh_filetree()
         self._close_popup(step_n)
         if step_n + 1 < len(STEPS):
             self._open_step_popup(step_n + 1)
@@ -168,6 +180,46 @@ class MainWindow(QMainWindow):
 
     def _on_steps_invalidated(self, n: int) -> None:
         self._log(f"Steps after {n} invalidated.")
+        self._refresh_filetree()
+
+    def _refresh_filetree(self) -> None:
+        """Re-scan the project and rebuild the file tree rows."""
+        if self._filetree is not None:
+            self._filetree.set_artifacts(find_project_artifacts(self._project_path))
+
+    def _forget_filetree(self) -> None:
+        """Drop the file tree references once its window was destroyed."""
+        self._filetree = None
+        self._filetree_window = None
+
+    def _open_filetree(self) -> WidgetWindow | None:
+        """Create the file tree window and show it.
+
+        The file tree is hidden by default: its window is created on the
+        first toggle instead of at startup, so the main window opens
+        without it.
+        """
+        filetree = self._filetree
+        if filetree is None:
+            return None
+        window = open_widget_window(filetree, parent=self, title="File tree")
+        window.destroyed.connect(self._forget_filetree)
+        self._filetree_window = window
+        return window
+
+    def _toggle_filetree(self) -> None:
+        """Show (or re-raise) / hide the file tree from the toggle button."""
+        window = self._filetree_window
+        if window is None:
+            # First toggle: the window is created and shown right away.
+            self._open_filetree()
+            return
+        if window.isVisible():
+            window.hide()
+        else:
+            window.show()
+            window.raise_()
+            window.activateWindow()
 
     def _toggle_steps_menu(self) -> None:
         """Show (or re-raise) / hide the steps menu from the toggle button."""
@@ -267,8 +319,9 @@ class MainWindow(QMainWindow):
         out, so they are never touched again.
         """
         tracked: list[WidgetWindow] = []
-        if self._steps_window is not None:
-            tracked.append(self._steps_window)
+        for window in (self._steps_window, self._filetree_window):
+            if window is not None:
+                tracked.append(window)
         tracked.extend(self._popup_windows.values())
         tracked.extend(self._export_windows.values())
         return [window for window in tracked if is_alive(window)]
@@ -321,6 +374,7 @@ class MainWindow(QMainWindow):
             self._close_popup(step_n)
         for kind in list(self._export_windows):
             self._close_export_popup(kind)
-        if self._steps_window is not None and is_alive(self._steps_window):
-            self._steps_window.close()
+        for window in (self._steps_window, self._filetree_window):
+            if window is not None and is_alive(window):
+                window.close()
         super().closeEvent(event)
