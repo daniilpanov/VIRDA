@@ -364,3 +364,64 @@ def test_invalidation_preserves_seeded_fiducials_and_wipes_step_4(tmp_path: Path
     assert manager.get_global_item("fiducials") == project / "input" / "fiducials.json"
     with pytest.raises(ValueError, match="out of bounds"):
         manager.get_step_context_item(2, "mesh")
+
+
+def test_seed_base_mesh_only_continues_at_the_postprocessing(tmp_path: Path) -> None:
+    """A lone raw base mesh is the step-1 scalp surface; step 2 has no result."""
+    project = make_project(
+        tmp_path,
+        fiducials=False,
+        scalp_mesh=False,
+        scalp_points=False,
+        ese_mesh=False,
+        ese_points=False,
+        base_mesh=True,
+    )
+    manager = new_manager()
+
+    seed_steps_from_artifacts(manager, find_project_artifacts(project))
+
+    assert manager.get_current_step() == 2
+    assert manager.all_contexts()[1] == {"scalp_surface": project / "scalp" / "base_mesh.ply"}
+
+
+def test_seed_base_mesh_without_nifti_stops_at_the_missing_nifti(tmp_path: Path) -> None:
+    """Without the volume the chain cannot start, so the base mesh stays out."""
+    project = make_project(
+        tmp_path,
+        nifti=None,
+        fiducials=False,
+        scalp_mesh=False,
+        scalp_points=False,
+        ese_mesh=False,
+        ese_points=False,
+        base_mesh=True,
+    )
+    manager = new_manager()
+
+    with pytest.raises(StepChainIncomplete) as raised:
+        seed_steps_from_artifacts(manager, find_project_artifacts(project))
+
+    assert raised.value.step_n == 0
+    assert manager.get_current_step() == 0
+    assert len(manager.all_contexts()) == 1
+
+
+def test_seed_final_mesh_wins_over_base_mesh(tmp_path: Path) -> None:
+    """The postprocessed final mesh feeds steps 1 and 2; the base mesh is unused."""
+    project = make_project(
+        tmp_path,
+        fiducials=False,
+        scalp_points=False,
+        ese_mesh=False,
+        ese_points=False,
+        base_mesh=True,
+    )
+    manager = new_manager()
+
+    seed_steps_from_artifacts(manager, find_project_artifacts(project))
+
+    assert manager.get_current_step() == 3
+    contexts = manager.all_contexts()
+    assert contexts[1] == {"scalp_surface": project / "mesh" / "final_mesh.ply"}
+    assert contexts[2] == {"mesh": project / "mesh" / "final_mesh.ply"}

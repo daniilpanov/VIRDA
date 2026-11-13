@@ -1,5 +1,6 @@
 """Unit tests for :mod:`virda_gui_new.services.project_import`."""
 
+import json
 from pathlib import Path
 
 import nibabel as nib
@@ -8,6 +9,7 @@ import pytest
 import trimesh
 
 from virda.io.fiducial_helpers import save_fiducials
+from virda.models.electrode import Electrodes
 from virda.models.fiducial import Fiducial, Fiducials
 from virda.models.mesh import Mesh
 from virda.models.mri_volume import MRIVolume
@@ -27,6 +29,27 @@ def _write_ply(path: Path) -> None:
 def _write_fiducials(path: Path) -> None:
     fiducials = Fiducials(items=[Fiducial("c1", "nas", np.array([0.0, 1.0, 2.0]), "world")])
     save_fiducials(path, fiducials)
+
+
+def _write_coordsystem(path: Path) -> None:
+    """MNE-style coordsystem.json: millimetre MRI fiducials."""
+    path.write_text(
+        json.dumps(
+            {
+                "CoordinateSystem": "MRI",
+                "CoordinateUnits": "mm",
+                "FiducialsCoordinates": {"NAS": {"Head": [1.0, 2.0, 3.0], "MRI": [1.0, 2.0, 3.0]}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_measurements(path: Path) -> None:
+    path.write_text(
+        json.dumps({"electrodes": [{"electrode_id": "Fz", "measured_distances": {"NAS": 120.5}}]}),
+        encoding="utf-8",
+    )
 
 
 def _write_point_csv(path: Path, rows: list[str]) -> None:
@@ -72,7 +95,7 @@ def test_prepare_project_rejects_invalid_point_rows(project: Path) -> None:
     assert "electrodes_scalp.csv" in prepared.failures[0]
     assert "coordinate" in prepared.failures[0]
     assert prepared.loaded.scalp_points is None
-    # Everything else still seeds; recovery follows the loaded artifacts.
+    # Everything else still loads; the dropped file leaves its key unset.
     assert prepared.loaded.nifti is not None
     assert prepared.loaded.scalp_mesh is not None
 
@@ -121,6 +144,73 @@ def test_prepare_project_empty_directory(project: Path) -> None:
 
     assert prepared.failures == ()
     assert prepared.loaded == type(prepared.loaded)()
+
+
+def test_prepare_project_loads_measurements_and_base_mesh(project: Path) -> None:
+    base = project / "scalp"
+    base.mkdir(exist_ok=True)
+    _write_ply(base / "base_mesh.ply")
+    _write_measurements(project / "input" / "measurements.json")
+    (project / "input" / "pipeline_config.json").write_text("{}", encoding="utf-8")
+
+    prepared = prepare_project(project)
+
+    assert prepared.failures == ()
+    assert isinstance(prepared.loaded.base_mesh, Mesh)
+    assert isinstance(prepared.loaded.measurements, Electrodes)
+    assert prepared.loaded.measurements.items[0].electrode_id == "Fz"
+    # pipeline_config stays a scanned path: nothing loads it yet.
+    assert prepared.loaded.pipeline_config == project / "input" / "pipeline_config.json"
+    # The base mesh alone seeds step 1.
+    assert prepared.recoverable_step == 1
+
+
+def test_prepare_project_converts_coordsystem_to_fiducials(project: Path) -> None:
+    _write_coordsystem(project / "input" / "coordsystem.json")
+
+    prepared = prepare_project(project)
+
+    assert prepared.failures == ()
+    points = prepared.loaded.fiducials
+    assert isinstance(points, LabeledPoints)
+    assert points.labels == ("NAS",)
+    assert points.points.tolist() == [[1.0, 2.0, 3.0]]
+
+
+def test_prepare_project_fiducials_win_over_coordsystem(project: Path) -> None:
+    _write_coordsystem(project / "input" / "coordsystem.json")
+    _write_fiducials(project / "somewhere" / "fiducials.json")
+
+    prepared = prepare_project(project)
+
+    assert prepared.failures == ()
+    points = prepared.loaded.fiducials
+    assert isinstance(points, LabeledPoints)
+    assert points.labels == ("nas",)
+
+
+def test_prepare_project_final_mesh_wins_over_base_mesh(project: Path) -> None:
+    base = project / "scalp"
+    base.mkdir(exist_ok=True)
+    _write_ply(base / "base_mesh.ply")
+    _write_ply(project / "mesh" / "final_mesh.ply")
+
+    prepared = prepare_project(project)
+
+    assert prepared.failures == ()
+    assert isinstance(prepared.loaded.scalp_mesh, Mesh)
+    assert isinstance(prepared.loaded.base_mesh, Mesh)
+
+
+def test_prepare_project_corrupt_measurements_is_reported(project: Path) -> None:
+    _write_nifti(project / "input" / "a.nii")
+    (project / "input" / "measurements.json").write_text("not json", encoding="utf-8")
+
+    prepared = prepare_project(project)
+
+    assert len(prepared.failures) == 1
+    assert "measurements.json" in prepared.failures[0]
+    assert prepared.loaded.measurements is None
 
 
 def test_prepare_project_corrupt_mesh_is_reported(project: Path) -> None:
