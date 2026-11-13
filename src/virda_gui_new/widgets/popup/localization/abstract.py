@@ -1,5 +1,7 @@
 """Live localization popup: thin view over the localization service."""
 
+from pathlib import Path
+
 import numpy as np
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
@@ -7,6 +9,7 @@ from virda.models.electrode import Electrodes
 from virda.models.mesh import Mesh, Normals
 from virda_gui_new.dto.steps import ESE_MESH, LOCALIZATION, MESH_POSTPROCESSING, Step
 from virda_gui_new.dto.viewer3d import LabeledPoints
+from virda_gui_new.services import artifact_saving
 from virda_gui_new.services.localization import (
     FiducialRows,
     LiveLocalizationRunner,
@@ -59,12 +62,19 @@ class LocalizationPopupBase(StepPopupBase):
     base hint label and the ``on_status`` hook for subclasses.
     """
 
-    def __init__(self, step: Step, manager: StepsManager, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        step: Step,
+        manager: StepsManager,
+        parent: QWidget | None = None,
+        *,
+        project: Path | None = None,
+    ) -> None:
         # The runner is created once the geometry is known, but the
         # attribute must exist from the start: build_form() prefills the
         # fiducial table, and the prefill schedules an input change.
         self._localization_runner: LiveLocalizationRunner | None = None
-        super().__init__(step, manager, parent)
+        super().__init__(step, manager, parent, project=project)
         self._run_button.hide()
         self._ese_mesh = _as_mesh(self._read_context_item(ESE_MESH.index, "ese_mesh"))
         self._normals = _as_normals(self._read_context_item(ESE_MESH.index, "normals"))
@@ -139,6 +149,22 @@ class LocalizationPopupBase(StepPopupBase):
         self._refresh_fiducial_store()
         self._set_hint(f"Localized {len(electrodes.items)} electrodes.")
         self.show_localized(electrodes)
+        self._save_localization(electrodes)
+
+    def _save_localization(self, electrodes: Electrodes) -> None:
+        """Persist the run's outputs; a save failure is a failed status."""
+        if self._project is None:
+            return
+        try:
+            artifact_saving.save_localization(
+                self._project,
+                self.collect_fiducial_rows(),
+                self.collect_measurement_table(),
+                electrodes,
+            )
+        except Exception as error:  # noqa: BLE001 - any save error is user-facing
+            self._set_hint(f"Failed to save localization files: {error}")
+            self.failed.emit(str(error))
 
     def _refresh_fiducial_store(self) -> None:
         """Mirror the current fiducial table into the global store.

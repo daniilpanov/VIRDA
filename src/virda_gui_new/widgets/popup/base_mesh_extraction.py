@@ -17,7 +17,7 @@ from virda_gui.api.options import SealingOptions
 from virda_gui_new.api import ops
 from virda_gui_new.api.ops import ScalpSurface
 from virda_gui_new.dto.steps import BASE_MESH
-from virda_gui_new.services import artifact_loading
+from virda_gui_new.services import artifact_loading, artifact_saving
 from virda_gui_new.widgets.popup.abstract import StepPopupBase
 
 _NO_VOLUME = "Base mesh needs the NIfTI volume from step 0 (run NIfTI import first)."
@@ -85,7 +85,12 @@ class BaseMeshExtractionPopup(StepPopupBase):
                 volume = source
             else:
                 volume = artifact_loading.load_volume(source)
-            return ops.generate_scalp_surface(volume, sealing, voxel_size_mm)
+            surface = ops.generate_scalp_surface(volume, sealing, voxel_size_mm)
+            # Persist before the result reaches the GUI thread: a save
+            # failure fails the run like any other step error.
+            if self._project is not None:
+                artifact_saving.save_scalp_surface(self._project, volume, surface)
+            return surface
 
         return run
 

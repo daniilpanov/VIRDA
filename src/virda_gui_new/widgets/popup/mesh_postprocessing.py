@@ -15,6 +15,7 @@ from virda.models.mesh import Mesh
 from virda_gui.api.options import CleanOptions, DecimateOptions, SmootherKind, SmoothOptions
 from virda_gui_new.api import ops
 from virda_gui_new.dto.steps import BASE_MESH, MESH_POSTPROCESSING
+from virda_gui_new.services import artifact_saving
 from virda_gui_new.widgets.popup.abstract import StepPopupBase
 
 _NO_MESH = "Mesh postprocessing needs an in-memory mesh (run the previous steps first)."
@@ -120,7 +121,14 @@ class MeshPostprocessingPopup(StepPopupBase):
             lamb=self._lamb_spin.value(),
             nu=self._nu_spin.value(),
         )
-        return lambda: ops.smooth(ops.decimate(ops.clean(mesh, cleaning), decimating), smoothing)
+
+        def run() -> Mesh:
+            processed = ops.smooth(ops.decimate(ops.clean(mesh, cleaning), decimating), smoothing)
+            if self._project is not None:
+                artifact_saving.save_final_mesh(self._project, processed)
+            return processed
+
+        return run
 
     def _apply_result(self, result: Any) -> None:
         self._manager.set_step_context_item(MESH_POSTPROCESSING.index, "mesh", result)
