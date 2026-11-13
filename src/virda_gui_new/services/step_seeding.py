@@ -1,11 +1,10 @@
-"""Seeding pipeline step contexts from project artifacts.
+"""Seeding pipeline step contexts and the global store from project artifacts.
 
-Contexts store whatever the given artifact set holds: file
-:class:`~pathlib.Path` values for a scanned set
-(:class:`ProjectArtifacts`) or ready in-memory objects for a loaded
-set (:class:`LoadedArtifacts`). Loading paths stays with later
-commits; loaded objects are runnable immediately. Keys written per
-step:
+Step contexts store whatever the given artifact set holds: file
+:class:`~pathlib.Path` values for a scanned set (:class:`ProjectArtifacts`)
+or ready in-memory objects for a loaded set (:class:`LoadedArtifacts`).
+Loading paths stays with later commits; loaded objects are runnable
+immediately. Keys written per step:
 
 - step 0 (NIfTI import): ``volume``
 - step 1 (Base mesh): ``scalp_surface``; ``scalp_points`` when present
@@ -13,15 +12,22 @@ step:
   which the pipeline overwrites in place)
 - step 3 (ESE mesh): ``ese_mesh``; ``normals`` is never written
   because normals are in-memory only
-- step 4 (Localization): ``fiducials``; ``scalp_points``; ``ese_points``,
-  each when present
+- step 4 (Localization): ``scalp_points``; ``ese_points``, each when
+  present
+
+Fiducials are project-level inputs, not step-derived results: they go
+into the manager's global store (``set_global_item("fiducials", ...)``)
+instead of the step-4 context. They are stored even when the chain
+stops short of step 4, so a project that is not complete yet keeps its
+fiducials.
 
 Contexts are created for steps 0 through the last step that received a
 write, but only while the chain stays complete: ``next_step`` refuses to
 leave an unfinished step, so the seeding stops at the first gap and
 raises :class:`StepChainIncompleteError`. The manager is left in the state the
 pipeline can continue from: the gap step is current, the steps after it
-are not created and their artifacts are not loaded.
+are not created and their artifacts are not loaded. The global fiducials
+are stored before the walk, so they survive a gap.
 """
 
 from pathlib import Path
@@ -69,9 +75,11 @@ def seed_steps_from_artifacts(
     """Write artifact values into matching :class:`StepsManager` contexts.
 
     Only present artifacts are written; missing (or dropped) ones leave
-    their keys unset. The manager is advanced with ``next_step()`` up to
-    the last step that received a write, leaving no trailing empty
-    contexts, and one step further to the first step without a result.
+    their keys unset. Fiducials are written to the global store; every
+    other value goes into the step context of its step. The manager is
+    advanced with ``next_step()`` up to the last step that received a
+    write, leaving no trailing empty contexts, and one step further to
+    the first step without a result.
 
     Raises :class:`StepChainIncompleteError` when a step in between is not
     finished: the manager then holds the pipeline up to that gap, and
@@ -92,18 +100,22 @@ def seed_steps_from_artifacts(
     if artifacts.ese_mesh is not None:
         writes[3] = {"ese_mesh": artifacts.ese_mesh}
 
-    if (
-        artifacts.fiducials is not None
-        or artifacts.scalp_points is not None
-        or (artifacts.ese_points is not None)
-    ):
+    if artifacts.scalp_points is not None or artifacts.ese_points is not None:
         writes[4] = {}
-        if artifacts.fiducials is not None:
-            writes[4]["fiducials"] = artifacts.fiducials
         if artifacts.scalp_points is not None:
             writes[4]["scalp_points"] = artifacts.scalp_points
         if artifacts.ese_points is not None:
             writes[4]["ese_points"] = artifacts.ese_points
+
+    if artifacts.fiducials is not None:
+        # Fiducials are a step-4 artifact as well: they mark step 4 as
+        # carrying something, even without electrode points.
+        writes.setdefault(4, {})
+
+    if artifacts.fiducials is not None:
+        # The global store is filled before the walk: the fiducials are a
+        # project input, so they survive a gap in the chain.
+        manager.set_global_item("fiducials", artifacts.fiducials)
 
     if not writes:
         return

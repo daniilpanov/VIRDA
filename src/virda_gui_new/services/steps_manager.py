@@ -7,16 +7,18 @@ from lib.forward_list import ForwardList
 
 
 class StepsManager:
-    """Tracks one context dict per pipeline step and which steps are done.
+    """Tracks one context dict per pipeline step plus a global store.
 
-    Step 0's empty context is created at construction, so
-    ``get_current_step()`` is always >= 0 and step 0 accepts writes
-    immediately. Context accessors and ``invalidate_steps_after`` raise
-    ``ValueError`` for step numbers outside ``[0, current step]``;
-    ``is_step_done`` follows the same rule and additionally returns
-    ``False`` for valid steps that have no ``required_keys`` entry.
-    Listeners are pull-model callbacks of no arguments, re-reading the
-    manager after each mutation.
+    Step contexts hold step-derived results; the global store holds
+    project-level inputs (currently only fiducials) that survive
+    ``invalidate_steps_after``. Step 0's empty context is created at
+    construction, so ``get_current_step()`` is always >= 0 and step 0
+    accepts writes immediately. Context accessors and
+    ``invalidate_steps_after`` raise ``ValueError`` for step numbers
+    outside ``[0, current step]``; ``is_step_done`` follows the same rule
+    and additionally returns ``False`` for valid steps that have no
+    ``required_keys`` entry. Listeners are pull-model callbacks of no
+    arguments, re-reading the manager after each mutation.
 
     ``next_step`` refuses to leave an unfinished step: every required
     key of the current step must be present in its context, or it
@@ -28,6 +30,7 @@ class StepsManager:
     def __init__(self, required_keys_by_step: Sequence[tuple[str, ...]] = ()) -> None:
         self._required_keys: tuple[tuple[str, ...], ...] = tuple(required_keys_by_step)
         self._step_contexts: ForwardList[dict[str, Any]] = ForwardList()
+        self._global_context: dict[str, Any] = {}
         self._listeners: list[Callable[[], None]] = []
         self._step_contexts.push_back({})
 
@@ -49,6 +52,25 @@ class StepsManager:
         self._validate_step(step_n)
         self._step_contexts[step_n][key] = item
         self._notify()
+
+    def set_global_item(self, key: str, item: Any) -> None:
+        """Write a project-level input into the global store and notify.
+
+        Global items live outside the step contexts, so they survive
+        ``invalidate_steps_after`` and ``next_step``. Setting ``item`` to
+        ``None`` clears the entry (the key is removed); a cleared key and
+        an absent key are both read back as ``None`` by
+        :meth:`get_global_item`.
+        """
+        if item is None:
+            self._global_context.pop(key, None)
+        else:
+            self._global_context[key] = item
+        self._notify()
+
+    def get_global_item(self, key: str) -> Any | None:
+        """Return the global item for ``key``, or ``None`` when absent."""
+        return self._global_context.get(key)
 
     def is_step_done(self, step_n: int) -> bool:
         """True when every required context key of ``step_n`` is present.

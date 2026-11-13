@@ -2,9 +2,11 @@
 
 from pathlib import Path
 
+import pytest
+
 from virda_gui_new.dto.steps import STEPS
 from virda_gui_new.services.project_scan import ProjectArtifacts, find_project_artifacts
-from virda_gui_new.services.step_seeding import StepChainIncompleteError, seed_steps_from_artifacts
+from virda_gui_new.services.step_seeding import StepChainIncompleteErrorError, seed_steps_from_artifacts
 from virda_gui_new.services.steps_manager import StepsManager
 
 
@@ -270,6 +272,38 @@ def test_seed_nifti_and_scalp(tmp_path: Path) -> None:
     assert manager.is_step_done(2) is True
 
 
+def test_seed_full_set_without_electrodes(tmp_path: Path) -> None:
+    project = make_project(tmp_path, ese_points=False)
+    manager = new_manager()
+
+    seed_steps_from_artifacts(manager, find_project_artifacts(project))
+
+    # Every step is finished: the pipeline sits past the last one.
+    assert manager.get_current_step() == 5
+    contexts = manager.all_contexts()
+    assert contexts[3] == {"ese_mesh": project / "ese" / "ese_mesh.ply"}
+    assert contexts[4] == {"scalp_points": project / "localization" / "electrodes_scalp.csv"}
+    assert manager.get_global_item("fiducials") == project / "input" / "fiducials.json"
+    # "normals" is in-memory only and not part of the done state.
+    assert "normals" not in contexts[3]
+    assert manager.is_step_done(3) is True
+
+
+def test_seed_full_set_with_electrodes(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    manager = new_manager()
+
+    seed_steps_from_artifacts(manager, find_project_artifacts(project))
+
+    assert manager.get_current_step() == 5
+    contexts = manager.all_contexts()
+    assert contexts[4] == {
+        "scalp_points": project / "localization" / "electrodes_scalp.csv",
+        "ese_points": project / "localization" / "electrodes_ese.csv",
+    }
+    assert manager.get_global_item("fiducials") == project / "input" / "fiducials.json"
+
+
 def test_seed_nothing_when_no_artifacts(tmp_path: Path) -> None:
     manager = new_manager()
 
@@ -284,7 +318,7 @@ def test_seed_ese_points_without_ese_mesh_stops_at_the_gap(tmp_path: Path) -> No
     project = make_project(tmp_path, ese_mesh=False, fiducials=False, scalp_points=False)
     manager = new_manager()
 
-    with pytest.raises(StepChainIncompleteError) as raised:
+    with pytest.raises(StepChainIncompleteErrorError) as raised:
         seed_steps_from_artifacts(manager, find_project_artifacts(project))
 
     assert raised.value.step_n == 3
@@ -293,3 +327,40 @@ def test_seed_ese_points_without_ese_mesh_stops_at_the_gap(tmp_path: Path) -> No
     contexts = manager.all_contexts()
     assert contexts[3] == {}
     assert len(contexts) == 4
+
+
+def test_seed_fiducials_only_stops_at_the_missing_nifti(tmp_path: Path) -> None:
+    """Fiducials are a project input, but the chain needs the volume first."""
+    project = make_project(
+        tmp_path,
+        nifti=None,
+        scalp_mesh=False,
+        scalp_points=False,
+        ese_mesh=False,
+        ese_points=False,
+    )
+    manager = new_manager()
+
+    with pytest.raises(StepChainIncompleteError) as raised:
+        seed_steps_from_artifacts(manager, find_project_artifacts(project))
+
+    assert raised.value.step_n == 0
+    assert raised.value.missing_keys == ("volume",)
+    assert manager.get_current_step() == 0
+    assert manager.all_contexts() == [{}]
+    # The fiducials are a project input: they are stored anyway.
+    assert manager.get_global_item("fiducials") == project / "input" / "fiducials.json"
+
+
+def test_invalidation_preserves_seeded_fiducials_and_wipes_step_4(tmp_path: Path) -> None:
+    """The global store survives; step-4 context items are wiped."""
+    project = make_project(tmp_path)
+    manager = new_manager()
+    seed_steps_from_artifacts(manager, find_project_artifacts(project))
+
+    manager.invalidate_steps_after(1)
+
+    assert manager.get_current_step() == 1
+    assert manager.get_global_item("fiducials") == project / "input" / "fiducials.json"
+    with pytest.raises(ValueError, match="out of bounds"):
+        manager.get_step_context_item(2, "mesh")

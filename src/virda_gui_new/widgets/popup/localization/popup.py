@@ -3,7 +3,6 @@
 from PySide6.QtWidgets import QLabel, QVBoxLayout
 
 from virda.models.electrode import Electrodes
-from virda_gui_new.dto.steps import LOCALIZATION
 from virda_gui_new.dto.viewer3d import LabeledPoints
 from virda_gui_new.services.localization import FiducialRows, MeasurementTable
 from virda_gui_new.widgets.popup.localization.abstract import LocalizationPopupBase
@@ -38,8 +37,8 @@ class LocalizationPopup(LocalizationPopupBase):
         self._prefill_fiducials()
 
     def _prefill_fiducials(self) -> None:
-        """Fill the fiducial grid from seeded step-4 points, if any."""
-        points = self._read_context_item(LOCALIZATION.index, "fiducials")
+        """Fill the fiducial grid from the manager's global store, if any."""
+        points = self._manager.get_global_item("fiducials")
         if not isinstance(points, LabeledPoints) or points.labels is None:
             return
         rows = [
