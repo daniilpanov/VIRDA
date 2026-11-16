@@ -27,7 +27,7 @@ class BaseMeshExtractionPopup(StepPopupBase):
 
     The form collects the target voxel size in millimeters (zero means
     native NIfTI resolution) plus mask sealing with its radius, then hands
-    the heavy ``ops.generate_scalp_surface`` call to the base run
+    the heavy ``generate_scalp_surface`` call to the base run
     machinery. On success the ready mesh is stored as ``scalp_surface``
     and the mask as ``scalp_mask`` of step 1; the base then advances the
     pipeline when step 1 is current.

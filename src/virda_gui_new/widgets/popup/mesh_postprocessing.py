@@ -27,8 +27,8 @@ class MeshPostprocessingPopup(StepPopupBase):
     The run input is the step-2 ``mesh`` when present, else the step-1
     ``scalp_surface``; it must already be a ready :class:`Mesh` object,
     not a path. The form collects component merging plus decimation and
-    smoothing parameters, then hands the ``ops.clean`` ->
-    ``ops.decimate`` -> ``ops.smooth`` chain to the base run machinery.
+    smoothing parameters, then hands the ``clean_mesh`` ->
+    ``decimate_mesh`` -> ``smooth_mesh`` chain to the base run machinery.
     On success the processed mesh is stored as ``mesh`` of step 2; the
     base then advances the pipeline when step 2 is current.
     """

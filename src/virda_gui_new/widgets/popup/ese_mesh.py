@@ -26,7 +26,7 @@ class EseMeshPopup(StepPopupBase):
     The run input is the step-2 ``mesh`` when present, else the step-1
     ``scalp_surface``; it must already be a ready :class:`Mesh` object,
     not a path. The form collects the ESE offset plus the PCA normal
-    estimation parameters, then hands the ``ops.generate_ese`` call to
+    estimation parameters, then hands the ``build_ese`` call to
     the base run machinery. On success the mesh and the per-vertex
     normals are stored as ``ese_mesh`` and ``normals`` of step 3; the
     base then advances the pipeline when step 3 is current.
