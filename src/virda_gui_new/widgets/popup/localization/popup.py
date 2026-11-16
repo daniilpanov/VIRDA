@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 from PySide6.QtWidgets import QFileDialog, QLabel, QVBoxLayout
 
+from virda.models.coordinates import CoordinateSystem
 from virda.models.electrode import Electrodes
 from virda.models.mri_volume import MRIVolume
 from virda_gui_new.dto.steps import FIDUCIALS_KEY, LOCALIZATION, MEASUREMENTS_KEY, NIFTI
@@ -19,6 +20,7 @@ from virda_gui_new.services.localization import (
 from virda_gui_new.widgets.popup.localization.abstract import LocalizationPopupBase
 from virda_gui_new.widgets.popup.localization.electrodes_table import ElectrodesTable
 from virda_gui_new.widgets.popup.localization.fiducials_table import FiducialsTable
+from virda_gui_new.widgets.popup.localization.frame_selector import FrameSelector
 from virda_gui_new.widgets.popup.localization.measurements_table import MeasurementsTable
 
 _JSON_FILTER = "JSON (*.json)"
@@ -30,23 +32,38 @@ class LocalizationPopup(LocalizationPopupBase):
     """Localization step editor: tables drive the debounced live runs.
 
     The form stacks the editable fiducial and measurement grids over
-    the read-only electrode grid. Each edit in either input table
+    the read-only electrode grid; a coordinate-frame selector (head /
+    world / fiducials) sits above the fiducial grid and the electrode
+    grid and only changes the displayed numbers -- the canonical rows
+    and the store stay world. Each edit in either input table
     re-validates the whole snapshot and schedules a run; localized
     results are shown in the electrode grid and stored in the step-4
     context by the base.
     """
 
     def build_form(self, layout: QVBoxLayout) -> None:
-        """Arrange the three table sections and wire input changes."""
+        """Arrange the table sections with their frame selectors."""
         super().build_form(layout)
-        self._fiducials_table = FiducialsTable(self)
+        self._coordinates = self._manager.geometry
+        self._fiducials_table = FiducialsTable(self._coordinates, self)
         self._measurements_table = MeasurementsTable(self)
-        self._electrodes_table = ElectrodesTable(self)
+        self._electrodes_table = ElectrodesTable(self._coordinates, self)
+        # The fiducials frame is defined by the rows the fiducials table
+        # shows, so the table is displayed in the world and the head
+        # frame only.
+        self._fiducials_frames = FrameSelector(
+            self, frames=(CoordinateSystem.HEAD, CoordinateSystem.WORLD)
+        )
+        self._electrodes_frames = FrameSelector(self)
+        self._fiducials_frames.frameChanged.connect(self._fiducials_table.set_display_frame)
+        self._electrodes_frames.frameChanged.connect(self._electrodes_table.set_display_frame)
         layout.addWidget(QLabel("Fiducials", self))
+        layout.addWidget(self._fiducials_frames)
         layout.addWidget(self._fiducials_table)
         layout.addWidget(QLabel("Measurements", self))
         layout.addWidget(self._measurements_table)
         layout.addWidget(QLabel("Electrodes", self))
+        layout.addWidget(self._electrodes_frames)
         layout.addWidget(self._electrodes_table)
         self._fiducials_table.rowsChanged.connect(self._on_inputs_changed)
         self._fiducials_table.cleared.connect(self._clear_fiducial_store)
@@ -107,6 +124,32 @@ class LocalizationPopup(LocalizationPopupBase):
     def collect_measurement_table(self) -> MeasurementTable:
         return self._measurements_table.collect_measurement_table()
 
+    def _sync_frame_selectors(self) -> None:
+        """Enable available frames and keep each table on its selector.
+
+        Called at build time and whenever the fiducials store changes:
+        the fiducials frame is greyed out while fewer than three
+        fiducials have coordinates and the head frame while no scalp
+        mesh exists; a currently selected frame that became unavailable
+        falls back to head (or world without a scalp mesh). The change
+        signal keeps the table in step; for an available frame the
+        table is set explicitly (a same-frame set is a no-op there).
+        """
+        head_ok = self._coordinates.is_available(CoordinateSystem.HEAD)
+        fiducials_ok = self._coordinates.is_available(CoordinateSystem.FIDUCIALS)
+        for selector, table in (
+            (self._fiducials_frames, self._fiducials_table),
+            (self._electrodes_frames, self._electrodes_table),
+        ):
+            selector.set_frame_enabled(CoordinateSystem.HEAD, head_ok)
+            selector.set_frame_enabled(CoordinateSystem.FIDUCIALS, fiducials_ok)
+            frame = selector.frame()
+            if not self._coordinates.is_available(frame):
+                fallback = CoordinateSystem.HEAD if head_ok else CoordinateSystem.WORLD
+                selector.setCurrentIndex(selector.findData(fallback))
+                continue  # the change signal switches the table
+            table.set_display_frame(frame)
+
     def _import_fiducials_from_file(self) -> None:
         """ "From file": fill the fixed slots from a fiducials/coordsystem JSON.
 
@@ -160,9 +203,16 @@ class LocalizationPopup(LocalizationPopupBase):
         return Path(path) if path else None
 
     def _clear_fiducial_store(self) -> None:
-        """Clear the store; the cleared table is the project state now."""
+        """Clear the store, then re-sync frame availability (fiducials lost)."""
         super()._clear_fiducial_store()
+        self._sync_frame_selectors()
+        # The cleared table is the project state now.
         self._save_inputs()
+
+    def _refresh_fiducial_store(self) -> None:
+        """Refresh the store, then re-sync frame availability."""
+        super()._refresh_fiducial_store()
+        self._sync_frame_selectors()
 
     def show_localized(self, electrodes: Electrodes) -> None:
         self._electrodes_table.show_electrodes(electrodes)

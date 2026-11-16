@@ -15,15 +15,26 @@ convention survives a save/load round trip unchanged.
 
 Internally the table keeps canonical world-coordinate rows (one
 ``(3,)`` array or ``None`` per slot); the cells are a view of that
-state. :meth:`collect_fiducial_rows` returns the slots with valid
-coordinates, always in the fixed NAS/LPA/RPA order, skipping empty or
+state rendered in the current display frame (default ``world``; the
+popup selects ``head`` when available). Switching the display frame
+(:meth:`set_display_frame`) re-renders the set rows in the new frame
+and clears rows without valid coordinates (their values cannot be
+converted cell-wise); edits are read in the display frame and stored
+back as world, so :meth:`collect_fiducial_rows` always returns world
+coordinates in the fixed NAS/LPA/RPA order, skipping empty or
 incomplete rows -- a partially filled table still prefills and saves
-exactly like before.
+exactly like before. Editing one coordinate cell re-derives the whole
+row from the displayed texts, so displayed numbers are the truth for
+edited rows.
 
 Buttons: an "Empty" button that clears the whole grid (emitting
 :attr:`cleared` so the popup can sync the global store and the 3D
 scene) and a "From file" button that only emits :attr:`importRequested`
 -- the popup owns the file dialog and the import service.
+
+Without a :class:`~virda.geometry.Geometry` service the table only
+supports the ``world`` display frame; any other frame falls back to
+``world`` rendering.
 """
 
 from collections.abc import Sequence
@@ -39,7 +50,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from virda.geometry import match_fiducial_name
+from virda.geometry import Geometry, match_fiducial_name
+from virda.models.coordinates import CoordinateSystem
 from virda.models.fiducial import SLOT_IDS
 from virda_gui_new.services.localization import FiducialRows
 
@@ -63,8 +75,10 @@ class FiducialsTable(QWidget):
     cleared = Signal()  # noqa: N815 - Qt signal API
     importRequested = Signal()  # noqa: N815 - Qt signal API
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, converter: Geometry | None = None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._converter = converter
+        self._frame = CoordinateSystem.WORLD
         self._names = [str(slot) for slot in SLOT_IDS]
         self._world: list[np.ndarray | None] = [None] * len(SLOT_IDS)
 
@@ -111,6 +125,25 @@ class FiducialsTable(QWidget):
         self.cleared.emit()
         self.rowsChanged.emit()
 
+    def set_display_frame(self, frame: CoordinateSystem) -> None:
+        """Switch the displayed frame; the canonical rows stay world.
+
+        Unavailable frames (no converter, or the converter cannot serve
+        the frame) fall back to ``world``. A genuine frame change
+        re-renders the grid, so incomplete rows are cleared; switching
+        to the already-displayed frame is a no-op.
+        """
+        if frame is self._frame:
+            return
+        if frame is not CoordinateSystem.WORLD and (
+            self._converter is None or not self._converter.is_available(frame)
+        ):
+            if CoordinateSystem.WORLD is self._frame:
+                return
+            frame = CoordinateSystem.WORLD
+        self._frame = frame
+        self._render()
+
     def collect_fiducial_rows(self) -> FiducialRows:
         """Return the complete ``(name, (3,) xyz)`` rows in fixed order."""
         rows: FiducialRows = []
@@ -124,10 +157,23 @@ class FiducialsTable(QWidget):
         slot = match_fiducial_name(name)
         return SLOT_IDS.index(slot) if slot is not None else None
 
+    def _display(self, xyz: np.ndarray) -> np.ndarray:
+        """Canonical world point -> current display frame point."""
+        if self._frame is CoordinateSystem.WORLD or self._converter is None:
+            return xyz
+        return np.asarray(self._converter.from_world(xyz, self._frame), dtype=np.float64)
+
+    def _canonicalize(self, displayed: np.ndarray) -> np.ndarray:
+        """Displayed point -> canonical world coordinates."""
+        if self._frame is CoordinateSystem.WORLD or self._converter is None:
+            return displayed
+        return np.asarray(self._converter.to_world(displayed, self._frame), dtype=np.float64)
+
     def _on_item_changed(self, item: QTableWidgetItem) -> None:
         """Re-derive the edited row's canonical coordinates from its cells."""
         row = item.row()
-        xyz = self._row_xyz(row)
+        displayed = self._row_xyz(row)
+        xyz = None if displayed is None else self._canonicalize(displayed)
         current = self._world[row]
         changed = (current is None) != (xyz is None) or (
             xyz is not None and current is not None and not np.array_equal(xyz, current)
@@ -151,7 +197,7 @@ class FiducialsTable(QWidget):
         table = self._table
         table.blockSignals(True)
         for row, (name, xyz) in enumerate(zip(self._names, self._world, strict=True)):
-            cells = (name, *self._xyz_texts(xyz))
+            cells = (name, *self._xyz_texts(None if xyz is None else self._display(xyz)))
             for column, text in enumerate(cells):
                 item = QTableWidgetItem(text)
                 if column == 0:

@@ -12,7 +12,6 @@ from typing import cast
 import numpy as np
 import pytest
 from PySide6.QtWidgets import QTableWidget, QTableWidgetItem, QVBoxLayout
-from virda_gui_new.widgets.popup.localization.frame_selector import FrameSelector
 
 from tests.virda_gui_new.fixtures.steps import advance
 from virda.models.coordinates import CoordinateSystem
@@ -26,6 +25,7 @@ from virda_gui_new.widgets.popup.localization import LocalizationPopup
 from virda_gui_new.widgets.popup.localization.abstract import (
     LocalizationPopupBase,
 )
+from virda_gui_new.widgets.popup.localization.frame_selector import FrameSelector
 
 type _LocalizeCall = tuple[Fiducials, Electrodes]
 
