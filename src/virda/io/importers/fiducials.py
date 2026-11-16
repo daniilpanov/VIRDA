@@ -1,11 +1,8 @@
 """Import fiducials from JSON into typed models.
 
-Two callers live here:
-
-* :func:`import_fiducials` reads a project fiducials JSON (or an MNE-style
-  ``coordsystem.json``) into a :class:`Fiducials` model;
-* :func:`load_manual_fiducials` is the legacy entry point used by the old
-  pipeline runner; it wraps :func:`virda.io.fiducial_helpers.load_fiducials`.
+:func:`import_fiducials` reads a project fiducials JSON (or an MNE-style
+``coordsystem.json``); :func:`load_manual_fiducials` wraps the
+:mod:`virda.io.fiducial_helpers` reader for the manual input.
 """
 
 import json

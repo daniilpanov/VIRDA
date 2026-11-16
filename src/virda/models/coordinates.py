@@ -10,12 +10,10 @@ import numpy as np
 class CoordinateSystem(Enum):
     """The coordinate frames a point can be expressed in.
 
-    ``WORLD`` is the canonical frame: scanner surface-RAS millimetres, the
-    frame every mesh and every stored coordinate lives in. ``VOXEL`` is the
-    NIfTI voxel index space, reached through the volume affine. ``HEAD``
-    is the world translated so that the origin sits at the head centre of
-    mass (the axes stay world-aligned). ``FIDUCIALS`` is the anatomical
-    frame built from the three fiducials NAS, LPA and RPA.
+    ``WORLD`` is the canonical frame: scanner surface-RAS millimetres.
+    ``VOXEL`` is the NIfTI voxel index space, ``HEAD`` the world
+    translated to the head centre of mass and ``FIDUCIALS`` the
+    anatomical frame built from NAS, LPA and RPA.
     """
 
     WORLD = "world"

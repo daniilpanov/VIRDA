@@ -1,24 +1,11 @@
 """Coordinate-frame conversions between world, voxel, head and fiducials frames.
 
-World is the canonical frame of the whole application: scanner surface-RAS
-millimetres -- every mesh and every stored coordinate lives in it. The
-other frames are views of it:
-
-- ``voxel``: the NIfTI voxel index space, reached through the volume
-  affine;
-- ``head``: the world translated so the origin sits at the head centre of
-  mass (the centroid of the active scalp mesh). The axes stay
-  world-aligned;
-- ``fiducials``: an anatomical frame built from the three fiducials NAS,
-  LPA and RPA: the origin is NAS, the right axis is
-  ``normalize(RPA - LPA)``, the anterior axis is
-  ``normalize(NAS - midpoint(LPA, RPA))`` Gram-Schmidt-orthogonalized
-  against the right axis, and the up axis is ``right x anterior``. With
-  ``R`` the matrix whose columns are ``(right, anterior, up)``, a world
-  point ``p`` maps to ``R.T @ (p - origin)``.
-
-The fiducials that define the anatomical frame must not themselves be
-expressed in it -- they *are* its definition.
+World is the canonical frame: scanner surface-RAS millimetres. ``voxel``
+is the NIfTI voxel index space, reached through the volume affine;
+``head`` is the world translated to the head centre of mass; ``fiducials``
+is the anatomical frame built from NAS, LPA and RPA (origin NAS, right
+axis ``normalize(RPA - LPA)``, anterior axis ``normalize(NAS - mid(LPA,
+RPA))`` orthogonalized against it, up axis ``right x anterior``).
 """
 
 from collections.abc import Mapping

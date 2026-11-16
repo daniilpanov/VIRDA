@@ -1,8 +1,7 @@
 """Import a tabular (TSV/CSV) electrode table into plain arrays.
 
-Mirrors the column convention of the viewer's tabular electrode loader
-(``name``/``x``/``y``/``z``, delimiter auto-detection) so headless callers get
-the same result without importing ``virda_gui``.
+The column convention is ``name``/``x``/``y``/``z`` with an
+auto-detected delimiter.
 """
 
 import csv
