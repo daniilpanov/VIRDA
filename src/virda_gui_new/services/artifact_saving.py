@@ -103,18 +103,12 @@ def save_localization(
 ) -> None:
     """Write the step-4 outputs into ``localization/``.
 
-    ``fiducials.json`` holds the current fiducial table rows, so the
-    saved file matches what the popup shows and what the global store
-    holds. ``measurements.json`` follows the project measurements format
-    (electrode ids with their measured distances), built from the popup's
-    measurement table. The localized electrode coordinates become the
-    point CSVs the scanner reads back, in the batch pipeline's format:
-    scalp contact points to ``electrodes_scalp.csv`` and ESE body-center
-    points to ``electrodes_ese.csv``. A point CSV is written only when at
-    least one electrode carries that coordinate set (matching the
-    previous behavior of not writing the file at all); electrodes
-    without that coordinate set keep empty coordinate cells in the rows,
-    and the CSV reader skips such rows on load.
+    ``fiducials.json`` holds the current fiducial table rows and
+    ``measurements.json`` the measured distances. The localized electrode
+    coordinates become the point CSVs the scanner reads back: scalp
+    contact points to ``electrodes_scalp.csv`` and ESE body-center points
+    to ``electrodes_ese.csv``. A point CSV is written only when at least
+    one electrode carries that coordinate set.
     """
     if not fiducial_rows:
         raise ValueError("no fiducial rows; refusing to write an empty fiducials.json")

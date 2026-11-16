@@ -1,43 +1,11 @@
-"""User-driven export: thin orchestration over the :mod:`virda.io` exporters.
+"""Export the in-memory artifacts of a project to files.
 
-The GUI side resolves the export source from the live
-:class:`~virda_gui_new.services.steps_manager.StepsManager` (everything
-is in memory), converts coordinates into the requested target frame and
-wires the user-chosen path; every file format is written by a
-:mod:`virda.io.exporters` writer, never by this module.
-
-Sources:
-
-- ``measurements``: the step-4 context key ``measurements`` (an
-  :class:`~virda.models.electrode.Electrodes` model seeded from
-  ``measurements.json`` and mirrored there by the localization popup
-  after each successful run). An edited-but-not-yet-run popup table is
-  NOT exported: the export always writes the last successfully run or
-  seeded state.
-- ``electrodes``: the step-4 context key ``electrodes``. The export is
-  the FULL pipeline CSV written by
-  :func:`virda.io.exporters.electrodes.export_electrodes` (ids,
-  ESE/scalp coordinates, measured distances, residual, flag); the point
-  CSVs (``electrodes_scalp.csv`` / ``electrodes_ese.csv``) remain
-  step-run artifacts written by the localization step itself and are not
-  the export target.
-- ``fiducials``: the manager's global store (``fiducials``,
-  :class:`~virda_gui_new.dto.viewer3d.LabeledPoints`).
-- ``mesh``: the chosen mesh type's context value (``base`` -> step-1
-  ``scalp_surface``, ``postprocessed`` -> step-2 ``mesh``, ``ese`` ->
-  step-3 ``ese_mesh``).
-
-Coordinates: the canonical world values are never touched -- conversion
-happens on the exported copy only. Fiducials can be exported in the
-``head`` or ``world`` frame (world -> head is a centroid translation;
-the ``fiducials`` frame is deliberately not offered for fiducials
-themselves). Electrodes and meshes accept ``head`` and ``fiducials``
-too: the full frame transform of
-:mod:`virda.geometry` applies. Measured distances
-and residuals are frame-independent scalars and stay.
-
-Missing sources raise ``ValueError`` with a user-facing reason; export
-popups surface it in the error dialog.
+The source is read from the steps manager, the coordinates are converted
+into the requested target frame and the file is written by the matching
+``virda.io.exporters`` writer. ``measurements`` and ``electrodes`` come
+from the localization step's context, ``fiducials`` from the global
+store and the meshes from their own step; a missing source raises
+``ValueError``.
 """
 
 from enum import Enum

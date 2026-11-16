@@ -1,40 +1,12 @@
-"""Fixed three-row fiducial input grid for the localization popup.
+"""Fixed three-row grid of the fiducial positions.
 
-A fiducial set is always exactly the three anatomical points NAS, LPA
-and RPA (the canonical names the measurements files use), so the grid
-is a fixed 3-row table instead of a free row list: the name cells are
-read-only, only the XYZ cells are editable, and there are no add/remove
-row buttons. An "Empty" button clears the whole grid (all three rows
-become blank).
+The grid always holds the three anatomical points NAS, LPA and RPA: the
+name cells are read-only, only the XYZ cells are editable, and there
+are no add/remove row buttons. An "Empty" button clears the grid.
 
-Row naming: each slot keeps a fixed canonical name (``NAS``, ``LPA``,
-``RPA``) used for matching and for blank/manual rows. When rows are
-prefilled from an artifact, the artifact's own label is displayed and
-collected (e.g. ``NASION`` for the NAS slot), so the existing naming
-convention survives a save/load round trip unchanged.
-
-Internally the table keeps canonical world-coordinate rows (one
-``(3,)`` array or ``None`` per slot); the cells are a view of that
-state rendered in the current display frame (default ``world``; the
-popup selects ``head`` when available). Switching the display frame
-(:meth:`set_display_frame`) re-renders the set rows in the new frame
-and clears rows without valid coordinates (their values cannot be
-converted cell-wise); edits are read in the display frame and stored
-back as world, so :meth:`collect_fiducial_rows` always returns world
-coordinates in the fixed NAS/LPA/RPA order, skipping empty or
-incomplete rows -- a partially filled table still prefills and saves
-exactly like before. Editing one coordinate cell re-derives the whole
-row from the displayed texts, so displayed numbers are the truth for
-edited rows.
-
-Buttons: an "Empty" button that clears the whole grid (emitting
-:attr:`cleared` so the popup can sync the global store and the 3D
-scene) and a "From file" button that only emits :attr:`importRequested`
--- the popup owns the file dialog and the import service.
-
-Without a :class:`~virda.geometry.Geometry` service the table only
-supports the ``world`` display frame; any other frame falls back to
-``world`` rendering.
+The rows are kept in world coordinates and rendered in the current
+display frame; the collected rows come back in world coordinates and in
+the fixed NAS/LPA/RPA order.
 """
 
 from collections.abc import Mapping, Sequence
@@ -69,13 +41,11 @@ class FiducialsTable(QWidget):
     """Fixed NAS/LPA/RPA entry grid with world-coordinate rows.
 
     :meth:`set_rows` fills the slots whose names match the canonical
-    row ids case-insensitively (via the shared alias table); unmatched
-    names are ignored and unmatched slots are cleared. Any coordinate
-    edit, refill or clear emits :attr:`rowsChanged`; :meth:`clear_grid`
-    additionally emits :attr:`cleared` so the popup can sync the global
-    store and the 3D scene. :meth:`collect_fiducial_rows` returns only
-    complete rows (all three coordinates parsed as floats), in the
-    fixed NAS/LPA/RPA order.
+    row ids case-insensitively; unmatched names are ignored and
+    unmatched slots are cleared. Any coordinate edit, refill or clear
+    emits :attr:`rowsChanged`; :meth:`clear_grid` additionally emits
+    :attr:`cleared`. :meth:`collect_fiducial_rows` returns only the
+    complete rows, in the fixed NAS/LPA/RPA order.
     """
 
     rowsChanged = Signal()  # noqa: N815 - Qt signal API

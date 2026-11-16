@@ -309,7 +309,7 @@ class MeasurementsTable(QWidget):
         return missing[0] if len(missing) == 1 else None
 
     def _on_predict_clicked(self, row: int) -> None:
-        """Ask the popup to predict the missing measurement of a row."""
+        """Ask for the missing measurement of a row to be predicted."""
         electrode = self._electrode_id_of_row(row)
         missing = self._missing_fiducial(row)
         if not electrode or missing is None:

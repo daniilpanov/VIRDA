@@ -428,17 +428,13 @@ class BaseViewer3D(_SceneViewBase):
 class SceneViewer3D(_SceneViewBase):
     """Full VIRDA 3D viewer showing a whole scene at once.
 
-    A NIfTI volume, fiducials, scalp and ESE mesh groups with optional labeled
-    points, and a layers panel that toggles their visibility (with a Scalp <->
-    ESE surface switcher when both meshes are present). The mesh and
-    electrode toggles apply to whichever surface is active and survive both
-    a surface switch and a scene rebuild; the other checkboxes reset per
-    scene as before.
-
-    The viewer also picks points on the scalp surface:
-    :meth:`start_surface_picking` arms the picker for one fiducial slot and
-    :attr:`surfacePointPicked` reports the picked vertex. A click that moves
-    the camera is a rotation, not a pick.
+    A NIfTI volume, fiducials, scalp and ESE mesh groups with optional
+    labeled points, and a layers panel that toggles their visibility
+    (with a Scalp <-> ESE surface switcher when both meshes are
+    present). :meth:`start_surface_picking` arms the picker for one
+    fiducial slot and :attr:`surfacePointPicked` reports the picked point
+    in world millimetres. A click that moves the camera is a rotation,
+    not a pick.
     """
 
     surfacePointPicked = Signal(str, object)  # noqa: N815 - the slot and the point

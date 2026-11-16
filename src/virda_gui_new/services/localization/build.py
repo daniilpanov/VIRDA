@@ -20,9 +20,8 @@ _EMPTY_NAME = "Fiducial name must be non-empty."
 def labeled_points_from_rows(rows: FiducialRows) -> LabeledPoints:
     """Bundle ``(name, xyz)`` fiducial rows into labeled points.
 
-    Rows come from the same table :func:`build_fiducials` consumes, so
-    the points match what the popup shows; an empty row list yields an
-    empty point set.
+    Rows come from the same table :func:`build_fiducials` consumes; an
+    empty row list yields an empty point set.
     """
     points = np.asarray([xyz for _name, xyz in rows], dtype=np.float64).reshape(-1, 3)
     labels = tuple(name for name, _xyz in rows)
@@ -174,9 +173,7 @@ def _point_set(items: list[tuple[str, np.ndarray]]) -> LabeledPoints:
 def measurement_table_from_model(electrodes: Electrodes) -> MeasurementTable:
     """Build the electrode -> fiducial -> distance table from a model.
 
-    The inverse of :func:`build_electrodes`: the stored measurements are
-    shown in the popup grid again, so a reopened project continues with
-    the table the user last edited.
+    The inverse of :func:`build_electrodes`.
     """
     table: MeasurementTable = {}
     for electrode in electrodes.items:

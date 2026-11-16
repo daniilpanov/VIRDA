@@ -63,8 +63,8 @@ class LiveLocalizationRunner(QObject):
     ) -> None:
         """Schedule one debounced localization run for this snapshot.
 
-        The electrode set may be a subset of the table: the popup
-        recomputes a single edited electrode on its own. The options
+        The electrode set may be a subset of the table, so a single
+        edited electrode can be recomputed on its own. The options
         travel with the run, so a changed setting takes effect at once.
         """
         self._set_busy(True)

@@ -1,13 +1,10 @@
 """Predict the missing measurement of an electrode from two measured ones.
 
-Two measured distances to two known fiducials leave the electrode on a
-circle: the intersection of the two spheres around the fiducials. The
-mesh surface cuts that circle into a handful of points -- typically two,
-on opposite sides of the head -- and the "electrode side" of the
-fiducial plane tells which of them is the electrode.
-
-The measurement of the third fiducial then follows from the position:
-it is the distance from that position to the third fiducial.
+Two measured distances leave the electrode on a circle: the intersection
+of the two spheres around the fiducials. The mesh surface cuts that
+circle into a few points -- typically two, on opposite sides of the head
+-- and the electrode side of the fiducial plane tells which of them is
+the electrode. The third measurement then follows from the position.
 """
 
 import math
@@ -44,11 +41,10 @@ def predict_measurement(
     """Predict the distance to ``missing`` from the two measured distances.
 
     ``measured`` holds the two known distances (by fiducial id), the
-    fiducials their positions, and ``mesh`` the surface the electrode
-    lies on. ``approximate`` snaps the position to the closest mesh
-    vertex -- the accuracy the mesh density controls -- while the exact
-    intersection point is kept otherwise. The reported position is
-    expressed in ``system``.
+    fiducials their positions and ``mesh`` the surface the electrode lies
+    on. ``approximate`` snaps the position to the closest mesh vertex --
+    the accuracy the mesh density controls -- while the exact
+    intersection point is kept otherwise.
     """
     first, second = _measured_ids(measured, fiducials, missing)
     known = _world_points(fiducials, context)

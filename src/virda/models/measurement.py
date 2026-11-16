@@ -10,15 +10,11 @@ class MeasurementPrediction:
     """The predicted electrode position and the missing measurement.
 
     ``point`` is the electrode position in the requested frame and
-    ``distance_mm`` the predicted distance to the missing fiducial. Both
+    ``distance_mm`` the predicted distance to the missing fiducial; both
     are ``None`` when the surface does not meet the circle of the two
-    measured distances.
-
-    ``ambiguous`` marks a case where more than one candidate survived the
-    electrode-side selection; the first one (the closest to the head
-    centre) is the reported one. ``residual_mm`` is the RMS of the two
-    measured-distance errors at the reported position -- it is zero for an
-    exact intersection and shows what the vertex approximation costs.
+    measured distances. ``ambiguous`` marks more than one surviving
+    candidate, and ``residual_mm`` is the RMS of the two measured-distance
+    errors at the reported position.
     """
 
     point: Point | None

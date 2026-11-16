@@ -135,26 +135,16 @@ def localization_options_payload(options: Stage3Config) -> dict[str, Any]:
 
 
 class LocalizationPopupBase(StepPopupBase):
-    """Base popup for the live localization step.
+    """Base of the live localization step.
 
-    The Run button is hidden: edits re-read the table hooks
-    (``collect_fiducial_rows`` / ``collect_measurement_table``) and, when
-    enough inputs exist, submit a debounced background run through a
-    :class:`LiveLocalizationRunner`; results land in the step-4 context
-    as ``electrodes``, the current fiducial table rows are mirrored
-    into the manager's global ``fiducials`` store and the current
-    measurement table into its global ``measurements`` store (both
-    ready models for the export popups). Geometry comes from the step-3
-    context (with a step-2 mesh or step-1 scalp surface fallback) at
-    construction; without it the hint shows the precondition and no
-    runner is created. Status text flows through the base hint label and
-    the ``on_status`` hook for subclasses.
-
-    The measurements drive the recompute: a changed row recomputes that
-    electrode alone, a changed electrode set recomputes all of them. The
-    tables stay editable at all times -- only the computation waits for
-    the fiducials -- and the "Re-localization" button triggers a full
-    recompute of the current tables.
+    The Run button is hidden: edits re-read the table hooks and, when
+    enough inputs exist, submit a debounced background run; the results
+    land in the step-4 context as ``electrodes``, the fiducial rows in
+    the global ``fiducials`` store and the measurements in the global
+    ``measurements`` store. A changed row recomputes that electrode
+    alone, a changed electrode set recomputes all of them, and the
+    "Re-localization" button triggers a full recompute. The step runs
+    when the manager holds its inputs; the hint names the ones it misses.
     """
 
     def __init__(
@@ -542,15 +532,11 @@ class LocalizationPopupBase(StepPopupBase):
     def _mirror_measurements_into_store(self) -> None:
         """Mirror the current measurement table into the global store.
 
-        Like the fiducial table (mirrored into the global store), the
-        measurement table lands in the manager's global store as an
-        :class:`Electrodes` model (``measurements``), so the export
-        popups can write the last successfully run state without
-        touching disk. An invalid table (empty or duplicate electrode id)
-        is a hint, not a failure: the electrodes result is kept and
-        export falls back to the seeded or last stored state. An
-        unchanged store is left alone, so the pull-model listeners are
-        not re-triggered.
+        The table lands in the manager's global store as an
+        :class:`Electrodes` model (``measurements``). An invalid table
+        (empty or duplicate electrode id) is a hint, not a failure: the
+        electrodes result is kept. An unchanged store is left alone, so
+        the pull-model listeners are not re-triggered.
         """
         try:
             measurements = build_electrodes(self.collect_measurement_table())
@@ -598,10 +584,10 @@ class LocalizationPopupBase(StepPopupBase):
         """Drop the global fiducials entry so the scene loses the points.
 
         The table's Empty action clears the entry; the pull-model
-        listeners (MainWindow scene rebuild) re-read the store after the
-        write, so the rebuilt scene no longer carries fiducial points.
-        An entry that is already gone is left alone, so the listeners
-        are not re-triggered.
+        listeners re-read the store after the write, so the rebuilt
+        scene no longer carries fiducial points. An entry that is
+        already gone is left alone, so the listeners are not
+        re-triggered.
         """
         if self._manager.get_global_item(FIDUCIALS_KEY) is None:
             return

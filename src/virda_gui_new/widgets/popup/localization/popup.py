@@ -78,14 +78,11 @@ _MEASUREMENTS_IMPORT_TITLE = "Import measurements"
 class LocalizationPopup(LocalizationPopupBase):
     """Localization step editor: tables drive the debounced live runs.
 
-    The form stacks the editable fiducial and measurement grids over
-    the read-only electrode grid; a coordinate-frame selector (head /
-    world / fiducials) sits above the fiducial grid and the electrode
-    grid and only changes the displayed numbers -- the canonical rows
-    and the store stay world. Each edit in either input table
-    re-validates the whole snapshot and schedules a run; localized
-    results are shown in the electrode grid and stored in the step-4
-    context by the base.
+    The form stacks the editable fiducial and measurement grids over the
+    read-only electrode grid; a coordinate-frame selector above the grids
+    only changes the displayed numbers -- the canonical rows and the
+    store stay world. Each edit re-validates the snapshot and schedules
+    a run.
     """
 
     def __init__(

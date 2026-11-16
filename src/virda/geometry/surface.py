@@ -132,11 +132,9 @@ def circle_surface_intersections(
     """The points where a circle meets the mesh surface.
 
     The circle lies in the plane through ``center`` with the given
-    ``normal``. Every triangle is clipped by that plane into a segment
-    (a triangle lying in the plane keeps its edges), and the segments are
-    intersected with the circle.
-
-    Returns the points and the index of the face each of them lies on.
+    ``normal``; every triangle is clipped by that plane into a segment
+    and the segments are intersected with the circle. Returns the points
+    and the index of the face each of them lies on.
     """
     vertices = np.asarray(mesh.vertices, dtype=np.float64)
     faces = np.asarray(mesh.faces, dtype=np.int64)
@@ -157,10 +155,8 @@ def _plane_segments(
 
     Only the triangles the plane crosses are clipped, so the cost follows
     the neighbourhood of the circle instead of the size of the mesh.
-
     Returns the segment endpoints ``(S, 2, 3)`` and the index of the
-    triangle each segment belongs to. A triangle lying in the plane
-    keeps its three edges instead of a single segment.
+    triangle each segment belongs to.
     """
     scale = float(np.linalg.norm(normal)) or 1.0
     unit = normal / scale

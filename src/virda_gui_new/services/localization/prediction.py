@@ -1,9 +1,8 @@
-"""Predict the missing measurements of the localization popup.
+"""Predict the missing measurements of the localization step.
 
 Two measured distances to two fiducials put the electrode on a circle;
 the ESE surface cuts that circle into the possible electrode positions
-and the third distance follows from the position. The popup uses this
-to fill the empty cells of its measurement grid.
+and the third distance follows from the position.
 """
 
 from virda.geometry import Geometry, match_fiducial_name
