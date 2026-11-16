@@ -157,6 +157,29 @@ The coordinate tables (`electrodes_scalp.csv`, `electrodes_ese.csv`) carry colum
 (`is_localized == false`).  `flagged` (`yes`/`no`) marks electrodes whose
 residual exceeds `residual_threshold_mm`.
 
+## Scanner rules
+
+Scanner rules (the GUI's single source of truth): rules run in order and
+the first match fills its slot; every variant name is a first-class rule
+with no canonical-folder preference and no fallbacks. Most names are
+searched anywhere in the project (`fiducials.json`, `measurements.json`,
+`coordsystem.json`, `pipeline_config.json`, `base_mesh.ply`,
+`final_mesh.ply`, `ese_mesh.ply`, `electrodes_scalp.csv`,
+`electrodes_ese.csv`, `head_mask.nii.gz`, `*.nii.gz` before `*.nii`);
+the head mask is excluded from the NIfTI globs by name; `mesh.ply`
+counts as the ESE mesh only under `ese/` and outranks an
+`ese_mesh.ply` there. When several files match one rule, the first in
+sorted path order wins. Dot-directories are never searched. Precedence
+between different artifact kinds: `fiducials.json` wins over
+`coordsystem.json` as the fiducial input (a lone `coordsystem.json` is
+converted through its MRI fiducial coordinates), and `final_mesh.ply`
+wins over `base_mesh.ply` as the scene and postprocessing mesh.
+
+Electrode point files are CSV only: the GUI-invented JSON point-row
+files (`electrodes_scalp.json` / `electrodes_ese.json`) are no longer
+recognized, so projects carrying only those files do not seed electrode
+points (no legacy support).
+
 ## `logs/`
 
 `stageN.log` (`stage1.log`, `stage2.log` and `stage3.log`) — pipeline logs:
