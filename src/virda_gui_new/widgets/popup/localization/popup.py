@@ -35,6 +35,7 @@ from virda_gui_new.services.localization import (
     MeasurementTable,
     build_fiducials,
     electrodes_from_points,
+    fiducial_surface_status,
     measurement_table_from_model,
     predict_missing_measurement,
     predict_missing_measurements,
@@ -98,6 +99,7 @@ class LocalizationPopup(LocalizationPopupBase):
         super().__init__(step, manager, parent, project=project)
         # The geometry is known only after the base built the form.
         self._update_prediction_state()
+        self._update_surface_status()
         # A prediction is a heavy computation: it runs on a worker
         # thread, so the window stays responsive while it is computed.
         self._prediction_runner = TaskRunner(self)
@@ -471,6 +473,19 @@ class LocalizationPopup(LocalizationPopupBase):
             return
         self._measurements_table.set_prediction_state(True)
 
+    def _update_surface_status(self) -> None:
+        """Show how far the fiducials are from the scalp surface."""
+        if self._scalp_mesh is None:
+            self._fiducials_table.set_surface_status({})
+            return
+        status = fiducial_surface_status(
+            self.collect_fiducial_rows(),
+            self._scalp_mesh,
+            self._coordinates,
+            self._options.fiducial_tolerance_mm,
+        )
+        self._fiducials_table.set_surface_status(status)
+
     def _prediction_fingerprint(self) -> PredictionFingerprint:
         """The inputs the predicted measurements depend on.
 
@@ -535,10 +550,16 @@ class LocalizationPopup(LocalizationPopupBase):
         return _Predictions(predictions=predictions, failed=failed, reason=reason)
 
     def _on_inputs_changed(self) -> None:
-        """Schedule the localization and the stale-prediction check."""
+        """Schedule the localization, the surface check and the stale check."""
         super()._on_inputs_changed()
         self._update_prediction_state()
+        self._update_surface_status()
         self._stale_timer.start()
+
+    def _on_options_changed(self, *_args: object) -> None:
+        """Store the settings and refresh the surface check."""
+        super()._on_options_changed()
+        self._update_surface_status()
 
     def _ask_json_path(self, title: str) -> Path | None:
         """One JSON file chosen in a dialog, or ``None`` when cancelled."""

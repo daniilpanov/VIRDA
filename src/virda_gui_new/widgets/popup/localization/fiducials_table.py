@@ -37,7 +37,7 @@ supports the ``world`` display frame; any other frame falls back to
 ``world`` rendering.
 """
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 import numpy as np
 from PySide6.QtCore import Qt, Signal
@@ -53,9 +53,13 @@ from PySide6.QtWidgets import (
 from virda.geometry import Geometry, match_fiducial_name
 from virda.models.coordinates import CoordinateSystem
 from virda.models.fiducial import SLOT_IDS
-from virda_gui_new.services.localization import FiducialRows
+from virda_gui_new.services.localization import FiducialRows, SurfaceStatus
 
-_COLUMNS = ("Name", "X", "Y", "Z")
+#: The status column (leftmost), the name and the coordinates.
+_COLUMNS = ("", "Name", "X", "Y", "Z")
+
+#: The dot that marks a fiducial off the scalp surface.
+_OFF_SURFACE_DOT = "\u25cf"
 
 
 class FiducialsTable(QWidget):
@@ -81,6 +85,7 @@ class FiducialsTable(QWidget):
         self._frame = CoordinateSystem.WORLD
         self._names = [str(slot) for slot in SLOT_IDS]
         self._world: list[np.ndarray | None] = [None] * len(SLOT_IDS)
+        self._status: dict[str, SurfaceStatus] = {}
 
         self._table = QTableWidget(len(SLOT_IDS), len(_COLUMNS), self)
         self._table.setHorizontalHeaderLabels(list(_COLUMNS))
@@ -185,7 +190,7 @@ class FiducialsTable(QWidget):
     def _row_xyz(self, row: int) -> np.ndarray | None:
         """The row's displayed coordinates as ``(3,)``, or ``None``."""
         values = []
-        for column in (1, 2, 3):
+        for column in (2, 3, 4):
             try:
                 values.append(float(self._text(row, column)))
             except ValueError:
@@ -198,11 +203,42 @@ class FiducialsTable(QWidget):
         table.blockSignals(True)
         for row, (name, xyz) in enumerate(zip(self._names, self._world, strict=True)):
             cells = (name, *self._xyz_texts(None if xyz is None else self._display(xyz)))
-            for column, text in enumerate(cells):
+            for column, text in enumerate(cells, start=1):
                 item = QTableWidgetItem(text)
-                if column == 0:
+                if column == 1:
                     item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 table.setItem(row, column, item)
+            self._render_status(row, name)
+        table.blockSignals(False)
+
+    def _render_status(self, row: int, name: str) -> None:
+        """Fill the status cell of one row: the dot and its tooltip."""
+        status = self._status.get(name)
+        item = QTableWidgetItem()
+        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        if status is None:
+            item.setToolTip("")
+            self._table.setItem(row, 0, item)
+            return
+        if not status.on_surface:
+            item.setText(_OFF_SURFACE_DOT)
+            item.setForeground(Qt.GlobalColor.red)
+        item.setToolTip(f"{name} is {status.distance_mm:.1f} mm from the scalp surface")
+        self._table.setItem(row, 0, item)
+
+    def set_surface_status(self, status: Mapping[str, SurfaceStatus]) -> None:
+        """Show how far every fiducial is from the scalp surface.
+
+        A fiducial that is not on the surface gets a red dot; the
+        tooltip of the status cell always carries the distance. The
+        status is the popup's own display: it changes no row, so the
+        signals of the table stay silent.
+        """
+        self._status = dict(status)
+        table = self._table
+        table.blockSignals(True)
+        for row, name in enumerate(self._names):
+            self._render_status(row, name)
         table.blockSignals(False)
 
     @staticmethod

@@ -5,7 +5,14 @@ from typing import Any
 
 import numpy as np
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QCheckBox, QDoubleSpinBox, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QDoubleSpinBox,
+    QLabel,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from virda.models.electrode import Electrode, Electrodes
 from virda.models.mesh import Mesh, Normals
@@ -228,12 +235,20 @@ class LocalizationPopupBase(StepPopupBase):
         self._threshold_spin.setValue(self._options.residual_threshold_mm)
         layout.addWidget(self._threshold_spin)
 
+        layout.addWidget(QLabel("Fiducial tolerance (mm)"))
+        self._tolerance_spin = QDoubleSpinBox(self)
+        self._tolerance_spin.setRange(0.0, 50.0)
+        self._tolerance_spin.setDecimals(2)
+        self._tolerance_spin.setValue(self._options.fiducial_tolerance_mm)
+        layout.addWidget(self._tolerance_spin)
+
         self._relocalize_button = QPushButton(_RELOCALIZE, self)
         self._relocalize_button.clicked.connect(self._re_localize)
         layout.addWidget(self._relocalize_button)
 
         self._calibrate_box.toggled.connect(self._on_options_changed)
         self._threshold_spin.valueChanged.connect(self._on_options_changed)
+        self._tolerance_spin.valueChanged.connect(self._on_options_changed)
 
     def collect_fiducial_rows(self) -> FiducialRows:
         """Hook: return the current ``(name, xyz)`` fiducial rows."""
@@ -393,6 +408,7 @@ class LocalizationPopupBase(StepPopupBase):
         self._options = Stage3Config(
             calibrate_ese_offset=self._calibrate_box.isChecked(),
             residual_threshold_mm=self._threshold_spin.value(),
+            fiducial_tolerance_mm=self._tolerance_spin.value(),
         )
         self._save_config(localization_options_payload(self._options))
 

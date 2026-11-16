@@ -14,6 +14,7 @@ from virda.models.electrode import Electrode, Electrodes
 from virda.models.mesh import Mesh
 from virda_gui_new.dto.steps import STEPS
 from virda_gui_new.dto.viewer3d import LabeledPoints
+from virda_gui_new.services.localization import SurfaceStatus
 from virda_gui_new.services.steps_manager import StepsManager
 from virda_gui_new.widgets.popup.localization.electrodes_table import ElectrodesTable
 from virda_gui_new.widgets.popup.localization.fiducials_table import FiducialsTable
@@ -64,13 +65,13 @@ def test_fiducials_table_has_three_fixed_named_rows(qapp) -> None:
     widget = FiducialsTable()
 
     assert widget._table.rowCount() == 3
-    assert [cast("QTableWidgetItem", widget._table.item(row, 0)).text() for row in range(3)] == [
+    assert [cast("QTableWidgetItem", widget._table.item(row, 1)).text() for row in range(3)] == [
         "NAS",
         "LPA",
         "RPA",
     ]
     for row in range(3):
-        name_item = widget._table.item(row, 0)
+        name_item = widget._table.item(row, 1)
         assert not (cast("QTableWidgetItem", name_item).flags() & Qt.ItemFlag.ItemIsEditable)
     assert widget.collect_fiducial_rows() == []  # coordinates blank
     buttons = widget.findChildren(QPushButton)
@@ -98,7 +99,7 @@ def test_fiducials_table_collects_complete_rows_in_fixed_order(qapp) -> None:
         ("RPA", "-1", "  ", "0"),  # incomplete row -> skipped
     ]
     for row, cells in enumerate(rows):
-        for column, text in enumerate(cells[1:], start=1):
+        for column, text in enumerate(cells[1:], start=2):
             widget._table.setItem(row, column, _item(text))
 
     collected = widget.collect_fiducial_rows()
@@ -128,11 +129,11 @@ def test_fiducials_table_set_rows_matches_fixed_slots(qapp) -> None:
     assert collected[0][1].tolist() == [0.0, 1.0, 2.0]
     assert collected[1][1].tolist() == [-1.0, 0.0, 0.0]
     # The artifact label is displayed and kept for the round trip.
-    assert cast("QTableWidgetItem", widget._table.item(0, 0)).text() == "Nasion"
-    assert cast("QTableWidgetItem", widget._table.item(2, 1)).text() == ""  # unmatched slot cleared
+    assert cast("QTableWidgetItem", widget._table.item(0, 1)).text() == "Nasion"
+    assert cast("QTableWidgetItem", widget._table.item(2, 2)).text() == ""  # unmatched slot cleared
 
     # A prefilled row is editable like a manually entered one.
-    cast("QTableWidgetItem", widget._table.item(0, 1)).setText("5")
+    cast("QTableWidgetItem", widget._table.item(0, 2)).setText("5")
     assert widget.collect_fiducial_rows()[0][1].tolist() == [5.0, 1.0, 2.0]
 
 
@@ -152,7 +153,7 @@ def test_fiducials_table_set_rows_clears_absent_slots(qapp) -> None:
     assert [name for name, _xyz in collected] == ["RPA"]
     assert collected[0][1].tolist() == [7.0, 7.0, 7.0]
     assert (
-        cast("QTableWidgetItem", widget._table.item(0, 0)).text() == "NAS"
+        cast("QTableWidgetItem", widget._table.item(0, 1)).text() == "NAS"
     )  # name back to canonical
 
 
@@ -175,11 +176,47 @@ def test_fiducials_table_empty_clears_grid_and_signals(qapp) -> None:
     assert widget.collect_fiducial_rows() == []
     for row in range(3):
         assert (
-            cast("QTableWidgetItem", widget._table.item(row, 0)).text()
+            cast("QTableWidgetItem", widget._table.item(row, 1)).text()
             == ("NAS", "LPA", "RPA")[row]
         )
-        for column in (1, 2, 3):
+        for column in (2, 3, 4):
             assert cast("QTableWidgetItem", widget._table.item(row, column)).text() == ""
+
+
+def test_fiducials_table_flags_a_fiducial_off_the_surface(qapp) -> None:
+    widget = FiducialsTable()
+    widget.set_rows([("NAS", cast("Any", np.array([0.0, 0.0, 0.0])))])
+
+    widget.set_surface_status({"NAS": SurfaceStatus(distance_mm=4.2, on_surface=False)})
+
+    status = widget._table.item(0, 0)
+    assert status is not None
+    assert status.text() == "●"
+    assert "4.2 mm" in status.toolTip()
+
+
+def test_fiducials_table_status_is_quiet_within_the_tolerance(qapp) -> None:
+    widget = FiducialsTable()
+    widget.set_rows([("NAS", cast("Any", np.array([0.0, 0.0, 0.0])))])
+
+    widget.set_surface_status({"NAS": SurfaceStatus(distance_mm=0.4, on_surface=True)})
+
+    status = widget._table.item(0, 0)
+    assert status is not None
+    assert status.text() == ""
+    assert "0.4 mm" in status.toolTip()
+
+
+def test_fiducials_table_status_reports_no_row_change(qapp) -> None:
+    """The status of a row is the popup's own display, not an edit."""
+    widget = FiducialsTable()
+    widget.set_rows([("NAS", cast("Any", np.array([0.0, 0.0, 0.0])))])
+    events: list[str] = []
+    widget.rowsChanged.connect(lambda: events.append("rows"))
+
+    widget.set_surface_status({"NAS": SurfaceStatus(distance_mm=4.2, on_surface=False)})
+
+    assert events == []
 
 
 def test_measurements_table_last_row_wins(qapp) -> None:
@@ -423,7 +460,7 @@ def test_fiducials_table_head_frame_display_keeps_world_canonical(qapp) -> None:
 
     # Displayed values shift by the head origin; collected rows do not.
     head_display = [
-        cast("QTableWidgetItem", widget._table.item(0, column)).text() for column in (1, 2, 3)
+        cast("QTableWidgetItem", widget._table.item(0, column)).text() for column in (2, 3, 4)
     ]
     assert head_display == ["-7.5", "92.5", "-7.5"]
     assert widget.collect_fiducial_rows()[0][1].tolist() == [0.0, 100.0, 0.0]
@@ -432,7 +469,7 @@ def test_fiducials_table_head_frame_display_keeps_world_canonical(qapp) -> None:
     widget.set_display_frame(CoordinateSystem.WORLD)
 
     assert [
-        cast("QTableWidgetItem", widget._table.item(0, column)).text() for column in (1, 2, 3)
+        cast("QTableWidgetItem", widget._table.item(0, column)).text() for column in (2, 3, 4)
     ] == ["0", "100", "0"]
     assert widget.collect_fiducial_rows()[0][1].tolist() == [0.0, 100.0, 0.0]
 
@@ -441,13 +478,13 @@ def test_fiducials_table_edits_in_head_frame_store_world(qapp) -> None:
     widget = FiducialsTable(_service())
     widget.set_display_frame(CoordinateSystem.HEAD)
 
-    for column, text in enumerate(("1", "2", "3"), start=1):
+    for column, text in enumerate(("1", "2", "3"), start=2):
         widget._table.setItem(0, column, _item(text))
 
     collected = widget.collect_fiducial_rows()
     assert collected[0][1].tolist() == [1.0 + 7.5, 2.0 + 7.5, 3.0 + 7.5]
     assert (
-        cast("QTableWidgetItem", widget._table.item(0, 1)).text() == "1"
+        cast("QTableWidgetItem", widget._table.item(0, 2)).text() == "1"
     )  # display untouched while typing
 
 
@@ -460,10 +497,10 @@ def test_fiducials_table_fiducials_frame_shows_nas_at_the_origin(qapp) -> None:
     widget.set_display_frame(CoordinateSystem.FIDUCIALS)
 
     assert [
-        cast("QTableWidgetItem", widget._table.item(0, column)).text() for column in (1, 2, 3)
+        cast("QTableWidgetItem", widget._table.item(0, column)).text() for column in (2, 3, 4)
     ] == ["0", "0", "0"]
     assert [
-        cast("QTableWidgetItem", widget._table.item(1, column)).text() for column in (1, 2, 3)
+        cast("QTableWidgetItem", widget._table.item(1, column)).text() for column in (2, 3, 4)
     ] == ["-70", "-100", "0"]
     # Canonical rows stay world.
     assert widget.collect_fiducial_rows()[0][1].tolist() == [0.0, 100.0, 0.0]
@@ -476,21 +513,21 @@ def test_fiducials_table_unavailable_frame_falls_back_to_world(qapp) -> None:
     widget.set_display_frame(CoordinateSystem.FIDUCIALS)
 
     assert widget._frame is CoordinateSystem.WORLD
-    assert cast("QTableWidgetItem", widget._table.item(0, 1)).text() == "0"
+    assert cast("QTableWidgetItem", widget._table.item(0, 2)).text() == "0"
 
 
 def test_fiducials_table_frame_change_clears_incomplete_rows(qapp) -> None:
     widget = FiducialsTable(_service())
     widget.set_rows([("NASION", _WORLD_FIDUCIALS[0]), ("LPA", _WORLD_FIDUCIALS[1])])
-    cast("QTableWidgetItem", widget._table.item(0, 2)).setText("")  # NAS row becomes incomplete
+    cast("QTableWidgetItem", widget._table.item(0, 3)).setText("")  # NAS row becomes incomplete
 
     widget.set_display_frame(CoordinateSystem.HEAD)
 
     # Incomplete rows cannot be converted cell-wise; the frame change blanks them.
     assert [name for name, _xyz in widget.collect_fiducial_rows()] == ["LPA"]
-    assert cast("QTableWidgetItem", widget._table.item(0, 1)).text() == ""
+    assert cast("QTableWidgetItem", widget._table.item(0, 2)).text() == ""
     # Complete rows keep their values across the switch.
-    assert cast("QTableWidgetItem", widget._table.item(1, 1)).text() == f"{-70.0 - 7.5:g}"
+    assert cast("QTableWidgetItem", widget._table.item(1, 2)).text() == f"{-70.0 - 7.5:g}"
 
 
 def test_electrodes_table_renders_in_display_frame(qapp) -> None:

@@ -458,7 +458,7 @@ def test_concrete_popup_prefills_fiducials_from_store(qapp, popups) -> None:
     assert [name for name, _xyz in rows] == ["Nasion", "LPA"]
     assert rows[0][1].tolist() == [0.0, 0.0, 1.0]
     assert rows[1][1].tolist() == [1.0, 0.0, 0.0]
-    name_item = popup._fiducials_table._table.item(0, 0)
+    name_item = popup._fiducials_table._table.item(0, 1)
     assert name_item is not None
     assert name_item.text() == "Nasion"
 
@@ -713,7 +713,7 @@ def test_localized_save_is_world_canonical_in_head_display(
 
     assert popup._fiducials_frames.frame() == CoordinateSystem.HEAD
     assert [
-        cast("QTableWidgetItem", popup._fiducials_table._table.item(0, c)).text() for c in (1, 2, 3)
+        cast("QTableWidgetItem", popup._fiducials_table._table.item(0, c)).text() for c in (2, 3, 4)
     ] == [
         "-7.5",
         "92.5",
@@ -759,7 +759,7 @@ def test_concrete_popup_blocked_states(qapp, popups, monkeypatch) -> None:
 
     assert popup._hint_label.text() == "Blocked: not enough fiducials (need 3)."
     for row, coords in enumerate(("0 0 1", "1 0 0", "-1 0 0")):
-        for column, text in enumerate(coords.split(), start=1):
+        for column, text in enumerate(coords.split(), start=2):
             popup._fiducials_table._table.setItem(row, column, QTableWidgetItem(text))
     assert popup._hint_label.text() == "Blocked: no measurements."
     popup._measurements_table.add_row()
@@ -783,7 +783,7 @@ def test_concrete_popup_live_flow(qapp, popups, monkeypatch) -> None:
     popups.append(popup)
 
     for row, coords in enumerate(("0 0 1", "1 0 0", "-1 0 0")):
-        for column, text in enumerate(coords.split(), start=1):
+        for column, text in enumerate(coords.split(), start=2):
             popup._fiducials_table._table.setItem(row, column, QTableWidgetItem(text))
     popup._measurements_table.add_row()
     popup._measurements_table._table.setItem(0, 0, QTableWidgetItem("A"))
