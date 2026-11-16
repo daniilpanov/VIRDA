@@ -161,6 +161,19 @@ def test_collect_scene_sources_with_ese_mesh(project: Path) -> None:
     assert sources.scalp is not sources.ese
 
 
+def test_collect_scene_sources_falls_back_to_base_mesh(project: Path) -> None:
+    """Without a final mesh the raw base mesh is shown as the scalp."""
+    base = project / "scalp"
+    base.mkdir(exist_ok=True)
+    _write_nifti(project / "input" / "a.nii")
+    _write_ply(base / "base_mesh.ply")
+
+    sources = collect_scene_sources(_make_manager(project))
+
+    assert _present(sources) == {"nifti", "scalp"}
+    assert isinstance(sources.scalp, Mesh)
+
+
 def test_collect_scene_sources_with_localization_artifacts(project: Path) -> None:
     _write_full_chain(project)
     _write_fiducials(project / "input" / "fiducials.json")

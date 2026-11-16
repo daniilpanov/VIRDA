@@ -7,11 +7,12 @@ Loading paths stays with later commits; loaded objects are runnable
 immediately. Keys written per step:
 
 - step 0 (NIfTI import): ``volume``
-- step 1 (Base mesh): ``scalp_surface``
-- step 2 (Mesh postprocessing): ``mesh`` (the same mesh artifact,
-  which the pipeline overwrites in place)
-- step 3 (ESE mesh): ``ese_mesh``; ``normals`` is never written
-  because normals are in-memory only
+- step 1 (Base mesh): ``scalp_surface`` (the postprocessed mesh, else
+  the raw base mesh)
+- step 2 (Mesh postprocessing): ``mesh`` (the postprocessed mesh
+  artifact, which the pipeline overwrites in place)
+- step 3 (ESE mesh): ``ese_mesh``; ``normals`` when the project
+  yields them (they are estimated from the scalp mesh at open)
 - step 4 (Localization): ``scalp_points``; ``ese_points``, each when
   present
 
@@ -33,7 +34,9 @@ are stored before the walk, so they survive a gap.
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from virda.models.mesh import Mesh
+import numpy as np
+
+from virda.models.mesh import Mesh, Normals
 from virda.models.mri_volume import MRIVolume
 from virda_gui_new.dto.steps import FIDUCIALS_KEY, STEPS
 from virda_gui_new.dto.viewer3d import LabeledPoints
@@ -68,6 +71,12 @@ class StepChainIncompleteError(ValueError):
         )
 
 
+def _normals_of(artifacts: ProjectArtifacts | LoadedArtifacts) -> Normals | None:
+    """The normals of a loaded project; a scanned one holds no normals."""
+    value = getattr(artifacts, "normals", None)
+    return value if isinstance(value, np.ndarray) else None
+
+
 def seed_steps_from_artifacts(
     manager: StepsManager,
     artifacts: ProjectArtifacts | LoadedArtifacts,
@@ -84,18 +93,26 @@ def seed_steps_from_artifacts(
     not finished: the manager holds the pipeline up to that gap, and
     the artifacts of the later steps stay unloaded.
     """
-    writes: dict[int, dict[str, Path | MRIVolume | Mesh | LabeledPoints]] = {}
+    writes: dict[int, dict[str, Path | MRIVolume | Mesh | LabeledPoints | Normals]] = {}
 
     if artifacts.nifti is not None:
         writes[0] = {"volume": artifacts.nifti}
 
-    if artifacts.scalp_mesh is not None:
-        writes[1] = {"scalp_surface": artifacts.scalp_mesh}
-
-        writes[2] = {"mesh": artifacts.scalp_mesh}
+    # Precedence: the postprocessed final mesh wins over the raw base
+    # mesh. The final mesh feeds steps 1 and 2 (the step-2 mesh is what
+    # the pipeline overwrites in place); a lone base mesh only seeds the
+    # step-1 scalp surface, from which the scene rules pick it up.
+    scalp_mesh = artifacts.scalp_mesh if artifacts.scalp_mesh is not None else artifacts.base_mesh
+    if scalp_mesh is not None:
+        writes[1] = {"scalp_surface": scalp_mesh}
+        if artifacts.scalp_mesh is not None:
+            writes[2] = {"mesh": artifacts.scalp_mesh}
 
     if artifacts.ese_mesh is not None:
         writes[3] = {"ese_mesh": artifacts.ese_mesh}
+        normals = _normals_of(artifacts)
+        if normals is not None:
+            writes[3]["normals"] = normals
 
     if artifacts.scalp_points is not None or artifacts.ese_points is not None:
         writes[4] = {}
