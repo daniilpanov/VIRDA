@@ -12,6 +12,9 @@ from virda.models.fiducial import FiducialType
 from virda.models.measurement import MeasurementPrediction
 from virda.models.mesh import Mesh
 
+#: How many mesh probes stay alive in one geometry service.
+_MAX_PROBES = 4
+
 
 class Geometry:
     """Frame conversions and mesh queries over one context.
@@ -25,8 +28,7 @@ class Geometry:
 
     def __init__(self, context: FrameContext) -> None:
         self._context = context
-        self._probe: SurfaceProbe | None = None
-        self._probe_mesh: Mesh | None = None
+        self._probes: dict[int, tuple[Mesh, SurfaceProbe]] = {}
 
     @property
     def context(self) -> FrameContext:
@@ -96,11 +98,20 @@ class Geometry:
         return self.probe(mesh).nearest_vertex(world.as_array())
 
     def probe(self, mesh: Mesh) -> SurfaceProbe:
-        """The proximity probe of a mesh; the last one is kept alive."""
-        if self._probe is None or self._probe_mesh is not mesh:
-            self._probe = SurfaceProbe(mesh)
-            self._probe_mesh = mesh
-        return self._probe
+        """The proximity probe of a mesh; the probes are kept for reuse.
+
+        The scalp and the ESE mesh are queried side by side (the surface
+        check and the prediction), so a few probes stay alive instead of
+        only the last one.
+        """
+        cached = self._probes.get(id(mesh))
+        if cached is not None and cached[0] is mesh:
+            return cached[1]
+        probe = SurfaceProbe(mesh)
+        self._probes[id(mesh)] = (mesh, probe)
+        if len(self._probes) > _MAX_PROBES:
+            self._probes.pop(next(iter(self._probes)))
+        return probe
 
     # --- measurements ---
 

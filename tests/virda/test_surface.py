@@ -167,3 +167,15 @@ class TestGeometrySurface:
         probe = geometry.probe(mesh)
 
         assert geometry.probe(mesh) is probe
+
+    def test_the_probes_of_two_meshes_stay_alive(self) -> None:
+        """The scalp and the ESE mesh are queried side by side."""
+        scalp = _plane()
+        ese = _sphere()
+        geometry = Geometry(FrameContext())
+
+        scalp_probe = geometry.probe(scalp)
+        ese_probe = geometry.probe(ese)
+
+        assert geometry.probe(scalp) is scalp_probe
+        assert geometry.probe(ese) is ese_probe
