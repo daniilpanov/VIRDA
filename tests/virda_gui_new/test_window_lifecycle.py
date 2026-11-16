@@ -86,8 +86,10 @@ def test_menu_bar_has_file_export_with_four_actions(qapp, tmp_path: Path) -> Non
         assert [action.text() for action in menubar.actions()] == ["&File"]
         file_menu = menubar.actions()[0].menu()
         assert file_menu is not None
-        assert [action.text() for action in file_menu.actions()] == ["&Export"]
-        export_menu = file_menu.actions()[0].menu()
+        labels = [action.text() for action in file_menu.actions()]
+        assert labels[:3] == ["&Open project...", "&New project...", "&Recent"]
+        assert labels[-1] == "&Export"
+        export_menu = file_menu.actions()[-1].menu()
         assert export_menu is not None
         titles = [action.text() for action in export_menu.actions()]
         assert titles == ["&Measurements", "&Electrodes", "&Fiducials", "&Mesh"]

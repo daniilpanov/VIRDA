@@ -6,15 +6,21 @@ from typing import Protocol
 
 from PySide6.QtCore import QEvent
 from PySide6.QtGui import QAction, QCloseEvent
-from PySide6.QtWidgets import QMainWindow, QWidget
+from PySide6.QtWidgets import QMainWindow, QMenu, QWidget
 
+from virda_gui_new.dialogs.project_dialog import ask_create_project_folder, ask_open_project_folder
+from virda_gui_new.dialogs.warnings import confirm_partial_import
 from virda_gui_new.dto.steps import BASE_MESH, ESE_MESH, LOCALIZATION, MESH_POSTPROCESSING, STEPS
 from virda_gui_new.services import artifact_saving
 from virda_gui_new.services.artifact_exporting import ExportKind
+from virda_gui_new.services.preferences import Preferences
 from virda_gui_new.services.project_import import PreparedProject, prepare_project
 from virda_gui_new.services.project_scan import project_files
 from virda_gui_new.services.scene_builder import collect_scene_sources
-from virda_gui_new.services.step_seeding import seed_steps_from_artifacts
+from virda_gui_new.services.step_seeding import (
+    StepChainIncompleteError,
+    seed_steps_from_artifacts,
+)
 from virda_gui_new.services.steps_manager import StepsManager
 from virda_gui_new.widgets.files_toggle_button import FilesToggleButton
 from virda_gui_new.widgets.filetree import FileTree
@@ -77,11 +83,14 @@ class MainWindow(QMainWindow):
         project_path: Path,
         prepared: PreparedProject | None = None,
         steps: StepsManager | None = None,
+        preferences: Preferences | None = None,
     ) -> None:
         super().__init__()
 
         self.setWindowTitle("VIRDA: Electrode Localization System")
         self._project_path = project_path
+        # The recent projects of the menu bar come from the preferences.
+        self._preferences = preferences or Preferences()
         # The tool windows tracked next to their owner: they are raised
         # together with this window.
         self._steps_window: WidgetWindow | None = None
@@ -265,12 +274,12 @@ class MainWindow(QMainWindow):
         self._popups.pop(step_n, None)
 
     def _build_menu_bar(self) -> None:
-        """Build File -> Export with one action per export kind.
+        """Build the File menu with the project actions and the exports.
 
-        Availability approach: every action always opens its popup; a
-        missing source (e.g. electrodes never localized) is surfaced by
-        the Export click through the popup's error dialog with the
-        reason. The actions are therefore never disabled.
+        Availability approach: every export action always opens its
+        popup; a missing source (e.g. electrodes never localized) is
+        surfaced by the Export click through the popup's error dialog
+        with the reason. The actions are therefore never disabled.
         """
         export_items = (
             (ExportKind.MEASUREMENTS, "&Measurements"),
@@ -279,11 +288,53 @@ class MainWindow(QMainWindow):
             (ExportKind.MESH, "&Mesh"),
         )
         file_menu = self.menuBar().addMenu("&File")
+        open_action = QAction("&Open project...", self)
+        open_action.triggered.connect(self._on_open_project)
+        file_menu.addAction(open_action)
+        create_action = QAction("&New project...", self)
+        create_action.triggered.connect(self._on_new_project)
+        file_menu.addAction(create_action)
+        recent_menu = file_menu.addMenu("&Recent")
+        self._fill_recent_menu(recent_menu)
+        recent_menu.aboutToShow.connect(lambda: self._fill_recent_menu(recent_menu))
+        file_menu.addSeparator()
         export_menu = file_menu.addMenu("&Export")
         for kind, label in export_items:
             action = QAction(label, self)
             action.triggered.connect(lambda _checked, k=kind: self._open_export_popup(k))
             export_menu.addAction(action)
+
+    def _on_open_project(self) -> None:
+        """Open another project: the user picks its folder."""
+        project = ask_open_project_folder(self)
+        if project is not None:
+            self._open_project(project)
+
+    def _on_new_project(self) -> None:
+        """Create a project folder and open it."""
+        project = ask_create_project_folder(self)
+        if project is not None:
+            self._open_project(project)
+
+    def _open_project(self, project: Path) -> None:
+        """Open the project in its own window and close this one."""
+        if open_project_window(project, parent=self) is None:
+            return
+        self.close()
+
+    def _fill_recent_menu(self, menu: QMenu) -> None:
+        """List the recently opened projects, newest first."""
+        menu.clear()
+        recent = self._preferences.recent_project_paths()
+        if not recent:
+            empty = QAction("(no recent projects)", self)
+            empty.setEnabled(False)
+            menu.addAction(empty)
+            return
+        for project in recent:
+            action = QAction(str(project), self)
+            action.triggered.connect(lambda _checked, p=project: self._open_project(p))
+            menu.addAction(action)
 
     def _open_export_popup(self, kind: ExportKind) -> None:
         """Open the export popup of ``kind``, replacing an open one.
@@ -390,3 +441,31 @@ class MainWindow(QMainWindow):
         if self._filetree_window is not None and is_alive(self._filetree_window):
             self._filetree_window.close()
         super().closeEvent(event)
+
+
+def open_project_window(project: Path, parent: QWidget | None = None) -> MainWindow | None:
+    """Prepare the project, seed its steps and open its window.
+
+    The import is checked with the user: a project with a gap in its
+    chain or an unreadable file is confirmed before the window opens.
+    ``None`` when the user declines the import.
+    """
+    prepared = prepare_project(project)
+    # The steps are seeded before the window exists: a project with a
+    # gap in its chain stops at that step, and the user decides in the
+    # dialog whether to continue from there.
+    steps = StepsManager(tuple(step.required_keys for step in STEPS))
+    incomplete: StepChainIncompleteError | None = None
+    try:
+        seed_steps_from_artifacts(steps, prepared.loaded)
+    except StepChainIncompleteError as error:
+        incomplete = error
+    if (prepared.failures or incomplete) and not confirm_partial_import(
+        parent, prepared.failures, steps.get_current_step(), incomplete
+    ):
+        return None
+
+    Preferences().note_project_opened(project)
+    window = MainWindow(project, prepared=prepared, steps=steps)
+    window.show()
+    return window

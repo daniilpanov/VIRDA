@@ -37,6 +37,10 @@ class Preferences:
         entries = raw if isinstance(raw, list) else ([raw] if raw else [])
         return [Path(str(entry)) for entry in entries]
 
+    def recent_project_paths(self) -> list[Path]:
+        """The recent projects whose folders still exist."""
+        return [entry for entry in self.recent_projects() if entry.is_dir()]
+
     def note_project_opened(self, project: Path) -> None:
         self._settings.setValue(_KEY_LAST_PROJECT, str(project))
         recent = [entry for entry in self.recent_projects() if entry != project]
