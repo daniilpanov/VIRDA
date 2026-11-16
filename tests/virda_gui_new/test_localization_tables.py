@@ -9,7 +9,6 @@ from PySide6.QtWidgets import QTableWidgetItem
 
 from tests.virda_gui_new.fixtures.steps import advance_to
 from virda.geometry import Geometry
-from virda.geometry import Geometry
 from virda.models.electrode import Electrode, Electrodes
 from virda.models.mesh import Mesh
 from virda_gui_new.dto.steps import STEPS

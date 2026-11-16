@@ -4,8 +4,18 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from lib.forward_list import ForwardList
+from virda.geometry import FrameContext, Geometry, match_fiducial_name
+from virda.mesh.center_of_mass import center_of_mass
+from virda.models.coordinates import CoordinateSystem, Point
+from virda.models.fiducial import FiducialType
 from virda.models.mesh import Mesh
-from virda_gui_new.dto.steps import BASE_MESH, MESH_POSTPROCESSING, RUN_INPUTS
+from virda_gui_new.dto.steps import (
+    BASE_MESH,
+    FIDUCIALS_KEY,
+    MESH_POSTPROCESSING,
+    RUN_INPUTS,
+)
+from virda_gui_new.dto.viewer3d import LabeledPoints
 
 
 class StepsManager:
@@ -27,6 +37,9 @@ class StepsManager:
     raises ``ValueError``. A step without required keys (the live
     localization step) never blocks the advance. The invariant behind
     the rule: every step before the current one is finished.
+
+    :attr:`geometry` is the app-wide geometry service: it converts
+    between the coordinate frames over the current project state.
     """
 
     def __init__(self, required_keys_by_step: Sequence[tuple[str, ...]] = ()) -> None:
@@ -35,6 +48,7 @@ class StepsManager:
         self._global_context: dict[str, Any] = {}
         self._listeners: list[Callable[[], None]] = []
         self._step_contexts.push_back({})
+        self._geometry: Geometry | None = None
 
     def _validate_step(self, step_n: int) -> None:
         step_count = len(self._step_contexts)
@@ -193,6 +207,70 @@ class StepsManager:
         if listener in self._listeners:
             self._listeners.remove(listener)
 
+    @property
+    def geometry(self) -> Geometry:
+        """The app-wide geometry service over the current project state.
+
+        One instance is kept alive and its context is refreshed on every
+        change of the manager, so every holder of the reference sees the
+        current anchors. The head origin is the centre of mass of the active
+        scalp mesh (the step-2 mesh, else the step-1 scalp surface); the
+        fiducials come from the global store.
+        """
+        geometry = self._geometry
+        if geometry is None:
+            geometry = Geometry(self._geometry_context())
+            self._geometry = geometry
+        return geometry
+
+    def _geometry_context(self) -> FrameContext:
+        """The frame anchors over the current project state."""
+        head_origin: Point | None = None
+        mesh = self.active_scalp_mesh()
+        if mesh is not None:
+            centre = center_of_mass(mesh)
+            head_origin = Point(
+                x=float(centre[0]),
+                y=float(centre[1]),
+                z=float(centre[2]),
+                system=CoordinateSystem.WORLD,
+            )
+        return FrameContext(
+            head_origin=head_origin,
+            fiducials=self._fiducial_points(),
+            affine=None,
+        )
+
+    def _fiducial_points(self) -> dict[FiducialType, Point]:
+        """The canonical fiducial slots of the global store, in world."""
+        points = self.get_global_item(FIDUCIALS_KEY)
+        if not isinstance(points, LabeledPoints) or points.labels is None:
+            return {}
+        coords: dict[FiducialType, Point] = {}
+        for label, xyz in zip(points.labels, points.points, strict=True):
+            slot = match_fiducial_name(label)
+            if slot is None or slot in coords:
+                continue
+            coords[slot] = Point(
+                x=float(xyz[0]),
+                y=float(xyz[1]),
+                z=float(xyz[2]),
+                system=CoordinateSystem.WORLD,
+            )
+        return coords
+
     def _notify(self) -> None:
+        self._refresh_geometry()
         for listener in self._listeners:
             listener()
+
+    def _refresh_geometry(self) -> None:
+        """Keep the geometry context in step with the current state.
+
+        The geometry service is shared, so its context is refreshed
+        here: a holder of the reference cannot read stale anchors.
+        """
+        geometry = self._geometry
+        if geometry is None:
+            return
+        geometry.set_context(self._geometry_context())
