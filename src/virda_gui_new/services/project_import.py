@@ -1,10 +1,17 @@
 """Project import preparation: scan, load, and validate artifact files.
 
-Every scanned artifact file is loaded into its ready in-memory object
-through the same loaders the popups use, so unsupported or outdated
-formats fail at open time, before any step context is seeded. Seeding
-then writes ready objects: a step marked done (or opened) is
-guaranteed to hold runnable inputs.
+Every scanned artifact file is loaded into its ready in-memory object, so
+unsupported or outdated formats fail at open time, before any step
+context is seeded. Seeding then writes ready objects: a step marked done
+(or opened) is guaranteed to hold runnable inputs.
+
+Precedence rules: ``fiducials.json`` wins over ``coordsystem.json``
+(converted to fiducials through
+:meth:`virda.models.coordsystem.Coordsystem.to_fiducials`); the
+postprocessed ``final_mesh.ply`` wins over ``base_mesh.ply`` and seeds
+the step-1 scalp surface and the step-2 mesh, a lone base mesh seeds
+only the step-1 scalp surface; ``measurements.json`` is loaded into an
+:class:`Electrodes` model; ``pipeline_config.json`` stays a scanned path.
 """
 
 from collections.abc import Callable
@@ -30,8 +37,12 @@ _T = TypeVar("_T")
 class LoadedArtifacts:
     """Ready in-memory pipeline artifacts; ``None`` where absent or invalid.
 
-    Field names match :class:`ProjectArtifacts`, so the same seeding
-    contract applies; the values are ready objects instead of paths.
+    Field names follow :class:`ProjectArtifacts`, so the same seeding
+    contract applies; the values are ready objects instead of paths --
+    except ``pipeline_config``, which is scanned but deliberately not
+    loaded (nothing in this GUI consumes it yet). ``fiducials`` is
+    resolved at prepare time from ``fiducials.json`` or
+    ``coordsystem.json`` (see the module precedence rules).
     """
 
     nifti: MRIVolume | None = None

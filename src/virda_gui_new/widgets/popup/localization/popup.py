@@ -7,12 +7,14 @@ from PySide6.QtWidgets import QFileDialog, QLabel, QVBoxLayout
 
 from virda.models.electrode import Electrodes
 from virda.models.mri_volume import MRIVolume
-from virda_gui_new.dto.steps import FIDUCIALS_KEY, NIFTI
+from virda_gui_new.dto.steps import FIDUCIALS_KEY, LOCALIZATION, MEASUREMENTS_KEY, NIFTI
 from virda_gui_new.dto.viewer3d import LabeledPoints
 from virda_gui_new.services import artifact_importing, artifact_loading
 from virda_gui_new.services.localization import (
     FiducialRows,
     MeasurementTable,
+    electrodes_from_points,
+    measurement_table_from_model,
 )
 from virda_gui_new.widgets.popup.localization.abstract import LocalizationPopupBase
 from virda_gui_new.widgets.popup.localization.electrodes_table import ElectrodesTable
@@ -53,6 +55,9 @@ class LocalizationPopup(LocalizationPopupBase):
         self._measurements_table.electrodeEdited.connect(self._on_measurement_edited)
         self._measurements_table.importRequested.connect(self._import_measurements_from_file)
         self._prefill_fiducials()
+        self._prefill_measurements()
+        self._prefill_electrodes()
+        self._sync_frame_selectors()
 
     def _prefill_fiducials(self) -> None:
         """Fill the fiducial grid from the manager's global store, if any."""
@@ -64,6 +69,37 @@ class LocalizationPopup(LocalizationPopupBase):
             for label, xyz in zip(points.labels, points.points, strict=True)
         ]
         self._fiducials_table.set_rows(rows)
+
+    def _prefill_measurements(self) -> None:
+        """Fill the measurement grid from the stored measurements model."""
+        measurements = self._manager.get_global_item(MEASUREMENTS_KEY)
+        if not isinstance(measurements, Electrodes):
+            return
+        table = measurement_table_from_model(measurements)
+        if table:
+            self._measurements_table.set_rows(table)
+
+    def _prefill_electrodes(self) -> None:
+        """Fill the electrode grid with the localized results of the project.
+
+        The results live in the step-4 context: the grid shows them as
+        they are, and the step computes them when the project holds the
+        measured distances but no results yet.
+        """
+        results = self._stored_results()
+        if results is not None and results.items:
+            self._electrodes_table.show_electrodes(results)
+            return
+        scalp_points = self._read_context_item(LOCALIZATION.index, "scalp_points")
+        ese_points = self._read_context_item(LOCALIZATION.index, "ese_points")
+        measurements = self._manager.get_global_item(MEASUREMENTS_KEY)
+        electrodes = electrodes_from_points(
+            scalp_points if isinstance(scalp_points, LabeledPoints) else None,
+            ese_points if isinstance(ese_points, LabeledPoints) else None,
+            measurements if isinstance(measurements, Electrodes) else None,
+        )
+        if electrodes.items:
+            self._electrodes_table.show_electrodes(electrodes)
 
     def collect_fiducial_rows(self) -> FiducialRows:
         return self._fiducials_table.collect_fiducial_rows()

@@ -7,12 +7,15 @@ heavy mesh work runs; only hint text, context writes and hooks flow.
 import json
 import time
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import pytest
 from PySide6.QtWidgets import QTableWidget, QTableWidgetItem, QVBoxLayout
+from virda_gui_new.widgets.popup.localization.frame_selector import FrameSelector
 
 from tests.virda_gui_new.fixtures.steps import advance
+from virda.models.coordinates import CoordinateSystem
 from virda.models.electrode import Electrode, Electrodes
 from virda.models.fiducial import Fiducials
 from virda.models.mesh import Mesh
@@ -28,8 +31,11 @@ type _LocalizeCall = tuple[Fiducials, Electrodes]
 
 _ESE = Mesh(np.zeros((4, 3)), np.zeros((1, 3), dtype=int))
 _SCALP = Mesh(np.zeros((3, 3)), np.zeros((1, 3), dtype=int))
-_WORLD_FIDUCIALS = np.array([[0.0, 0.0, 1.0], [1.0, 0.0, 0.0], [-1.0, 0.0, 0.0]])
-_FIDUCIAL_LABELS = ("Nasion", "LPA", "RPA")
+# World fiducials whose frame comes out axis-aligned (NAS at the origin).
+_WORLD_FIDUCIALS = np.array([[0.0, 100.0, 0.0], [-70.0, 0.0, 0.0], [70.0, 0.0, 0.0]])
+_FIDUCIAL_LABELS = ("NASION", "LPA", "RPA")
+# Mesh whose centroid is (7.5, 7.5, 7.5): the head frame shifts by that.
+_MESH_VERTICES = np.array([[0.0, 0.0, 0.0], [30.0, 0.0, 0.0], [0.0, 30.0, 0.0], [0.0, 0.0, 30.0]])
 _FIDUCIAL_ROWS = [
     ("Nasion", np.array([0.0, 0.0, 1.0])),
     ("LPA", np.array([1.0, 0.0, 0.0])),
@@ -62,6 +68,9 @@ def _make_manager(ese=True, normals=True) -> StepsManager:
     advance(steps)
     if ese:
         steps.set_step_context_item(3, "ese_mesh", _ESE)
+    else:
+        # No ESE mesh: the localization runs without the step-3 surface.
+        steps.set_step_context_item(3, "ese_mesh", None)
     if normals:
         steps.set_step_context_item(3, "normals", np.ones((4, 3)))
     advance(steps)
@@ -177,10 +186,10 @@ def test_missing_geometry_shows_precondition(qapp, popups) -> None:
     popups.append(popup)
 
     assert popup._localization_runner is None
-    assert popup._hint_label.text() == _NO_GEOMETRY
+    assert popup._hint_label.text() == _NEEDS_INPUTS.format("ese_mesh")
     assert not popup._run_button.isVisibleTo(popup)
     popup._on_inputs_changed()  # no-op without geometry
-    assert popup._hint_label.text() == _NO_GEOMETRY
+    assert popup._hint_label.text() == _NEEDS_INPUTS.format("ese_mesh")
 
 
 def test_blocked_path_hinting(qapp, popups, monkeypatch) -> None:
@@ -245,6 +254,53 @@ def test_the_results_live_in_the_step_context(qapp, popups, monkeypatch) -> None
     assert popup._stored_results() is payload
 
 
+def test_localized_run_mirrors_measurements_into_the_store(qapp, popups, monkeypatch) -> None:
+    """The measurement table lands in the global store as a model."""
+    from virda.models.electrode import Electrode, Electrodes
+
+    payload = Electrodes(
+        [
+            Electrode("A", {"LPA": 10.0}, ese_coords=np.zeros(3), scalp_coords=np.zeros(3)),
+            Electrode("B", {"RPA": 1.0}, ese_coords=np.zeros(3), scalp_coords=np.zeros(3)),
+        ]
+    )
+    _patch_localize(monkeypatch, [], payload)
+    manager = _make_manager()
+    popup = RecordingPopup(manager, fiducial_rows=_FIDUCIAL_ROWS, table=_MEASUREMENTS)
+    popups.append(popup)
+
+    popup._on_inputs_changed()
+    _settle(qapp, popup, "Localized 2 electrodes.")
+
+    stored = manager.get_global_item("measurements")
+    assert isinstance(stored, Electrodes)
+    assert stored.ids == ["A"]
+    stored_a = stored.get("A")
+    assert stored_a is not None
+    assert stored_a.measured_distances == _MEASUREMENTS["A"]
+
+
+def test_localized_stale_context_keeps_seeded_measurements(qapp, popups) -> None:
+    """A dropped (stale) result leaves the seeded measurements untouched."""
+    from virda.models.electrode import Electrode, Electrodes
+
+    manager = _make_manager()
+    seeded = Electrodes([Electrode("Fz", {"NAS": 120.5})])
+    manager.set_global_item("measurements", seeded)
+    popup = RecordingPopup(manager, fiducial_rows=_FIDUCIAL_ROWS, table=_MEASUREMENTS)
+    popups.append(popup)
+    manager.invalidate_steps_after(3)  # step-4 context is gone
+
+    popup._on_localized(Electrodes([Electrode("A", {"LPA": 1.0})]))
+
+    assert popup._hint_label.text() == "Pipeline changed; results dropped."
+    # The measurements live in the global store: the stale step-4 context
+    # does not touch them.
+    assert manager.get_global_item("measurements") is seeded
+    with pytest.raises(ValueError, match="out of bounds"):
+        manager.get_step_context_item(LOCALIZATION.index, "electrodes")
+
+
 def test_localized_run_refreshes_fiducial_store(qapp, popups, monkeypatch) -> None:
     """The global store mirrors the current table rows after each run."""
     from virda_gui_new.dto.viewer3d import LabeledPoints
@@ -272,7 +328,8 @@ def test_unchanged_fiducials_skip_the_store_write(qapp, popups, monkeypatch) -> 
     payload = Electrodes([Electrode("A", {"LPA": 10.0})])
     _patch_localize(monkeypatch, [], payload)
     manager = _make_manager()
-    manager.set_global_item("fiducials", labeled_points_from_rows(_FIDUCIAL_ROWS))
+    stored_points = labeled_points_from_rows(_FIDUCIAL_ROWS)
+    manager.set_global_item("fiducials", stored_points)
     notifications: list[int] = []
     manager.subscribe(lambda: notifications.append(len(notifications)))
     popup = RecordingPopup(manager, fiducial_rows=_FIDUCIAL_ROWS, table=_MEASUREMENTS)
@@ -281,9 +338,10 @@ def test_unchanged_fiducials_skip_the_store_write(qapp, popups, monkeypatch) -> 
     popup._on_inputs_changed()
     _settle(qapp, popup, "Localized 1 electrode.")
 
-    # The electrodes and the two point sets notified; the store was
-    # untouched.
-    assert len(notifications) == 3
+    # The electrodes and the measurements store notified; the fiducials
+    # store was untouched.
+    assert len(notifications) <= 2
+    assert manager.get_global_item("fiducials") is stored_points
 
 
 def test_stale_context_run_keeps_fiducial_store(qapp, popups) -> None:
@@ -557,6 +615,122 @@ def test_concrete_popup_measurements_import_error_is_a_hint(qapp, popups, monkey
     assert popup.collect_measurement_table() == {}
 
 
+def _fiducials_item_enabled(selector: FrameSelector) -> bool:
+    """Whether the selector's fiducials item is enabled."""
+    from PySide6.QtGui import QStandardItemModel
+
+    index = selector.findData(CoordinateSystem.FIDUCIALS)
+    if index < 0:
+        return False
+    model = selector.model()
+    assert isinstance(model, QStandardItemModel)
+    return bool(model.item(index).isEnabled())
+
+
+def test_concrete_popup_frame_selectors_default_to_head(qapp, popups) -> None:
+    """Both selectors default to head; head is available (scalp mesh set)."""
+    popup = LocalizationPopup(LOCALIZATION, _make_manager())
+    popups.append(popup)
+
+    assert popup._fiducials_frames.frame() == CoordinateSystem.HEAD
+    assert popup._electrodes_frames.frame() == CoordinateSystem.HEAD
+    assert popup._fiducials_table._frame is CoordinateSystem.HEAD
+    assert popup._electrodes_table._frame is CoordinateSystem.HEAD
+
+
+def test_the_fiducials_table_has_no_fiducials_frame(qapp, popups) -> None:
+    """The fiducials frame is defined by the rows the table shows."""
+    from virda_gui_new.dto.viewer3d import LabeledPoints
+
+    manager = _make_manager()
+    manager.set_global_item("fiducials", LabeledPoints(_WORLD_FIDUCIALS, _FIDUCIAL_LABELS))
+
+    popup = LocalizationPopup(LOCALIZATION, manager)
+    popups.append(popup)
+
+    assert popup._fiducials_frames.findData(CoordinateSystem.FIDUCIALS) == -1
+    assert popup._electrodes_frames.findData(CoordinateSystem.FIDUCIALS) >= 0
+
+
+def test_concrete_popup_fiducials_frame_needs_three_fiducials(qapp, popups) -> None:
+    """The fiducials frame option is greyed out without all three points."""
+    from virda_gui_new.dto.viewer3d import LabeledPoints
+
+    manager = _make_manager()
+    manager.set_global_item("fiducials", LabeledPoints(_WORLD_FIDUCIALS, _FIDUCIAL_LABELS))
+
+    bare = LocalizationPopup(LOCALIZATION, _make_manager())
+    popups.append(bare)
+    assert not _fiducials_item_enabled(bare._electrodes_frames)
+
+    popup = LocalizationPopup(LOCALIZATION, manager)
+    popups.append(popup)
+    assert _fiducials_item_enabled(popup._electrodes_frames)
+
+    popup._electrodes_frames.setCurrentIndex(
+        popup._electrodes_frames.findData(CoordinateSystem.FIDUCIALS)
+    )
+
+    # The canonical rows stay world, whatever the display frame is.
+    assert popup.collect_fiducial_rows()[0][1].tolist() == _WORLD_FIDUCIALS[0].tolist()
+
+
+def test_concrete_popup_empty_resets_fiducials_frame(qapp, popups) -> None:
+    """Clearing the store makes the fiducials frame unavailable -> fallback."""
+    from virda_gui_new.dto.viewer3d import LabeledPoints
+
+    manager = _make_manager()
+    manager.set_global_item("fiducials", LabeledPoints(_WORLD_FIDUCIALS, _FIDUCIAL_LABELS))
+    popup = LocalizationPopup(LOCALIZATION, manager)
+    popups.append(popup)
+
+    popup._electrodes_frames.setCurrentIndex(
+        popup._electrodes_frames.findData(CoordinateSystem.FIDUCIALS)
+    )
+    popup._fiducials_table.clear_grid()
+
+    assert popup._electrodes_frames.frame() == CoordinateSystem.HEAD  # head fallback
+    assert not _fiducials_item_enabled(popup._electrodes_frames)
+
+
+def test_localized_save_is_world_canonical_in_head_display(
+    qapp, popups, monkeypatch, tmp_path: Path
+) -> None:
+    """A run with head-frame display still saves world-canonical files."""
+    from virda_gui_new.dto.viewer3d import LabeledPoints
+    from virda_gui_new.services.artifact_loading import load_fiducial_points
+
+    payload = Electrodes(
+        [Electrode("A", {"LPA": 10.0}, ese_coords=np.zeros(3), scalp_coords=np.zeros(3))]
+    )
+    _patch_localize(monkeypatch, [], payload)
+    manager = _make_manager()
+    mesh = Mesh(_MESH_VERTICES, np.zeros((1, 3), dtype=int))
+    manager.set_step_context_item(2, "mesh", mesh)
+    manager.set_global_item("fiducials", LabeledPoints(_WORLD_FIDUCIALS, _FIDUCIAL_LABELS))
+    popup = LocalizationPopup(LOCALIZATION, manager, project=tmp_path)
+    popups.append(popup)
+
+    assert popup._fiducials_frames.frame() == CoordinateSystem.HEAD
+    assert [
+        cast("QTableWidgetItem", popup._fiducials_table._table.item(0, c)).text() for c in (1, 2, 3)
+    ] == [
+        "-7.5",
+        "92.5",
+        "-7.5",
+    ]
+
+    popup._measurements_table.add_row()
+    for column, text in enumerate(("A", "LPA", "10")):
+        popup._measurements_table._table.setItem(0, column, QTableWidgetItem(text))
+
+    _settle(qapp, popup, "Localized 1 electrode.")
+
+    points = load_fiducial_points(tmp_path / "localization" / "fiducials.json")
+    assert points.labels == _FIDUCIAL_LABELS
+    assert points.points.tolist() == _WORLD_FIDUCIALS.tolist()
+
+
 def test_concrete_popup_prefill_precedes_runner_setup(qapp, popups) -> None:
     """No geometry: the prefill emits before the runner exists; no crash."""
     from virda_gui_new.dto.viewer3d import LabeledPoints
@@ -660,6 +834,46 @@ def test_popup_prefills_fiducials_from_the_global_store(qapp, popups) -> None:
 
     rows = popup.collect_fiducial_rows()
     assert [name for name, _xyz in rows] == ["NAS", "LPA", "RPA"]
+
+
+def test_popup_prefills_the_measurements_from_the_global_store(qapp, popups) -> None:
+    """The stored measurements are shown in the grid again."""
+    manager = _make_manager()
+    manager.set_global_item(
+        "measurements", Electrodes([Electrode("A", {"LPA": 10.0, "RPA": 12.0})])
+    )
+
+    popup = LocalizationPopup(LOCALIZATION, manager)
+    popups.append(popup)
+
+    grid = popup._measurements_table._table
+    assert grid.rowCount() == 2
+    assert _cell_text(grid, 0, 0) == "A"
+    assert _cell_text(grid, 0, 1) == "LPA"
+    assert _cell_text(grid, 0, 2) == "10"
+
+
+def test_popup_prefills_the_electrodes_from_the_seeded_points(qapp, popups, monkeypatch) -> None:
+    """The localized coordinates of the project are shown in the grid."""
+    from virda_gui_new.dto.viewer3d import LabeledPoints
+
+    _patch_localize(monkeypatch, [], Electrodes([]))
+    manager = _make_manager()
+    manager.set_global_item("measurements", Electrodes([Electrode("A", {"LPA": 10.0})]))
+    manager.set_step_context_item(
+        LOCALIZATION.index,
+        "scalp_points",
+        LabeledPoints(np.array([[1.0, 2.0, 3.0]]), ("A",)),
+    )
+
+    popup = LocalizationPopup(LOCALIZATION, manager)
+    popups.append(popup)
+
+    grid = popup._electrodes_table._table
+    assert grid.rowCount() == 1
+    assert _cell_text(grid, 0, 0) == "A"
+    # The seeded scalp point shows in the scalp columns.
+    assert _cell_text(grid, 0, 4) == "1.00"
 
 
 def test_edited_measurement_recomputes_that_electrode(qapp, popups, monkeypatch) -> None:
@@ -791,6 +1005,33 @@ def test_the_tables_are_stored_when_they_change(qapp, popups, tmp_path) -> None:
     assert (tmp_path / "localization" / "measurements.json").is_file()
 
 
+def test_imported_measurements_are_stored_in_the_project(
+    qapp, popups, monkeypatch, tmp_path
+) -> None:
+    """An import is written to the project, even without a localization run."""
+    _patch_localize(monkeypatch, [], Electrodes([]))
+    manager = _make_manager()
+    popup = LocalizationPopup(LOCALIZATION, manager, project=tmp_path)
+    popups.append(popup)
+
+    source = tmp_path / "measurements.json"
+    source.write_text(
+        json.dumps({"electrodes": [{"electrode_id": "A", "measured_distances": {"LPA": 10.0}}]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "virda_gui_new.widgets.popup.localization.popup.QFileDialog.getOpenFileName",
+        staticmethod(lambda *a, **k: (str(source), "")),
+    )
+
+    popup._import_measurements_from_file()
+
+    stored = json.loads(
+        (tmp_path / "localization" / "measurements.json").read_text(encoding="utf-8")
+    )
+    assert stored["electrodes"] == [{"electrode_id": "A", "measured_distances": {"LPA": 10.0}}]
+
+
 def test_localization_options_are_saved_and_restored(qapp, popups, tmp_path) -> None:
     """The localization settings are stored in the project and read back."""
     manager = _make_manager()
@@ -869,8 +1110,8 @@ def test_the_localized_electrodes_reach_the_scene_context(qapp, popups, monkeypa
     assert scalp_points.points[0].tolist() == [1.0, 1.0, 1.0]
 
 
-def test_the_step_does_not_run_on_its_own(qapp, popups, monkeypatch) -> None:
-    """Opening the popup starts no localization: the user does."""
+def test_opening_with_only_incomplete_measurements_does_not_run(qapp, popups, monkeypatch) -> None:
+    """Opening the popup waits until one measurement row is complete."""
     from virda_gui_new.dto.viewer3d import LabeledPoints
 
     calls: list[_LocalizeCall] = []
@@ -887,37 +1128,98 @@ def test_the_step_does_not_run_on_its_own(qapp, popups, monkeypatch) -> None:
     assert calls == []
 
 
-def test_the_ready_popup_says_so(qapp, popups) -> None:
-    """The popup with the fiducials and a measurement row is ready."""
+def test_the_step_computes_the_results_it_has_no_result_for(qapp, popups, monkeypatch) -> None:
+    """The measured distances without results are localized when the step opens."""
+    from virda_gui_new.services.localization import labeled_points_from_rows
+
+    calls: list[_LocalizeCall] = []
+    payload = Electrodes(
+        [Electrode("A", {"NAS": 10.0}, ese_coords=np.zeros(3), scalp_coords=np.zeros(3))]
+    )
+    _patch_localize(monkeypatch, calls, payload)
+    manager = _make_manager()
+    manager.set_global_item("fiducials", labeled_points_from_rows(_FIDUCIAL_ROWS))
+    manager.set_global_item("measurements", Electrodes([Electrode("A", _MEASUREMENTS["A"])]))
+    popup = LocalizationPopup(LOCALIZATION, manager)
+    popups.append(popup)
+
+    _settle(qapp, popup, "Localized 1 electrode.")
+
+    assert len(calls) == 1
+    assert manager.get_step_context_item(LOCALIZATION.index, "electrodes") is payload
+
+
+def test_opening_recomputes_existing_results(qapp, popups, monkeypatch) -> None:
+    """Opening the step reruns all complete measurements, even with results."""
+    from virda_gui_new.services.localization import labeled_points_from_rows
+
+    calls: list[_LocalizeCall] = []
+    _patch_localize(monkeypatch, calls, Electrodes([]))
+    manager = _make_manager()
+    manager.set_global_item("fiducials", labeled_points_from_rows(_FIDUCIAL_ROWS))
+    manager.set_global_item("measurements", Electrodes([Electrode("A", _MEASUREMENTS["A"])]))
+    manager.set_step_context_item(LOCALIZATION.index, "electrodes", Electrodes([]))
+    popup = LocalizationPopup(LOCALIZATION, manager)
+    popups.append(popup)
+
+    _settle(qapp, popup, "Localized 0 electrodes.")
+    assert len(calls) == 1
+
+
+def test_the_published_results_follow_the_measurement_table(qapp, popups, monkeypatch) -> None:
+    """A table without electrodes publishes no results."""
+    payload = Electrodes(
+        [Electrode("A", {"LPA": 10.0}, ese_coords=np.zeros(3), scalp_coords=np.zeros(3))]
+    )
+    _patch_localize(monkeypatch, [], payload)
     manager = _make_manager()
     popup = RecordingPopup(manager, fiducial_rows=_FIDUCIAL_ROWS, table=_MEASUREMENTS)
     popups.append(popup)
 
-    assert popup._hint_label.text() == "Ready."
+    popup._on_inputs_changed()
+    _settle(qapp, popup, "Localized 1 electrode.")
+
+    published = manager.get_step_context_item(LOCALIZATION.index, "electrodes")
+    assert isinstance(published, Electrodes)
+    assert published.ids == ["A"]
+
+    # The electrode leaves the table: the results follow it.
+    popup._table = {}
+    popup._on_inputs_settled()
+
+    published = manager.get_step_context_item(LOCALIZATION.index, "electrodes")
+    assert isinstance(published, Electrodes)
+    assert published.ids == []
 
 
-def test_imported_measurements_are_stored_in_the_project(
-    qapp, popups, monkeypatch, tmp_path
-) -> None:
-    """An import is written to the project, even without a localization run."""
-    _patch_localize(monkeypatch, [], Electrodes([]))
+def test_the_measurements_are_mirrored_without_a_run(qapp, popups) -> None:
+    """The store follows the table even when no localization ran."""
     manager = _make_manager()
-    popup = LocalizationPopup(LOCALIZATION, manager, project=tmp_path)
+    popup = RecordingPopup(manager, fiducial_rows=_FIDUCIAL_ROWS, table=_MEASUREMENTS)
     popups.append(popup)
 
-    source = tmp_path / "measurements.json"
-    source.write_text(
-        json.dumps({"electrodes": [{"electrode_id": "A", "measured_distances": {"LPA": 10.0}}]}),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(
-        "virda_gui_new.widgets.popup.localization.popup.QFileDialog.getOpenFileName",
-        staticmethod(lambda *a, **k: (str(source), "")),
-    )
+    popup._on_inputs_settled()
 
-    popup._import_measurements_from_file()
+    stored = manager.get_global_item("measurements")
+    assert isinstance(stored, Electrodes)
+    assert stored.ids == ["A"]
+    stored_a = stored.get("A")
+    assert stored_a is not None
+    assert stored_a.measured_distances == _MEASUREMENTS["A"]
 
-    stored = json.loads(
-        (tmp_path / "localization" / "measurements.json").read_text(encoding="utf-8")
+
+def test_the_ready_popup_relocalizes_on_open(qapp, popups, monkeypatch) -> None:
+    """Opening with complete inputs starts a full localization run."""
+    calls: list[_LocalizeCall] = []
+    _patch_localize(
+        monkeypatch,
+        calls,
+        Electrodes([Electrode("A", _MEASUREMENTS["A"], scalp_coords=np.zeros(3))]),
     )
-    assert stored["electrodes"] == [{"electrode_id": "A", "measured_distances": {"LPA": 10.0}}]
+    manager = _make_manager()
+    popup = RecordingPopup(manager, fiducial_rows=_FIDUCIAL_ROWS, table=_MEASUREMENTS)
+    popups.append(popup)
+
+    _settle(qapp, popup, "Localized 1 electrode.")
+    assert len(calls) == 1
+    assert calls[0][1].ids == ["A"]

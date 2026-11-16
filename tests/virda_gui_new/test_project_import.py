@@ -83,7 +83,9 @@ def test_prepare_project_loads_valid_artifacts(project: Path) -> None:
     assert isinstance(prepared.loaded.scalp_mesh, Mesh)
     assert isinstance(prepared.loaded.ese_mesh, Mesh)
     assert isinstance(prepared.loaded.fiducials, LabeledPoints)
-    assert prepared.loaded.fiducials.labels == ("nas",)
+    points = prepared.loaded.fiducials
+    assert isinstance(points, LabeledPoints)
+    assert points.labels == ("nas",)
 
 
 def test_prepare_project_rejects_invalid_point_rows(project: Path) -> None:
@@ -226,6 +228,18 @@ def test_prepare_project_without_an_ese_mesh_estimates_no_normals(project: Path)
     prepared = prepare_project(project)
 
     assert prepared.loaded.normals is None
+
+    # The measurements are a localization input, ready for the step-4 seeding.
+
+
+def test_prepare_project_loads_measurements_only(project: Path) -> None:
+    """A lone measurements file loads as a model; the chain decides its step."""
+    _write_measurements(project / "input" / "measurements.json")
+
+    prepared = prepare_project(project)
+
+    assert prepared.failures == ()
+    assert isinstance(prepared.loaded.measurements, Electrodes)
 
 
 def test_prepare_project_converts_coordsystem_to_fiducials(project: Path) -> None:

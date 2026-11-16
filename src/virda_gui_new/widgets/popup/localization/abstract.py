@@ -15,6 +15,7 @@ from virda_gui_new.dto.steps import (
     ESE_MESH,
     FIDUCIALS_KEY,
     LOCALIZATION,
+    MEASUREMENTS_KEY,
     Step,
 )
 from virda_gui_new.dto.viewer3d import LabeledPoints
@@ -52,6 +53,32 @@ def _as_mesh(value: object) -> Mesh | None:
 def _as_normals(value: object) -> Normals | None:
     """Return ``value`` when it is a ready :class:`Normals`, else ``None``."""
     return value if isinstance(value, Normals) else None
+
+
+def _same_results(left: Electrodes, right: Electrodes) -> bool:
+    """Whether two result models hold the same electrodes."""
+    if len(left.items) != len(right.items):
+        return False
+    return all(
+        _same_electrode(one, other) for one, other in zip(left.items, right.items, strict=True)
+    )
+
+
+def _same_electrode(left: Electrode, right: Electrode) -> bool:
+    """Whether two electrodes hold the same data."""
+    return (
+        left.electrode_id == right.electrode_id
+        and left.measured_distances == right.measured_distances
+        and _same_point(left.scalp_coords, right.scalp_coords)
+        and _same_point(left.ese_coords, right.ese_coords)
+    )
+
+
+def _same_point(left: np.ndarray | None, right: np.ndarray | None) -> bool:
+    """Whether two optional points are the same."""
+    if left is None or right is None:
+        return left is right
+    return bool(np.array_equal(np.asarray(left), np.asarray(right)))
 
 
 def _same_points(left: LabeledPoints, right: LabeledPoints) -> bool:
@@ -154,7 +181,7 @@ class LocalizationPopupBase(StepPopupBase):
         timer = self._save_timer
         timer.setSingleShot(True)
         timer.setInterval(SETTLE_DELAY_MS)
-        timer.timeout.connect(self._save_inputs)
+        timer.timeout.connect(self._on_inputs_settled)
         # The tables are prefilled while the form is built: those changes
         # are the project's own, not the user's, so they start no run.
         self._loading = True
@@ -182,6 +209,7 @@ class LocalizationPopupBase(StepPopupBase):
             reason = self._blocked_reason()
             self._set_hint(f"Blocked: {reason}." if reason else _READY)
         self._update_relocalize_state()
+        self._run_on_open()
 
     def _load_options(self) -> Stage3Config:
         """The stored localization settings (defaults when there are none)."""
@@ -233,7 +261,7 @@ class LocalizationPopupBase(StepPopupBase):
             del timer
         # The pending save would be lost with the timer: the tables the
         # user entered are written before the popup goes away.
-        self._save_inputs()
+        self._on_inputs_settled()
         if self._localization_runner is not None:
             self._localization_runner.stop()
         super().shutdown()
@@ -334,6 +362,22 @@ class LocalizationPopupBase(StepPopupBase):
         results = self._read_context_item(LOCALIZATION.index, "electrodes")
         return results if isinstance(results, Electrodes) else None
 
+    def _run_on_open(self) -> None:
+        """Recompute every complete electrode after the tables load."""
+        if self._localization_runner is None:
+            return
+        if self._blocked_reason() is not None:
+            return
+        try:
+            fiducials = build_fiducials(self.collect_fiducial_rows())
+            table = complete_measurement_table(self.collect_measurement_table())
+            electrodes = build_electrodes(table)
+        except ValueError:
+            return
+        self._pending_scope = None
+        self._localization_runner.submit(fiducials, electrodes, self._options)
+        self._set_hint("Running...")
+
     def _on_options_changed(self, *_args: object) -> None:
         """Store the changed localization settings and use them from now on."""
         self._options = Stage3Config(
@@ -350,12 +394,7 @@ class LocalizationPopupBase(StepPopupBase):
         if scope is not None:
             electrodes = self._merge_electrode(scope, electrodes)
         try:
-            self._manager.set_step_context_item(LOCALIZATION.index, "electrodes", electrodes)
-            # The scene shows the electrodes as two point sets: the ones
-            # on the scalp and the ones on the ESE surface.
-            scalp_points, ese_points = points_from_electrodes(electrodes)
-            self._manager.set_step_context_item(LOCALIZATION.index, "scalp_points", scalp_points)
-            self._manager.set_step_context_item(LOCALIZATION.index, "ese_points", ese_points)
+            self._publish_results(electrodes)
         except ValueError:
             self._set_hint(_STALE_CONTEXT)
             return
@@ -363,7 +402,6 @@ class LocalizationPopupBase(StepPopupBase):
         count = len(electrodes.items)
         unit = "electrode" if count == 1 else "electrodes"
         self._set_hint(f"Localized {count} {unit}.")
-        self.show_localized(electrodes)
         self._save_localization(electrodes)
 
     def _merge_electrode(self, electrode_id: str, fresh: Electrodes) -> Electrodes:
@@ -389,15 +427,66 @@ class LocalizationPopupBase(StepPopupBase):
         return Electrodes(items, calibrated_offset_shift_mm=offset_shift)
 
     def _schedule_save(self) -> None:
-        """Store the tables once they settle.
+        """Store the tables and publish the state once they settle.
 
         Every change of a table schedules the save, so an edited cell
         or a picked point reaches the project even when the
-        localization cannot run.
+        localization cannot run. The same timer publishes the current
+        state, so the store, the scene and the result grid follow the
+        tables.
         """
-        if self._project is None or self._save_timer is None:
+        if self._save_timer is None:
             return
         self._save_timer.start()
+
+    def _on_inputs_settled(self) -> None:
+        """The tables settled: store them and publish the current state."""
+        self._save_inputs()
+        self._refresh_fiducial_store()
+        self._mirror_measurements_into_store()
+        self._publish_results()
+
+    def _publish_results(self, results: Electrodes | None = None) -> None:
+        """Publish the results to the step context and the result grid.
+
+        The step-4 context is the one place the results live: the popup
+        writes them there and reads them from there. Without
+        ``results`` the stored ones are published, restricted to the
+        electrodes of the current table: a deleted electrode leaves the
+        result, so the scene and the result grid follow the table even
+        when no localization ran. A step without any result publishes
+        nothing: the context keeps what it holds. Results that did not
+        change are not published again.
+        """
+        if results is None:
+            stored = self._stored_results()
+            if stored is None:
+                return
+            results = self._results_for_table()
+        current = self._stored_results()
+        if current is not None and _same_results(current, results):
+            return
+        # The scene shows the electrodes as two point sets: the ones
+        # on the scalp and the ones on the ESE surface.
+        scalp_points, ese_points = points_from_electrodes(results)
+        # One write of the three keys means one rebuild of the scene.
+        self._manager.set_step_context_items(
+            LOCALIZATION.index,
+            {
+                "electrodes": results,
+                "scalp_points": scalp_points,
+                "ese_points": ese_points,
+            },
+        )
+        self.show_localized(results)
+
+    def _results_for_table(self) -> Electrodes:
+        """The stored results, restricted to the electrodes of the table."""
+        results = self._stored_results()
+        if results is None:
+            return Electrodes([])
+        ids = set(self.collect_measurement_table())
+        return Electrodes([item for item in results.items if item.electrode_id in ids])
 
     def _save_inputs(self) -> None:
         """Store the current input tables in the project.
@@ -418,6 +507,28 @@ class LocalizationPopupBase(StepPopupBase):
         except Exception as error:  # noqa: BLE001 - any save error is user-facing
             self._set_hint(f"Failed to save the project inputs: {error}")
 
+    def _mirror_measurements_into_store(self) -> None:
+        """Mirror the current measurement table into the global store.
+
+        Like the fiducial table (mirrored into the global store), the
+        measurement table lands in the manager's global store as an
+        :class:`Electrodes` model (``measurements``), so the export
+        popups can write the last successfully run state without
+        touching disk. An invalid table (empty or duplicate electrode id)
+        is a hint, not a failure: the electrodes result is kept and
+        export falls back to the seeded or last stored state. An
+        unchanged store is left alone, so the pull-model listeners are
+        not re-triggered.
+        """
+        try:
+            measurements = build_electrodes(self.collect_measurement_table())
+        except ValueError as exc:
+            self._set_hint(f"Measurements not stored: {exc}")
+            return
+        if self._manager.get_global_item(MEASUREMENTS_KEY) == measurements:
+            return
+        self._manager.set_global_item(MEASUREMENTS_KEY, measurements)
+
     def _save_localization(self, electrodes: Electrodes) -> None:
         """Persist the run's outputs; a save failure is a failed status."""
         if self._project is None:
@@ -436,12 +547,16 @@ class LocalizationPopupBase(StepPopupBase):
     def _refresh_fiducial_store(self) -> None:
         """Mirror the current fiducial table into the global store.
 
-        A successful run proves the table rows are valid, so the store is
-        refreshed from them; this keeps store ~= table ~= what a save
-        writes. An unchanged store is left alone so the pull-model
-        listeners (scene rebuild) are not re-triggered needlessly.
+        The store follows the table, so the scene, the anatomical frame
+        and the export all read the same points the user sees. An
+        unchanged store is left alone so the pull-model listeners (scene
+        rebuild) are not re-triggered needlessly.
         """
-        points = labeled_points_from_rows(self.collect_fiducial_rows())
+        rows = self.collect_fiducial_rows()
+        if not rows:
+            self._clear_fiducial_store()
+            return
+        points = labeled_points_from_rows(rows)
         current = self._manager.get_global_item(FIDUCIALS_KEY)
         if isinstance(current, LabeledPoints) and _same_points(current, points):
             return

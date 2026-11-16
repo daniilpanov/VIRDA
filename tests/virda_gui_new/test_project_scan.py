@@ -458,3 +458,21 @@ def test_seed_final_mesh_wins_over_base_mesh(tmp_path: Path) -> None:
     contexts = manager.all_contexts()
     assert contexts[1] == {"scalp_surface": project / "mesh" / "final_mesh.ply"}
     assert contexts[2] == {"mesh": project / "mesh" / "final_mesh.ply"}
+
+
+def test_seed_loaded_measurements_into_the_global_store() -> None:
+    """Loaded measurements.json lands in the global store as a model."""
+    from virda.models.electrode import Electrode, Electrodes
+    from virda_gui_new.services.project_import import LoadedArtifacts
+
+    measurements = Electrodes([Electrode("Fz", {"NAS": 120.5})])
+    manager = new_manager()
+
+    with pytest.raises(StepChainIncompleteError):
+        seed_steps_from_artifacts(manager, LoadedArtifacts(measurements=measurements))
+
+    # The measurements are a project input: they live in the global store
+    # and survive the gap in the chain.
+    assert manager.get_global_item("measurements") is measurements
+    assert manager.get_current_step() == 0
+    assert manager.all_contexts() == [{}]
