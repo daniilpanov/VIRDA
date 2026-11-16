@@ -1,23 +1,27 @@
-"""The geometry service: frame conversions over one fixed context."""
+"""The geometry service: frame conversions and mesh queries over one context."""
 
 import numpy as np
 
 from virda.geometry.frames import SLOT_IDS, FrameContext, convert, convert_point
+from virda.geometry.surface import SurfaceProbe
 from virda.models.coordinates import CoordinateSystem, Point
+from virda.models.mesh import Mesh
 
 
 class Geometry:
-    """Frame conversions over one context.
+    """Frame conversions and mesh queries over one context.
 
     The context -- the head origin, the fiducials and the voxel affine --
     is held by the object, so callers do not have to thread it through
-    every conversion. The GUI keeps one instance alive and refreshes its
+    every call. The GUI keeps one instance alive and refreshes its
     context when the project state changes (:meth:`set_context`); the
     holders of the reference therefore always see the current anchors.
     """
 
     def __init__(self, context: FrameContext) -> None:
         self._context = context
+        self._probe: SurfaceProbe | None = None
+        self._probe_mesh: Mesh | None = None
 
     @property
     def context(self) -> FrameContext:
@@ -65,3 +69,30 @@ class Geometry:
             point.system is CoordinateSystem.VOXEL for point in self._context.fiducials.values()
         )
         return not needs_affine or self._context.affine is not None
+
+    # --- surface ---
+
+    def distance_to_surface(self, point: Point, mesh: Mesh) -> float:
+        """The distance from the point to the mesh surface, in millimetres.
+
+        The point may be expressed in any frame; it is converted into the
+        world frame the mesh lives in.
+        """
+        world = self.convert_point(point, CoordinateSystem.WORLD)
+        return self.probe(mesh).distance(world.as_array())
+
+    def point_on_surface(self, point: Point, mesh: Mesh, *, tolerance_mm: float = 2.0) -> bool:
+        """Whether the point lies on the mesh surface within the tolerance."""
+        return self.distance_to_surface(point, mesh) <= tolerance_mm
+
+    def nearest_vertex(self, point: Point, mesh: Mesh) -> tuple[int, np.ndarray]:
+        """The index and the coordinates of the mesh vertex closest to the point."""
+        world = self.convert_point(point, CoordinateSystem.WORLD)
+        return self.probe(mesh).nearest_vertex(world.as_array())
+
+    def probe(self, mesh: Mesh) -> SurfaceProbe:
+        """The proximity probe of a mesh; the last one is kept alive."""
+        if self._probe is None or self._probe_mesh is not mesh:
+            self._probe = SurfaceProbe(mesh)
+            self._probe_mesh = mesh
+        return self._probe
