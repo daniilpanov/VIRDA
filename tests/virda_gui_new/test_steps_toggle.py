@@ -116,3 +116,63 @@ def test_button_pins_to_parent_corner_and_follows_resize(qapp) -> None:
 
     parent.deleteLater()
     button.deleteLater()
+
+
+def test_button_sits_below_the_parent_menu_bar(qapp) -> None:
+    """The pill is anchored below the menu bar, never on top of it."""
+    from PySide6.QtWidgets import QMainWindow
+
+    parent = QMainWindow()
+    parent.menuBar().addMenu("&File")
+    button = StepsToggleButton(parent)
+    parent.show()
+    qapp.processEvents()
+
+    menu_bar = parent.menuBar()
+    assert menu_bar.isVisible()
+    assert button.geometry().top() > menu_bar.geometry().bottom()
+    assert button.pos().x() == StepsToggleButton._MARGIN
+
+    parent.deleteLater()
+    button.deleteLater()
+
+
+def test_button_stays_below_the_menu_bar_after_a_resize(qapp) -> None:
+    """A parent resize keeps the pill below the menu bar."""
+    from PySide6.QtWidgets import QMainWindow
+
+    parent = QMainWindow()
+    parent.menuBar().addMenu("&File")
+    button = StepsToggleButton(parent)
+    parent.show()
+    qapp.processEvents()
+    before = button.pos()
+
+    parent.resize(700, 500)
+    qapp.processEvents()
+
+    menu_bar = parent.menuBar()
+    assert button.geometry().top() > menu_bar.geometry().bottom()
+    assert button.pos() == before
+
+    parent.deleteLater()
+    button.deleteLater()
+
+
+def test_button_follows_a_hidden_menu_bar(qapp) -> None:
+    """Without a visible menu bar the pill returns to the top margin."""
+    from PySide6.QtWidgets import QMainWindow
+
+    parent = QMainWindow()
+    parent.menuBar().addMenu("&File")
+    button = StepsToggleButton(parent)
+    parent.show()
+    qapp.processEvents()
+
+    parent.menuBar().hide()
+    qapp.processEvents()
+
+    assert button.pos().y() == StepsToggleButton._MARGIN
+
+    parent.deleteLater()
+    button.deleteLater()
