@@ -233,6 +233,78 @@ def test_measurements_table_set_rows_replaces_the_grid(qapp) -> None:
     assert widget._table.item(0, 3) is None  # the RPA cell stays empty
 
 
+def test_measurements_table_predict_button_lives_in_its_own_column(qapp) -> None:
+    from PySide6.QtWidgets import QPushButton
+
+    widget = MeasurementsTable()
+    widget.set_rows({"A": {"NAS": 10.0, "LPA": 11.0}})
+
+    button = widget._table.cellWidget(0, 4)
+    assert isinstance(button, QPushButton)
+    assert button.text() == "Predict"
+    assert button.isEnabled() is True
+    # The distance cells stay editable: they carry no button.
+    assert widget._table.cellWidget(0, 1) is None
+    assert widget._table.cellWidget(0, 3) is None
+
+
+def test_measurements_table_predict_button_signals(qapp) -> None:
+    from PySide6.QtWidgets import QPushButton
+
+    widget = MeasurementsTable()
+    widget.set_rows({"A": {"NAS": 10.0, "LPA": 11.0}})
+    events: list[tuple[str, str]] = []
+    widget.predictRequested.connect(
+        lambda electrode, fiducial: events.append((electrode, fiducial))
+    )
+
+    button = widget._table.cellWidget(0, 4)
+    assert isinstance(button, QPushButton)
+    button.click()
+
+    assert events == [("A", "RPA")]
+
+
+def test_measurements_table_predict_button_needs_two_measurements(qapp) -> None:
+    from PySide6.QtWidgets import QPushButton
+
+    widget = MeasurementsTable()
+    widget.set_rows({"A": {"NAS": 10.0}})
+
+    button = widget._table.cellWidget(0, 4)
+    assert isinstance(button, QPushButton)
+    assert button.isEnabled() is False
+    assert "two measured distances" in button.toolTip()
+
+
+def test_measurements_table_predicted_cell_is_italic(qapp) -> None:
+    widget = MeasurementsTable()
+    widget.set_rows({"A": {"NAS": 10.0, "LPA": 11.0}})
+
+    widget.set_predicted("A", "RPA", 12.5, "predicted · residual 0.4 mm")
+
+    item = widget._table.item(0, 3)
+    assert item is not None
+    assert item.font().italic()
+    assert item.text() == "12.5"
+    assert "predicted" in item.toolTip()
+    assert widget.collect_measurement_table() == {"A": {"NAS": 10.0, "LPA": 11.0, "RPA": 12.5}}
+    assert widget.predicted_cells() == [("A", "RPA")]
+
+
+def test_measurements_table_editing_a_predicted_cell_drops_the_italic(qapp) -> None:
+    widget = MeasurementsTable()
+    widget.set_rows({"A": {"NAS": 10.0, "LPA": 11.0}})
+    widget.set_predicted("A", "RPA", 12.5, "predicted")
+
+    widget._table.setItem(0, 3, _item("13"))
+
+    item = widget._table.item(0, 3)
+    assert item is not None
+    assert item.font().italic() is False
+    assert widget.predicted_cells() == []
+
+
 def test_measurements_table_import_button_signals(qapp) -> None:
     from PySide6.QtWidgets import QPushButton
 

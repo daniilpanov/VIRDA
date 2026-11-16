@@ -940,6 +940,59 @@ def test_incomplete_measurement_edit_does_not_schedule_localization(qapp, popups
     assert not _run_pending(popup)
 
 
+def test_a_changed_cell_recomputes_only_its_electrode(qapp, popups, monkeypatch) -> None:
+    """A changed distance moves its own electrode, not the whole set."""
+    calls: list[_LocalizeCall] = []
+    _patch_localize(
+        monkeypatch,
+        calls,
+        Electrodes([Electrode("A", {"LPA": 10.0}, scalp_coords=np.zeros(3))]),
+    )
+    manager = _make_manager()
+    popup = LocalizationPopup(LOCALIZATION, manager)
+    popups.append(popup)
+    popup._fiducials_table.set_rows(_FIDUCIAL_ROWS)
+    popup._measurements_table.set_rows(_TWO_ELECTRODES)
+    popup._calibrate_box.setChecked(False)
+    calls.clear()
+
+    popup._measurements_table._table.setItem(0, 1, QTableWidgetItem("11"))
+    _settle(qapp, popup, "Localized 1 electrode.")
+
+    assert len(calls) == 1
+    _fiducials, electrodes = calls[0]
+    assert [item.electrode_id for item in electrodes.items] == ["A"]
+
+
+def test_a_removed_row_drops_the_electrode_without_a_recompute(qapp, popups, monkeypatch) -> None:
+    """A removed electrode leaves the results, and nothing is recomputed."""
+    calls: list[_LocalizeCall] = []
+    payload = Electrodes(
+        [
+            Electrode("A", {"NAS": 10.0}, scalp_coords=np.zeros(3)),
+            Electrode("B", {"NAS": 11.0}, scalp_coords=np.ones(3)),
+        ]
+    )
+    _patch_localize(monkeypatch, calls, payload)
+    manager = _make_manager()
+    popup = LocalizationPopup(LOCALIZATION, manager)
+    popups.append(popup)
+    popup._fiducials_table.set_rows(_FIDUCIAL_ROWS)
+    popup._measurements_table.set_rows(_TWO_ELECTRODES)
+    popup._on_inputs_changed()
+    _settle(qapp, popup, "Localized 2 electrodes.")
+    calls.clear()
+
+    popup._measurements_table._table.setItem(0, 0, QTableWidgetItem("A"))
+    popup._measurements_table._table.selectRow(1)
+    popup._measurements_table.remove_selected_rows()
+
+    assert calls == []
+    results = manager.get_step_context_item(LOCALIZATION.index, "electrodes")
+    assert isinstance(results, Electrodes)
+    assert results.ids == ["A"]
+
+
 def test_relocalize_button_is_disabled_without_fiducials(qapp, popups, monkeypatch) -> None:
     """Without the fiducials the button waits, the table stays editable."""
     _patch_localize(monkeypatch, [], Electrodes([]))

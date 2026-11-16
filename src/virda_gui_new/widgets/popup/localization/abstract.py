@@ -289,6 +289,16 @@ class LocalizationPopupBase(StepPopupBase):
         self._localization_runner.submit(fiducials, electrodes, self._options)
         self._set_hint("Running...")
 
+    def _on_electrode_set_changed(self) -> None:
+        """The electrode set changed: the results follow the table.
+
+        Adding or removing an electrode does not move the other ones, so
+        nothing is recomputed: the results just lose the electrode that
+        left the table.
+        """
+        self._schedule_save()
+        self._publish_results()
+
     def _on_measurement_edited(self, electrode_id: str) -> None:
         """Recompute only a named electrode after its row is complete."""
         if self._loading or self._localization_runner is None:
