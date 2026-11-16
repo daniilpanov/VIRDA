@@ -1,7 +1,7 @@
 """Display-ready data structures for 3D scenes."""
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
@@ -95,10 +95,16 @@ class MeshBundle:
 
 @dataclass
 class ViewerScene:
-    """Fully resolved 3D scene, ready to be rendered."""
+    """Fully resolved 3D scene, ready to be rendered.
+
+    ``world_from_scene`` maps the scene frame into the world frame: it
+    is the identity for a scene in millimetres, and the inverse of the
+    placement for a scene in voxel coordinates.
+    """
 
     volume: pv.ImageData | None = None
     mm_scene: bool = True
+    world_from_scene: np.ndarray = field(default_factory=lambda: np.eye(4))
     fiducials: LabeledPoints | None = None
     scalp_mesh: pv.PolyData | None = None
     scalp_points: LabeledPoints | None = None

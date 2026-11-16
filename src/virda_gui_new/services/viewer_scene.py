@@ -179,12 +179,25 @@ def collect_viewer_scene(
     return ViewerScene(
         volume=volume,
         mm_scene=mm_scene,
+        world_from_scene=_world_from_scene(transform, mm_scene),
         fiducials=fiducial_scene,
         scalp_mesh=scalp_bundle.mesh,
         scalp_points=scalp_bundle.points,
         ese_mesh=ese_bundle.mesh,
         ese_points=ese_bundle.points,
     )
+
+
+def _world_from_scene(transform: np.ndarray, mm_scene: bool) -> np.ndarray:
+    """The transform from the scene frame into the world frame.
+
+    A scene in millimetres needs no transform; a scene in voxel
+    coordinates is placed with the inverse affine, so the world is
+    reached with the affine itself.
+    """
+    if mm_scene:
+        return np.eye(4)
+    return np.asarray(np.linalg.inv(transform), dtype=np.float64)
 
 
 def collect_volume_scene(source: VolumeSource, downsample_stride: int = 1) -> pv.ImageData:
