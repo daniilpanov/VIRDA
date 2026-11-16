@@ -163,6 +163,7 @@ def test_collect_scene_sources_with_ese_mesh(project: Path) -> None:
 
 def test_collect_scene_sources_with_localization_artifacts(project: Path) -> None:
     _write_full_chain(project)
+    _write_fiducials(project / "input" / "fiducials.json")
     _write_points_csv(
         project / "localization" / "electrodes_scalp.csv",
         [("A1", "1.0", "2.0", "3.0")],
@@ -178,13 +179,20 @@ def test_collect_scene_sources_with_localization_artifacts(project: Path) -> Non
         "nifti",
         "scalp",
         "ese",
+        "fiducials",
         "scalp_points",
         "ese_points",
     }
-    assert sources.ese_points is not None
-    assert sources.scalp_points is not None
-    assert sources.ese_points.labels == ("E1",)
-    assert sources.scalp_points.labels == ("A1",)
+    fiducials = sources.fiducials
+    assert fiducials is not None
+    assert fiducials.points.tolist() == [[0.0, 1.0, 2.0], [3.0, 4.0, 5.0]]
+    assert fiducials.labels == ("nas", "c2")
+    ese_points = sources.ese_points
+    assert ese_points is not None
+    assert ese_points.labels == ("E1",)
+    scalp_points = sources.scalp_points
+    assert scalp_points is not None
+    assert scalp_points.labels == ("A1",)
 
 
 def test_collect_scene_sources_preserves_same_point_file_for_both_steps(project: Path) -> None:
@@ -198,8 +206,9 @@ def test_collect_scene_sources_preserves_same_point_file_for_both_steps(project:
     sources = collect_scene_sources(_make_manager(project))
 
     assert _present(sources) == {"nifti", "scalp", "ese", "scalp_points"}
-    assert sources.scalp_points is not None
-    assert sources.scalp_points.points.tolist() == [[1.0, 2.0, 3.0]]
+    scalp_points = sources.scalp_points
+    assert scalp_points is not None
+    assert scalp_points.points.tolist() == [[1.0, 2.0, 3.0]]
 
 
 def test_collect_scene_sources_passes_ready_objects_through(project: Path) -> None:
@@ -246,6 +255,32 @@ def test_collect_scene_sources_ignores_the_points_of_another_step(project: Path)
     sources = collect_scene_sources(manager)
 
     assert sources.scalp_points is None
+
+
+def test_collect_scene_sources_loads_fiducials_from_the_global_store(project: Path) -> None:
+    """Seeded fiducials live in the global store, in any project folder."""
+    fiducials_path = project / "elsewhere" / "fiducials.json"
+    fiducials_path.parent.mkdir()
+    _write_fiducials(fiducials_path)
+    manager = StepsManager(tuple(step.required_keys for step in STEPS))
+
+    manager.set_global_item("fiducials", fiducials_path)
+    sources = collect_scene_sources(manager)
+
+    assert _present(sources) == {"fiducials"}
+    fiducials = sources.fiducials
+    assert fiducials is not None
+    assert fiducials.labels == ("nas", "c2")
+
+
+def test_collect_scene_sources_passes_store_points_through(project: Path) -> None:
+    points = LabeledPoints(np.array([[0.0, 0.0, 1.0]]), ("NAS",))
+    manager = StepsManager(tuple(step.required_keys for step in STEPS))
+
+    manager.set_global_item("fiducials", points)
+    sources = collect_scene_sources(manager)
+
+    assert sources.fiducials is points
 
 
 def test_collect_scene_sources_empty_for_empty_project(project: Path) -> None:

@@ -10,6 +10,8 @@ from virda.models.electrode import Electrode, Electrodes
 from virda.models.mesh import Mesh, Normals
 from virda.models.stage3_config import Stage3Config
 from virda_gui_new.dto.steps import (
+    FIDUCIALS_KEY,
+
     ESE_MESH,
     LOCALIZATION,
     Step,
@@ -38,6 +40,7 @@ _NO_GEOMETRY = (
 )
 _STALE_CONTEXT = "Pipeline changed; results dropped."
 _RELOCALIZE = "Re-localization"
+
 
 
 def _as_mesh(value: object) -> Mesh | None:
@@ -360,26 +363,31 @@ class LocalizationPopupBase(StepPopupBase):
         return Electrodes(items, calibrated_offset_shift_mm=offset_shift)
 
     def _refresh_fiducial_store(self) -> None:
-        """Mirror the current fiducial table into the step-4 context.
+        """Mirror the current fiducial table into the global store.
 
-        A successful run proves the table rows are valid, so the context
-        is refreshed from them; this keeps context ~= table ~= what a
-        save writes.
+        A successful run proves the table rows are valid, so the store is
+        refreshed from them; this keeps store ~= table ~= what a save
+        writes. An unchanged store is left alone so the pull-model
+        listeners (scene rebuild) are not re-triggered needlessly.
         """
         points = labeled_points_from_rows(self.collect_fiducial_rows())
-        current = self._read_context_item(LOCALIZATION.index, "fiducials")
+        current = self._manager.get_global_item(FIDUCIALS_KEY)
         if isinstance(current, LabeledPoints) and _same_points(current, points):
             return
-        self._manager.set_step_context_item(LOCALIZATION.index, "fiducials", points)
+        self._manager.set_global_item(FIDUCIALS_KEY, points)
 
     def _clear_fiducial_store(self) -> None:
-        """Drop the stored fiducials so the scene loses the points.
+        """Drop the global fiducials entry so the scene loses the points.
 
         The table's Empty action clears the entry; the pull-model
-        listeners (MainWindow scene rebuild) re-read the context after the
+        listeners (MainWindow scene rebuild) re-read the store after the
         write, so the rebuilt scene no longer carries fiducial points.
+        An entry that is already gone is left alone, so the listeners
+        are not re-triggered.
         """
-        self._manager.set_step_context_item(LOCALIZATION.index, "fiducials", None)
+        if self._manager.get_global_item(FIDUCIALS_KEY) is None:
+            return
+        self._manager.set_global_item(FIDUCIALS_KEY, None)
 
     def _on_run_failed(self, message: str) -> None:
         self._set_hint(message)

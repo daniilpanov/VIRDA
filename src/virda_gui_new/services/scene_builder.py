@@ -1,7 +1,7 @@
 """Scene sources resolution: manager contexts -> :class:`SceneSources`.
 
-Step-context values are file :class:`~pathlib.Path` (loaded here) or
-ready in-memory sources
+Global-store and step-context values are file :class:`~pathlib.Path`
+(loaded here) or ready in-memory sources
 (:class:`~virda.models.mri_volume.MRIVolume`,
 :class:`~virda.models.mesh.Mesh`,
 :class:`~virda_gui_new.dto.viewer3d.LabeledPoints`), passed through as-is.
@@ -13,9 +13,16 @@ from typing import Any
 
 from virda.models.mesh import Mesh
 from virda.models.mri_volume import MRIVolume
+from virda_gui_new.dto.steps import FIDUCIALS_KEY
 from virda_gui_new.dto.viewer3d import LabeledPoints, SceneSources
 from virda_gui_new.services import artifact_loading
 from virda_gui_new.services.steps_manager import StepsManager
+
+# Global store rules, checked before the step contexts: the listed keys
+# are read from :meth:`StepsManager.get_global_item`.
+_GLOBAL_RULES: tuple[tuple[str, str, Callable[[Path], Any]], ...] = (
+    (FIDUCIALS_KEY, "fiducials", artifact_loading.load_fiducial_points),
+)
 
 # (step index, context key) -> (source name, file loader). Earlier
 # entries win: the postprocessed step-2 mesh replaces the raw step-1
@@ -43,12 +50,16 @@ def _load(name: str, path: Path, loader: Callable[[Path], Any]) -> Any:
 def collect_scene_sources(manager: StepsManager, failures: list[str] | None = None) -> SceneSources:
     """Resolve the scene sources of the current contexts.
 
-    With ``failures`` given, unloadable file paths are skipped and
-    reported there as ``"<message>"`` strings instead of raising; an
-    empty scene means there is nothing to show.
+    Global-store rules are resolved first, then the step contexts. With
+    ``failures`` given, unloadable file paths are skipped and reported
+    there as ``"<message>"`` strings instead of raising; an empty scene
+    means there is nothing to show.
     """
     sources: dict[str, Any] = {}
     attempted: dict[str, set[Path]] = {}
+
+    for _store_key, name, loader in _GLOBAL_RULES:
+        _resolve_value(name, manager.get_global_item(_store_key), name, loader, sources, failures)
 
     contexts = manager.all_contexts()
     for step_n, key, name, loader in _RULES:
@@ -67,6 +78,7 @@ def collect_scene_sources(manager: StepsManager, failures: list[str] | None = No
 
     return SceneSources(
         nifti=sources.get("nifti"),
+        fiducials=sources.get("fiducials"),
         scalp=sources.get("scalp"),
         scalp_points=sources.get("scalp_points"),
         ese=sources.get("ese"),

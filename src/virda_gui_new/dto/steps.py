@@ -12,6 +12,11 @@ class Step:
     required_keys: tuple[str, ...] = ()
 
 
+#: The keys of the manager's global store: the project-level inputs
+#: that survive a step invalidation.
+FIDUCIALS_KEY = "fiducials"
+MEASUREMENTS_KEY = "measurements"
+
 # Steps of the GUI pipeline, in order. required_keys are the context keys
 # that mark the step done.
 NIFTI = Step(0, "NIfTI import", ("volume",))
