@@ -12,29 +12,41 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from virda.geometry import match_fiducial_name
+from virda.models.fiducial import SLOT_IDS, FiducialType
 from virda_gui_new.services.localization import MeasurementTable
 
-_COLUMNS = ("Electrode", "Fiducial", "Distance (mm)")
+#: The fiducial columns, in the fixed order of the canonical slots.
+
+_COLUMNS = ("Electrode", *(fiducial.value for fiducial in SLOT_IDS))
 
 
 class MeasurementsTable(QWidget):
-    """Manual distance entry: one row per ``(electrode, fiducial)`` pair.
+    """Pivot grid of the measured distances: one row per electrode.
 
-    Starts empty; "+ Add" appends one blank editable row and "- Remove
-    selected" removes the selected rows. Any edit or row-set change
-    emits :attr:`rowsChanged`. :meth:`collect_measurement_table` keeps
-    only complete rows (all three cells filled, distance parsed as a
-    float); a repeated electrode id + fiducial name collides, and the
-    later row wins.
+    The columns are the canonical fiducial slots (NAS, LPA, RPA) and the
+    rows the electrodes; a cell holds the measured distance in
+    millimetres. An empty cell is a measurement that is missing.
+
+    The table is a free input: "+ Add" appends one blank electrode row
+    and "- Remove selected" removes the selected rows. A changed cell
+    emits :attr:`electrodeEdited` with the electrode it belongs to, and
+    an added or removed row emits :attr:`electrodeSetChanged`; the
+    whole table is replaced through :attr:`rowsChanged`.
+    :meth:`collect_measurement_table`
+    returns the electrode -> fiducial -> distance table, skipping the
+    empty cells and the rows without an electrode id; a repeated
+    electrode id merges, and the later row wins.
 
     :meth:`set_rows` replaces the whole grid with an imported
-    electrode -> fiducial -> distance table (one row per pair), and the
-    "From file" button only emits :attr:`importRequested` -- the popup
-    owns the file dialog and the import service.
+    electrode -> fiducial -> distance table (one row per electrode), and
+    the "From file" button only emits :attr:`importRequested` -- the
+    popup owns the file dialog and the import service.
     """
 
     rowsChanged = Signal()  # noqa: N815 - Qt signal API
     electrodeEdited = Signal(str)  # noqa: N815 - Qt signal API
+    electrodeSetChanged = Signal()  # noqa: N815 - Qt signal API
     importRequested = Signal()  # noqa: N815 - Qt signal API
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -60,7 +72,11 @@ class MeasurementsTable(QWidget):
         layout.addLayout(buttons)
 
     def _on_item_changed(self, item: QTableWidgetItem) -> None:
-        """Report the edited electrode and that the rows changed."""
+        """Report the edited electrode.
+
+        A changed distance moves its own electrode only, so the row is
+        reported on its own: the whole set is not recomputed.
+        """
         self.electrodeEdited.emit(self._electrode_id_of_row(item.row()))
 
     def _electrode_id_of_row(self, row: int) -> str:
@@ -69,23 +85,32 @@ class MeasurementsTable(QWidget):
         return cell.text().strip() if cell is not None else ""
 
     def add_row(self) -> None:
-        """Append one blank editable row."""
+        """Append one blank electrode row."""
         self._table.blockSignals(True)
         self._table.insertRow(self._table.rowCount())
         self._table.blockSignals(False)
-        self.rowsChanged.emit()
+        # A new row changes the electrode set: the results follow the
+        # table, but nothing is recomputed.
+        self.electrodeSetChanged.emit()
 
     def set_rows(self, table: Mapping[str, Mapping[str, float]]) -> None:
-        """Replace the grid with one row per ``(electrode, fiducial)`` pair."""
+        """Replace the grid with one row per electrode.
+
+        The distances are matched onto the canonical columns through the
+        shared alias table, so a file that names the nasion point
+        ``NASION`` still fills the ``NAS`` column; distances to unknown
+        fiducials are dropped.
+        """
         self._table.blockSignals(True)
         self._table.setRowCount(0)
         for electrode, distances in table.items():
-            for fiducial, distance in distances.items():
-                row = self._table.rowCount()
-                self._table.insertRow(row)
-                cells = (electrode, fiducial, f"{float(distance):g}")
-                for column, text in enumerate(cells):
-                    self._table.setItem(row, column, QTableWidgetItem(text))
+            row = self._table.rowCount()
+            self._table.insertRow(row)
+            self._table.setItem(row, 0, QTableWidgetItem(str(electrode)))
+            for column, fiducial in enumerate(SLOT_IDS, start=1):
+                distance = _distance_for(distances, fiducial)
+                if distance is not None:
+                    self._table.setItem(row, column, QTableWidgetItem(f"{distance:g}"))
         self._table.blockSignals(False)
         self.rowsChanged.emit()
 
@@ -98,23 +123,38 @@ class MeasurementsTable(QWidget):
         for row in rows:
             self._table.removeRow(row)
         self._table.blockSignals(False)
-        self.rowsChanged.emit()
+        # A removed row changes the electrode set: the results follow
+        # the table, but nothing is recomputed.
+        self.electrodeSetChanged.emit()
 
     def collect_measurement_table(self) -> MeasurementTable:
-        """Return electrode -> fiducial -> distance; later rows overwrite."""
+        """Return electrode -> fiducial -> distance; empty cells are skipped."""
         table: MeasurementTable = {}
         for row in range(self._table.rowCount()):
             electrode = self._text(row, 0)
-            fiducial = self._text(row, 1)
-            if not electrode or not fiducial:
+            if not electrode:
                 continue
-            try:
-                distance = float(self._text(row, 2))
-            except ValueError:
-                continue
-            table.setdefault(electrode, {})[fiducial] = distance
+            distances: dict[str, float] = {}
+            for column, fiducial in enumerate(SLOT_IDS, start=1):
+                text = self._text(row, column)
+                if not text:
+                    continue
+                try:
+                    distances[fiducial.value] = float(text)
+                except ValueError:
+                    continue
+            if distances:
+                table.setdefault(electrode, {}).update(distances)
         return table
 
     def _text(self, row: int, column: int) -> str:
         item = self._table.item(row, column)
         return "" if item is None else item.text().strip()
+
+
+def _distance_for(distances: Mapping[str, float], fiducial: FiducialType) -> float | None:
+    """The distance of one canonical slot in a measurement mapping."""
+    for name, value in distances.items():
+        if match_fiducial_name(name) is fiducial:
+            return float(value)
+    return None

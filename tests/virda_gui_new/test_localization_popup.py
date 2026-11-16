@@ -721,8 +721,8 @@ def test_localized_save_is_world_canonical_in_head_display(
     ]
 
     popup._measurements_table.add_row()
-    for column, text in enumerate(("A", "LPA", "10")):
-        popup._measurements_table._table.setItem(0, column, QTableWidgetItem(text))
+    popup._measurements_table._table.setItem(0, 0, QTableWidgetItem("A"))
+    popup._measurements_table._table.setItem(0, 2, QTableWidgetItem("10"))
 
     _settle(qapp, popup, "Localized 1 electrode.")
 
@@ -786,13 +786,10 @@ def test_concrete_popup_live_flow(qapp, popups, monkeypatch) -> None:
         for column, text in enumerate(coords.split(), start=1):
             popup._fiducials_table._table.setItem(row, column, QTableWidgetItem(text))
     popup._measurements_table.add_row()
-    for row, (electrode, fiducial, distance) in enumerate(
-        (("A", "NAS", "10"), ("A", "LPA", "11"), ("A", "RPA", "12"))
-    ):
-        if row:
-            popup._measurements_table.add_row()
-        for column, text in enumerate((electrode, fiducial, distance)):
-            popup._measurements_table._table.setItem(row, column, QTableWidgetItem(text))
+    popup._measurements_table._table.setItem(0, 0, QTableWidgetItem("A"))
+    popup._measurements_table._table.setItem(0, 1, QTableWidgetItem("10"))
+    popup._measurements_table._table.setItem(0, 2, QTableWidgetItem("11"))
+    popup._measurements_table._table.setItem(0, 3, QTableWidgetItem("12"))
 
     _settle(qapp, popup, "Localized 1 electrode.")
 
@@ -847,10 +844,10 @@ def test_popup_prefills_the_measurements_from_the_global_store(qapp, popups) -> 
     popups.append(popup)
 
     grid = popup._measurements_table._table
-    assert grid.rowCount() == 2
+    assert grid.rowCount() == 1
     assert _cell_text(grid, 0, 0) == "A"
-    assert _cell_text(grid, 0, 1) == "LPA"
-    assert _cell_text(grid, 0, 2) == "10"
+    assert _cell_text(grid, 0, 2) == "10"  # the LPA column
+    assert _cell_text(grid, 0, 3) == "12"  # the RPA column
 
 
 def test_popup_prefills_the_electrodes_from_the_seeded_points(qapp, popups, monkeypatch) -> None:

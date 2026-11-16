@@ -188,14 +188,29 @@ def test_measurements_table_last_row_wins(qapp) -> None:
 
     for _row in range(3):
         widget.add_row()
-    for row, texts in enumerate((("A", "1", "10"), ("B", "1", "8"), ("A", "1", "bad"))):
+    for row, texts in enumerate((("A", "10", "", ""), ("B", "8", "", ""), ("A", "bad", "", ""))):
         for column, text in enumerate(texts):
             widget._table.setItem(row, column, _item(text))
-    assert widget.collect_measurement_table() == {"A": {"1": 10.0}, "B": {"1": 8.0}}
+    assert widget.collect_measurement_table() == {"A": {"NAS": 10.0}, "B": {"NAS": 8.0}}
 
-    widget._table.setItem(2, 2, _item("12"))
-    # Same electrode id + fiducial name appearing twice: the later row wins.
-    assert widget.collect_measurement_table() == {"A": {"1": 12.0}, "B": {"1": 8.0}}
+    widget._table.setItem(2, 1, _item("12"))
+    # Same electrode id appearing twice: the later row wins.
+    assert widget.collect_measurement_table() == {"A": {"NAS": 12.0}, "B": {"NAS": 8.0}}
+
+
+def test_measurements_table_skips_empty_cells(qapp) -> None:
+    widget = MeasurementsTable()
+    widget.set_rows({"A": {"NAS": 10.0, "RPA": 12.0}})
+
+    assert widget.collect_measurement_table() == {"A": {"NAS": 10.0, "RPA": 12.0}}
+
+
+def test_measurements_table_matches_the_fiducial_aliases(qapp) -> None:
+    widget = MeasurementsTable()
+
+    widget.set_rows({"A": {"NASION": 62.5, "lpa": 111.25, "Extra": 5.0}})
+
+    assert widget.collect_measurement_table() == {"A": {"NAS": 62.5, "LPA": 111.25}}
 
 
 def test_measurements_table_set_rows_replaces_the_grid(qapp) -> None:
@@ -208,13 +223,14 @@ def test_measurements_table_set_rows_replaces_the_grid(qapp) -> None:
     widget.set_rows({"EEG 001": {"NAS": 62.5, "LPA": 111.25}, "EEG 002": {"NAS": 53.0}})
 
     assert len(events) == 1
-    assert widget._table.rowCount() == 3  # one row per (electrode, fiducial) pair
+    assert widget._table.rowCount() == 2  # one row per electrode
     assert widget.collect_measurement_table() == {
         "EEG 001": {"NAS": 62.5, "LPA": 111.25},
         "EEG 002": {"NAS": 53.0},
     }
     assert cast("QTableWidgetItem", widget._table.item(0, 0)).text() == "EEG 001"
-    assert cast("QTableWidgetItem", widget._table.item(0, 2)).text() == "62.5"
+    assert cast("QTableWidgetItem", widget._table.item(0, 1)).text() == "62.5"
+    assert widget._table.item(0, 3) is None  # the RPA cell stays empty
 
 
 def test_measurements_table_import_button_signals(qapp) -> None:
@@ -233,6 +249,38 @@ def test_measurements_table_import_button_signals(qapp) -> None:
     buttons[0].click()
 
     assert events == [1]
+
+
+def test_measurements_table_reports_a_changed_cell_on_its_own(qapp) -> None:
+    """A changed distance belongs to its electrode: the set is not changed."""
+    widget = MeasurementsTable()
+    widget.set_rows({"A": {"NAS": 10.0}})
+    edited: list[str] = []
+    changed: list[int] = []
+    widget.electrodeEdited.connect(edited.append)
+    widget.rowsChanged.connect(lambda: changed.append(1))
+
+    widget._table.setItem(0, 1, _item("11"))
+
+    assert edited == ["A"]
+    assert changed == []
+
+
+def test_measurements_table_reports_a_removed_row_as_a_set_change(qapp) -> None:
+    """A removed row changes the electrode set, not a measurement."""
+    widget = MeasurementsTable()
+    widget.set_rows({"A": {"NAS": 10.0}})
+    changed: list[int] = []
+    set_changed: list[int] = []
+    widget.rowsChanged.connect(lambda: changed.append(1))
+    widget.electrodeSetChanged.connect(lambda: set_changed.append(1))
+
+    widget._table.setItem(0, 0, _item("A"))
+    widget._table.selectRow(0)
+    widget.remove_selected_rows()
+
+    assert set_changed == [1]
+    assert changed == []
 
 
 def test_electrodes_table_renders_model(qapp) -> None:

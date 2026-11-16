@@ -69,6 +69,7 @@ class LocalizationPopup(LocalizationPopupBase):
         self._fiducials_table.cleared.connect(self._clear_fiducial_store)
         self._fiducials_table.importRequested.connect(self._import_fiducials_from_file)
         self._measurements_table.rowsChanged.connect(self._on_measurement_table_changed)
+        self._measurements_table.electrodeSetChanged.connect(self._on_electrode_set_changed)
         self._measurements_table.electrodeEdited.connect(self._on_measurement_edited)
         self._measurements_table.importRequested.connect(self._import_measurements_from_file)
         self._prefill_fiducials()
@@ -123,6 +124,11 @@ class LocalizationPopup(LocalizationPopupBase):
 
     def collect_measurement_table(self) -> MeasurementTable:
         return self._measurements_table.collect_measurement_table()
+
+    def _on_electrode_set_changed(self) -> None:
+        """Persist row additions/removals without starting localization."""
+        self._schedule_save()
+        self._update_relocalize_state()
 
     def _sync_frame_selectors(self) -> None:
         """Enable available frames and keep each table on its selector.

@@ -18,7 +18,7 @@ def test_build_fiducials_happy() -> None:
     fiducials = build_fiducials(rows)
 
     assert [(f.fiducial_id, f.name) for f in fiducials.items] == [
-        ("Nasion", "Nasion"),
+        ("NAS", "Nasion"),
         ("LPA", "LPA"),
     ]
     first = fiducials.items[0]
@@ -26,6 +26,14 @@ def test_build_fiducials_happy() -> None:
     assert first.point.system is CoordinateSystem.WORLD
     assert first.definition_method == "manual"
     assert first.weight == 1.0
+
+
+def test_build_fiducials_keeps_unknown_names_as_ids() -> None:
+    rows = [("Extra", np.zeros(3))]
+
+    fiducials = build_fiducials(rows)
+
+    assert fiducials.items[0].fiducial_id == "Extra"
 
 
 def test_build_fiducials_rejects_empty_name() -> None:
