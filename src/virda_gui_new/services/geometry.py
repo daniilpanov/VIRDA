@@ -41,8 +41,3 @@ def scene_placement(affine: np.ndarray | None) -> ScenePlacement:
         if affine is None
         else (np.ones(3), np.zeros(3), np.linalg.inv(affine), False)
     )
-
-
-def transform_points(points: np.ndarray, transform: np.ndarray) -> np.ndarray:
-    """Apply a 4x4 affine ``transform`` to an (N, 3) array of points."""
-    return np.asarray(points @ transform[:3, :3].T + transform[:3, 3], dtype=np.float64)

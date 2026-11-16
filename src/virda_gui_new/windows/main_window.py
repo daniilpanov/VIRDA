@@ -2,6 +2,8 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QMainWindow
 
+from virda_gui_new.widgets.viewer3d import SceneViewer3D
+
 
 class MainWindow(QMainWindow):
     def __init__(self, project_path: Path) -> None:
@@ -9,6 +11,9 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("VIRDA: Electrode Localization System")
         self._project_path = project_path
+
+        self._viewer3d = SceneViewer3D(self)
+        self.setCentralWidget(self._viewer3d)
 
         self.showMaximized()
         self.maximumSize()
