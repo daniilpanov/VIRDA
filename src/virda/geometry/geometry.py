@@ -1,10 +1,15 @@
 """The geometry service: frame conversions and mesh queries over one context."""
 
+from collections.abc import Mapping
+
 import numpy as np
 
 from virda.geometry.frames import SLOT_IDS, FrameContext, convert, convert_point
+from virda.geometry.measurement import DUPLICATE_TOLERANCE_MM, predict_measurement
 from virda.geometry.surface import SurfaceProbe
 from virda.models.coordinates import CoordinateSystem, Point
+from virda.models.fiducial import FiducialType
+from virda.models.measurement import MeasurementPrediction
 from virda.models.mesh import Mesh
 
 
@@ -96,3 +101,36 @@ class Geometry:
             self._probe = SurfaceProbe(mesh)
             self._probe_mesh = mesh
         return self._probe
+
+    # --- measurements ---
+
+    def predict_measurement(
+        self,
+        measured: Mapping[FiducialType, float],
+        fiducials: Mapping[FiducialType, Point],
+        mesh: Mesh,
+        missing: FiducialType,
+        *,
+        approximate: bool = True,
+        system: CoordinateSystem = CoordinateSystem.WORLD,
+        duplicate_tolerance_mm: float = DUPLICATE_TOLERANCE_MM,
+    ) -> MeasurementPrediction:
+        """Predict the distance to ``missing`` from two measured distances.
+
+        The electrode lies on the mesh surface: the two measured distances
+        put it on a circle, the surface cuts that circle into candidates
+        and the electrode side of the fiducial plane picks the right one.
+        ``approximate`` snaps the position to the closest mesh vertex --
+        the accuracy the mesh density controls.
+        """
+        return predict_measurement(
+            measured,
+            fiducials,
+            mesh,
+            missing,
+            self._context,
+            approximate=approximate,
+            system=system,
+            duplicate_tolerance_mm=duplicate_tolerance_mm,
+            probe=self.probe(mesh),
+        )

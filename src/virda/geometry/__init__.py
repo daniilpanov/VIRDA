@@ -8,6 +8,7 @@ from virda.geometry.frames import (
     match_fiducial_name,
 )
 from virda.geometry.geometry import Geometry
+from virda.geometry.measurement import predict_measurement
 from virda.geometry.surface import SurfaceProbe, distance_to_surface, nearest_vertex
 from virda.geometry.transforms import apply_transform
 
@@ -22,4 +23,5 @@ __all__ = [
     "distance_to_surface",
     "match_fiducial_name",
     "nearest_vertex",
+    "predict_measurement",
 ]

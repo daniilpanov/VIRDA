@@ -13,12 +13,12 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from virda.models.measurement import MeasurementPrediction
 
 from virda.geometry import match_fiducial_name
 from virda.models.coordinates import CoordinateSystem
 from virda.models.electrode import Electrodes
 from virda.models.fiducial import FiducialType
+from virda.models.measurement import MeasurementPrediction
 from virda.models.mri_volume import MRIVolume
 from virda_gui_new.constants import SETTLE_DELAY_MS
 from virda_gui_new.dto.steps import (

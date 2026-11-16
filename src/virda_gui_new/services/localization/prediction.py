@@ -6,11 +6,10 @@ and the third distance follows from the position. The popup uses this
 to fill the empty cells of its measurement grid.
 """
 
-from virda.models.measurement import MeasurementPrediction
-
 from virda.geometry import Geometry, match_fiducial_name
 from virda.models.coordinates import Point
 from virda.models.fiducial import SLOT_IDS, Fiducials, FiducialType
+from virda.models.measurement import MeasurementPrediction
 from virda.models.mesh import Mesh
 from virda_gui_new.services.localization.build import MeasurementTable
 
