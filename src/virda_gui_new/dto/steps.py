@@ -21,3 +21,21 @@ ESE_MESH = Step(3, "ESE mesh", ("ese_mesh",))
 LOCALIZATION = Step(4, "Localization", ())  # live step: no required keys
 
 STEPS: tuple[Step, ...] = (NIFTI, BASE_MESH, MESH_POSTPROCESSING, ESE_MESH, LOCALIZATION)
+
+#: One input of a step: the context keys that satisfy it. The first
+#: entry is the step the key belongs to, the second one the key.
+RunInput = tuple[tuple[int, str], ...]
+
+#: The inputs every step needs to run, as alternatives: a requirement
+#: is met when one of its context keys holds a value. The steps read
+#: their input from the step that produced it.
+RUN_INPUTS: dict[int, tuple[RunInput, ...]] = {
+    BASE_MESH.index: (((NIFTI.index, "volume"),),),
+    MESH_POSTPROCESSING.index: (((BASE_MESH.index, "scalp_surface"),),),
+    ESE_MESH.index: (((MESH_POSTPROCESSING.index, "mesh"), (BASE_MESH.index, "scalp_surface")),),
+    LOCALIZATION.index: (
+        ((ESE_MESH.index, "ese_mesh"),),
+        ((ESE_MESH.index, "normals"),),
+        ((MESH_POSTPROCESSING.index, "mesh"), (BASE_MESH.index, "scalp_surface")),
+    ),
+}

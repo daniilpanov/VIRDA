@@ -130,6 +130,30 @@ def test_confirm_partial_import_cancel_returns_false(qapp, monkeypatch) -> None:
     )
 
 
+def test_confirm_partial_import_explains_the_chain_gap(qapp, monkeypatch) -> None:
+    """The gap that stopped the chain is explained in the dialog."""
+    from PySide6.QtWidgets import QMessageBox
+
+    from virda_gui_new.services.step_seeding import StepChainIncompleteError
+
+    captured: dict[str, Any] = {}
+
+    def fake_question(parent, title, text, buttons=None, default=None):
+        captured.update(text=text)
+        return QMessageBox.StandardButton.Ok
+
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(fake_question))
+
+    incomplete = StepChainIncompleteError(2, ("mesh",))
+
+    assert confirm_partial_import(None, [], 2, incomplete) is True
+    assert captured["text"] == (
+        "Step 2 (Mesh postprocessing) has no mesh result: the later steps were "
+        "not loaded and the pipeline continues from step 2.\n\n"
+        "Open the project anyway?"
+    )
+
+
 def test_confirm_partial_import_without_a_problem_asks_nothing(qapp, monkeypatch) -> None:
     """Nothing to report means no dialog at all."""
     from PySide6.QtWidgets import QMessageBox

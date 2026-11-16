@@ -1,0 +1,269 @@
+"""Unit tests for :class:`virda_gui_new.services.steps_manager.StepsManager`."""
+
+import pytest
+
+from virda_gui_new.dto.steps import (
+    BASE_MESH,
+    ESE_MESH,
+    LOCALIZATION,
+    MESH_POSTPROCESSING,
+    NIFTI,
+    STEPS,
+)
+from virda_gui_new.services.steps_manager import StepsManager
+
+
+def test_init_creates_step_zero_context() -> None:
+    manager = StepsManager((("a",), ("b",)))
+
+    assert manager.get_current_step() == 0
+    assert manager.get_step_context_item(0, "a") is None
+
+
+def test_init_without_required_keys_starts_at_step_zero() -> None:
+    manager = StepsManager()
+
+    assert manager.get_current_step() == 0
+    assert manager.is_step_done(0) is False
+
+
+def test_next_step_advances_current_step() -> None:
+    manager = StepsManager([(), ()])
+
+    manager.next_step()
+
+    assert manager.get_current_step() == 1
+    manager.next_step()
+    assert manager.get_current_step() == 2
+
+
+def test_next_step_refuses_to_leave_an_unfinished_step() -> None:
+    """The current step must hold its required keys to be left."""
+    manager = StepsManager((("a",),))
+
+    with pytest.raises(ValueError, match="missing required keys"):
+        manager.next_step()
+
+    assert manager.get_current_step() == 0
+
+
+def test_next_step_advances_once_the_step_is_finished() -> None:
+    manager = StepsManager((("a",),))
+    manager.set_step_context_item(0, "a", 1)
+
+    manager.next_step()
+
+    assert manager.get_current_step() == 1
+
+
+def test_missing_required_keys_lists_the_gaps() -> None:
+    manager = StepsManager((("a", "b"), ()))
+    manager.set_step_context_item(0, "a", 1)
+
+    assert manager.missing_required_keys(0) == ("b",)
+
+    manager.set_step_context_item(0, "b", 2)
+    assert manager.missing_required_keys(0) == ()
+
+
+def test_can_advance_follows_the_current_step() -> None:
+    manager = StepsManager((("a",),))
+
+    assert manager.can_advance() is False
+
+    manager.set_step_context_item(0, "a", 1)
+    assert manager.can_advance() is True
+
+
+def test_a_step_without_required_keys_never_blocks_the_advance() -> None:
+    """The live step has no required keys, so it is always left behind."""
+    manager = StepsManager(((),))
+
+    manager.next_step()
+
+    assert manager.get_current_step() == 1
+    assert manager.can_advance() is True
+    assert manager.missing_required_keys(1) == ()
+
+
+def test_set_and_get_context_item() -> None:
+    manager = StepsManager()
+
+    manager.set_step_context_item(0, "volume", "data")
+
+    assert manager.get_step_context_item(0, "volume") == "data"
+    assert manager.get_step_context_item(0, "other") is None
+
+
+def test_several_context_items_notify_once() -> None:
+    """One write of several keys means one notification."""
+    manager = StepsManager()
+    notifications: list[int] = []
+    manager.subscribe(lambda: notifications.append(len(notifications)))
+
+    manager.set_step_context_items(0, {"a": 1, "b": 2})
+
+    assert manager.get_step_context_item(0, "a") == 1
+    assert manager.get_step_context_item(0, "b") == 2
+    assert len(notifications) == 1
+
+
+def test_step_done_requires_all_keys() -> None:
+    manager = StepsManager((("a", "b"), ()))
+
+    manager.set_step_context_item(0, "a", 1)
+    assert manager.is_step_done(0) is False
+
+    manager.set_step_context_item(0, "b", 2)
+    assert manager.is_step_done(0) is True
+
+
+def test_step_done_false_for_step_without_required_keys_entry() -> None:
+    # Five contexts exist but only two steps carry required keys.
+    manager = StepsManager((("a",), ("b",)))
+    manager.set_step_context_item(0, "a", 1)
+    manager.next_step()
+    manager.set_step_context_item(1, "b", 2)
+    manager.next_step()
+    manager.next_step()
+    manager.next_step()
+
+    assert manager.is_step_done(3) is False
+    assert manager.is_step_done(4) is False
+
+
+def test_step_done_false_for_empty_required_keys_entry() -> None:
+    """A step with a ``()`` keys entry (live step) is never done."""
+    manager = StepsManager((("a",), ()))
+    manager.set_step_context_item(0, "a", 1)
+    manager.next_step()
+
+    assert manager.is_step_done(1) is False
+
+
+def test_invalidate_steps_after_truncates_contexts() -> None:
+    manager = StepsManager([(), (), ()])
+    manager.set_step_context_item(0, "a", 1)
+    manager.next_step()
+    manager.set_step_context_item(1, "b", 2)
+    manager.next_step()
+
+    manager.invalidate_steps_after(0)
+
+    assert manager.get_current_step() == 0
+    assert manager.get_step_context_item(0, "a") == 1
+    with pytest.raises(ValueError, match="out of bounds"):
+        manager.get_step_context_item(1, "b")
+
+
+def test_context_accessors_reject_out_of_bounds_steps() -> None:
+    manager = StepsManager()
+
+    for call in ("get", "set"):
+        with pytest.raises(ValueError, match="out of bounds"):
+            if call == "get":
+                manager.get_step_context_item(1, "a")
+            else:
+                manager.set_step_context_item(1, "a", 1)
+
+    with pytest.raises(ValueError, match="out of bounds"):
+        manager.is_step_done(1)
+
+    with pytest.raises(ValueError, match="out of bounds"):
+        manager.invalidate_steps_after(1)
+
+    with pytest.raises(ValueError, match="out of bounds"):
+        manager.get_step_context_item(-1, "a")
+
+
+def test_all_contexts_returns_ordered_copies() -> None:
+    manager = StepsManager([(), ()])
+    manager.set_step_context_item(0, "a", 1)
+    manager.next_step()
+    manager.set_step_context_item(1, "b", 2)
+
+    contexts = manager.all_contexts()
+
+    assert contexts == [{"a": 1}, {"b": 2}]
+    contexts[0]["a"] = 999
+    assert manager.get_step_context_item(0, "a") == 1
+    assert manager.all_contexts() == [{"a": 1}, {"b": 2}]
+
+
+def test_subscriber_notified_on_every_mutation() -> None:
+    calls: list[int] = []
+    manager = StepsManager()
+    manager.subscribe(lambda: calls.append(len(calls)))
+
+    assert calls == []
+    manager.set_step_context_item(0, "a", 1)
+    assert len(calls) == 1
+
+    manager.next_step()
+    assert len(calls) == 2
+
+    manager.invalidate_steps_after(0)
+    assert len(calls) == 3
+
+
+def _manager_at_the_last_step() -> StepsManager:
+    """A manager whose current step is the last one of the pipeline."""
+    manager = StepsManager()
+    for _ in range(len(STEPS) - 1):
+        manager.next_step()
+    return manager
+
+
+def test_a_step_without_inputs_needs_nothing() -> None:
+    manager = _manager_at_the_last_step()
+
+    assert manager.missing_inputs(NIFTI.index) == ()
+
+
+def test_the_missing_inputs_name_the_absent_context_keys() -> None:
+    manager = _manager_at_the_last_step()
+
+    assert manager.missing_inputs(LOCALIZATION.index) == ("ese_mesh", "normals", "mesh")
+
+
+def test_the_ese_step_runs_on_the_postprocessed_or_on_the_raw_mesh() -> None:
+    manager = _manager_at_the_last_step()
+    manager.set_step_context_item(BASE_MESH.index, "scalp_surface", "mesh")
+
+    assert manager.missing_inputs(ESE_MESH.index) == ()
+
+    manager.set_step_context_item(MESH_POSTPROCESSING.index, "mesh", "mesh")
+
+    assert manager.missing_inputs(ESE_MESH.index) == ()
+
+
+def test_the_localization_runs_once_its_inputs_are_there() -> None:
+    manager = _manager_at_the_last_step()
+    manager.set_step_context_item(MESH_POSTPROCESSING.index, "mesh", "mesh")
+    manager.set_step_context_item(ESE_MESH.index, "ese_mesh", "ese")
+    manager.set_step_context_item(ESE_MESH.index, "normals", "normals")
+
+    assert manager.missing_inputs(LOCALIZATION.index) == ()
+
+
+def test_the_missing_inputs_of_a_step_out_of_bounds_are_refused() -> None:
+    manager = StepsManager()
+
+    with pytest.raises(ValueError, match="out of bounds"):
+        manager.missing_inputs(LOCALIZATION.index)
+
+
+def test_an_unsubscribed_listener_is_not_called() -> None:
+    """A listener that unsubscribed is not called again."""
+    manager = StepsManager()
+    calls: list[int] = []
+
+    def listener() -> None:
+        calls.append(1)
+
+    manager.subscribe(listener)
+    manager.set_step_context_item(0, "a", 1)
+    manager.unsubscribe(listener)
+    manager.set_step_context_item(0, "b", 2)
+
+    assert calls == [1]
