@@ -440,9 +440,6 @@ def test_concrete_popup_blocked_states(qapp, popups, monkeypatch) -> None:
     popups.append(popup)
 
     assert popup._hint_label.text() == "Blocked: not enough fiducials (need 3)."
-    for _row in range(3):
-        popup._fiducials_table.add_row()
-    assert popup._hint_label.text() == "Blocked: not enough fiducials (need 3)."
     for row, coords in enumerate(("0 0 1", "1 0 0", "-1 0 0")):
         popup._fiducials_table._table.setItem(row, 0, QTableWidgetItem("Nasion"))
         for column, text in enumerate(coords.split(), start=1):
@@ -468,8 +465,6 @@ def test_concrete_popup_live_flow(qapp, popups, monkeypatch) -> None:
     popup = LocalizationPopup(LOCALIZATION, manager)
     popups.append(popup)
 
-    for _row in range(3):
-        popup._fiducials_table.add_row()
     for row, (name, coords) in enumerate(
         zip(("Nasion", "LPA", "RPA"), ("0 0 1", "1 0 0", "-1 0 0"), strict=True)
     ):

@@ -38,6 +38,7 @@ class LocalizationPopup(LocalizationPopupBase):
         layout.addWidget(QLabel("Electrodes", self))
         layout.addWidget(self._electrodes_table)
         self._fiducials_table.rowsChanged.connect(self._on_inputs_changed)
+        self._fiducials_table.cleared.connect(self._clear_fiducial_store)
         self._measurements_table.rowsChanged.connect(self._on_measurement_table_changed)
         self._measurements_table.electrodeEdited.connect(self._on_measurement_edited)
         self._prefill_fiducials()
