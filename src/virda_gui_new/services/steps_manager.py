@@ -100,9 +100,9 @@ class StepsManager:
 
         An empty tuple means the step can run. The step menu and the
         step popups read this answer, so they cannot disagree about
-        whether a step is ready.
+        whether a step is ready. The answer covers every step of the
+        pipeline: a step that does not exist yet misses all its inputs.
         """
-        self._validate_step(step_n)
         missing: list[str] = []
         for requirement in RUN_INPUTS.get(step_n, ()):
             if not any(self._has_context(step, key) for step, key in requirement):

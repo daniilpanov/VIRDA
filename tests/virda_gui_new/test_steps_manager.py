@@ -246,11 +246,10 @@ def test_the_localization_runs_once_its_inputs_are_there() -> None:
     assert manager.missing_inputs(LOCALIZATION.index) == ()
 
 
-def test_the_missing_inputs_of_a_step_out_of_bounds_are_refused() -> None:
+def test_the_missing_inputs_of_a_step_that_does_not_exist_yet_are_all_of_them() -> None:
     manager = StepsManager()
 
-    with pytest.raises(ValueError, match="out of bounds"):
-        manager.missing_inputs(LOCALIZATION.index)
+    assert manager.missing_inputs(LOCALIZATION.index) == ("ese_mesh", "normals", "mesh")
 
 
 def test_an_unsubscribed_listener_is_not_called() -> None:
