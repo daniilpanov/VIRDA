@@ -4,8 +4,18 @@ from .fixtures import (
     manager,
     menu,
     points,
+    popups,
     qapp,
     viewer,
 )
 
-__all__ = ["advance", "advance_to", "manager", "menu", "points", "qapp", "viewer"]
+__all__ = [
+    "advance",
+    "advance_to",
+    "manager",
+    "menu",
+    "points",
+    "popups",
+    "qapp",
+    "viewer",
+]
