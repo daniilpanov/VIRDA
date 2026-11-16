@@ -413,6 +413,150 @@ def test_concrete_popup_prefill_absent_keeps_empty_grid(qapp, popups) -> None:
     assert popup.collect_fiducial_rows() == []
 
 
+def test_concrete_popup_empty_clears_fiducial_store(qapp, popups) -> None:
+    """The Empty action clears the grid and the global store (one write)."""
+    from virda_gui_new.dto.viewer3d import LabeledPoints
+
+    manager = _make_manager()
+    points = LabeledPoints(
+        np.array([[3.0, 94.0, 32.0], [-69.0, 10.0, -25.0], [77.0, 12.0, -30.0]]),
+        ("NASION", "LPA", "RPA"),
+    )
+    manager.set_global_item("fiducials", points)
+    notifications: list[int] = []
+    manager.subscribe(lambda: notifications.append(1))
+    popup = LocalizationPopup(LOCALIZATION, manager)
+    popups.append(popup)
+
+    assert [name for name, _xyz in popup.collect_fiducial_rows()] == ["NASION", "LPA", "RPA"]
+
+    popup._fiducials_table.clear_grid()
+
+    assert popup.collect_fiducial_rows() == []
+    assert manager.get_global_item("fiducials") is None
+    assert len(notifications) == 1  # only the store write notified
+
+
+def _stub_file_dialog(monkeypatch: object, path: str | None) -> None:
+    """Make every QFileDialog.getOpenFileName return ``path`` (or cancel)."""
+
+    def fake_get_open_file_name(*_args: object, **_kwargs: object) -> tuple[str, str]:
+        return ("", "") if path is None else (path, "")
+
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        "virda_gui_new.widgets.popup.localization.popup.QFileDialog.getOpenFileName",
+        staticmethod(fake_get_open_file_name),
+    )
+
+
+def test_concrete_popup_imports_fiducials_from_file(
+    qapp, popups, monkeypatch, tmp_path: Path
+) -> None:
+    """Import fills the fixed slots and refreshes the global store."""
+    from virda_gui_new.dto.viewer3d import LabeledPoints
+
+    source = tmp_path / "other.json"
+    source.write_text(
+        json.dumps(
+            {
+                "fiducials": [
+                    {
+                        "fiducial_id": "NAS",
+                        "name": "NAS",
+                        "coordinates": [10.0, 0.0, 0.0],
+                        "coordinate_system": "world",
+                        "definition_method": "imported",
+                    },
+                    {
+                        "fiducial_id": "LPA",
+                        "name": "LPA",
+                        "coordinates": [0.0, 10.0, 0.0],
+                        "coordinate_system": "world",
+                        "definition_method": "imported",
+                    },
+                    {
+                        "fiducial_id": "RPA",
+                        "name": "RPA",
+                        "coordinates": [0.0, 0.0, 10.0],
+                        "coordinate_system": "world",
+                        "definition_method": "imported",
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    manager = _make_manager()
+    points = LabeledPoints(
+        np.array([[1.0, 1.0, 1.0], [2.0, 2.0, 2.0], [3.0, 3.0, 3.0]]),
+        ("NAS", "LPA", "RPA"),
+    )
+    manager.set_global_item("fiducials", points)
+    popup = LocalizationPopup(LOCALIZATION, manager)
+    popups.append(popup)
+    _stub_file_dialog(monkeypatch, str(source))
+
+    popup._fiducials_table.importRequested.emit()
+
+    rows = popup.collect_fiducial_rows()
+    assert [name for name, _xyz in rows] == ["NAS", "LPA", "RPA"]
+    assert rows[0][1].tolist() == [10.0, 0.0, 0.0]
+    stored = manager.get_global_item("fiducials")
+    assert isinstance(stored, LabeledPoints)
+    assert stored.points.tolist() == [[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]
+
+
+def test_concrete_popup_fiducials_import_error_is_a_hint(qapp, popups, monkeypatch) -> None:
+    """An unreadable import file shows a hint instead of crashing."""
+    popup = LocalizationPopup(LOCALIZATION, _make_manager())
+    popups.append(popup)
+    _stub_file_dialog(monkeypatch, str(Path("missing.json")))
+
+    popup._fiducials_table.importRequested.emit()
+
+    assert popup._hint_label.text().startswith("Failed to import fiducials:")
+    assert popup.collect_fiducial_rows() == []
+
+
+def test_concrete_popup_imports_measurements_from_file(
+    qapp, popups, monkeypatch, tmp_path: Path
+) -> None:
+    """Import fills the measurement grid from the project format."""
+    source = tmp_path / "measurements.json"
+    source.write_text(
+        json.dumps(
+            {
+                "electrodes": [
+                    {"electrode_id": "EEG 001", "measured_distances": {"NAS": 62.5}},
+                    {"electrode_id": "EEG 002", "measured_distances": {"LPA": 111.25}},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    popup = LocalizationPopup(LOCALIZATION, _make_manager())
+    popups.append(popup)
+    _stub_file_dialog(monkeypatch, str(source))
+
+    popup._measurements_table.importRequested.emit()
+
+    assert popup.collect_measurement_table() == {
+        "EEG 001": {"NAS": 62.5},
+        "EEG 002": {"LPA": 111.25},
+    }
+
+
+def test_concrete_popup_measurements_import_error_is_a_hint(qapp, popups, monkeypatch) -> None:
+    popup = LocalizationPopup(LOCALIZATION, _make_manager())
+    popups.append(popup)
+    _stub_file_dialog(monkeypatch, str(Path("missing.json")))
+
+    popup._measurements_table.importRequested.emit()
+
+    assert popup._hint_label.text().startswith("Failed to import measurements:")
+    assert popup.collect_measurement_table() == {}
+
+
 def test_concrete_popup_prefill_precedes_runner_setup(qapp, popups) -> None:
     """No geometry: the prefill emits before the runner exists; no crash."""
     from virda_gui_new.dto.viewer3d import LabeledPoints
@@ -441,7 +585,6 @@ def test_concrete_popup_blocked_states(qapp, popups, monkeypatch) -> None:
 
     assert popup._hint_label.text() == "Blocked: not enough fiducials (need 3)."
     for row, coords in enumerate(("0 0 1", "1 0 0", "-1 0 0")):
-        popup._fiducials_table._table.setItem(row, 0, QTableWidgetItem("Nasion"))
         for column, text in enumerate(coords.split(), start=1):
             popup._fiducials_table._table.setItem(row, column, QTableWidgetItem(text))
     assert popup._hint_label.text() == "Blocked: no measurements."
@@ -465,10 +608,7 @@ def test_concrete_popup_live_flow(qapp, popups, monkeypatch) -> None:
     popup = LocalizationPopup(LOCALIZATION, manager)
     popups.append(popup)
 
-    for row, (name, coords) in enumerate(
-        zip(("Nasion", "LPA", "RPA"), ("0 0 1", "1 0 0", "-1 0 0"), strict=True)
-    ):
-        popup._fiducials_table._table.setItem(row, 0, QTableWidgetItem(name))
+    for row, coords in enumerate(("0 0 1", "1 0 0", "-1 0 0")):
         for column, text in enumerate(coords.split(), start=1):
             popup._fiducials_table._table.setItem(row, column, QTableWidgetItem(text))
     popup._measurements_table.add_row()
@@ -754,3 +894,30 @@ def test_the_ready_popup_says_so(qapp, popups) -> None:
     popups.append(popup)
 
     assert popup._hint_label.text() == "Ready."
+
+
+def test_imported_measurements_are_stored_in_the_project(
+    qapp, popups, monkeypatch, tmp_path
+) -> None:
+    """An import is written to the project, even without a localization run."""
+    _patch_localize(monkeypatch, [], Electrodes([]))
+    manager = _make_manager()
+    popup = LocalizationPopup(LOCALIZATION, manager, project=tmp_path)
+    popups.append(popup)
+
+    source = tmp_path / "measurements.json"
+    source.write_text(
+        json.dumps({"electrodes": [{"electrode_id": "A", "measured_distances": {"LPA": 10.0}}]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "virda_gui_new.widgets.popup.localization.popup.QFileDialog.getOpenFileName",
+        staticmethod(lambda *a, **k: (str(source), "")),
+    )
+
+    popup._import_measurements_from_file()
+
+    stored = json.loads(
+        (tmp_path / "localization" / "measurements.json").read_text(encoding="utf-8")
+    )
+    assert stored["electrodes"] == [{"electrode_id": "A", "measured_distances": {"LPA": 10.0}}]
