@@ -4,7 +4,22 @@ from pathlib import Path
 
 import numpy as np
 
-from virda.models.mesh import Mesh
+from virda.models.mesh import Mesh, Normals
+
+
+def import_ese_normals(path: str | Path) -> Normals:
+    """Read the per-vertex normals from the .npy file at *path*.
+
+    Raises :class:`ValueError` when the file is missing or malformed.
+    """
+    source = Path(path)
+    try:
+        normals = np.asarray(np.load(source), dtype=np.float64)
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"Cannot import the ESE normals from {source}: {exc}") from exc
+    if normals.ndim != 2 or normals.shape[1] != 3:
+        raise ValueError(f"ESE normals must be (N, 3) arrays, got shape {normals.shape}")
+    return normals
 
 
 def import_ese_mesh(path: str | Path) -> Mesh:
