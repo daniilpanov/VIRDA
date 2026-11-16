@@ -11,6 +11,7 @@ from tests.virda_gui_new.fixtures.steps import advance_to
 from virda.geometry import Geometry
 from virda.models.coordinates import CoordinateSystem
 from virda.models.electrode import Electrode, Electrodes
+from virda.models.fiducial import FiducialType
 from virda.models.mesh import Mesh
 from virda_gui_new.dto.steps import STEPS
 from virda_gui_new.dto.viewer3d import LabeledPoints
@@ -75,7 +76,17 @@ def test_fiducials_table_has_three_fixed_named_rows(qapp) -> None:
         assert not (cast("QTableWidgetItem", name_item).flags() & Qt.ItemFlag.ItemIsEditable)
     assert widget.collect_fiducial_rows() == []  # coordinates blank
     buttons = widget.findChildren(QPushButton)
-    assert [button.text() for button in buttons] == ["From file", "Empty"]
+    # The row buttons are picked by their text: the table carries one
+    # "Pick" button per row.
+    assert sorted(button.text() for button in buttons) == [
+        "Empty",
+        "From file",
+        "Pick",
+        "Pick",
+        "Pick",
+    ]
+    row_buttons = [widget._table.cellWidget(row, 5) for row in range(3)]
+    assert [cast("QPushButton", button).text() for button in row_buttons] == ["Pick"] * 3
 
 
 def test_fiducials_table_import_button_signals(qapp) -> None:
@@ -85,7 +96,9 @@ def test_fiducials_table_import_button_signals(qapp) -> None:
     events: list[int] = []
     widget.importRequested.connect(lambda: events.append(1))
 
-    from_file = widget.findChildren(QPushButton)[0]
+    from_file = next(
+        button for button in widget.findChildren(QPushButton) if button.text() == "From file"
+    )
     from_file.click()
 
     assert events == [1]
@@ -217,6 +230,67 @@ def test_fiducials_table_status_reports_no_row_change(qapp) -> None:
     widget.set_surface_status({"NAS": SurfaceStatus(distance_mm=4.2, on_surface=False)})
 
     assert events == []
+
+
+def test_fiducials_table_pick_button_signals(qapp) -> None:
+    from PySide6.QtWidgets import QPushButton
+
+    widget = FiducialsTable()
+    events: list[str] = []
+    widget.pickRequested.connect(lambda slot: events.append(slot))
+
+    button = widget._table.cellWidget(0, 5)
+    assert isinstance(button, QPushButton)
+    button.click()
+
+    assert events == ["NAS"]
+
+
+def test_fiducials_table_pick_target_marks_the_row(qapp) -> None:
+    from PySide6.QtWidgets import QPushButton
+
+    widget = FiducialsTable()
+
+    widget.set_pick_target(FiducialType.LPA)
+
+    first = widget._table.cellWidget(0, 5)
+    second = widget._table.cellWidget(1, 5)
+    assert isinstance(first, QPushButton)
+    assert isinstance(second, QPushButton)
+    assert first.isChecked() is False
+    assert second.isChecked() is True
+
+
+def test_fiducials_table_pick_button_can_be_disabled(qapp) -> None:
+    from PySide6.QtWidgets import QPushButton
+
+    widget = FiducialsTable()
+
+    widget.set_pick_available(False)
+
+    button = widget._table.cellWidget(0, 5)
+    assert isinstance(button, QPushButton)
+    assert button.isEnabled() is False
+
+
+def test_fiducials_table_pick_point_writes_the_row(qapp) -> None:
+    widget = FiducialsTable()
+    events: list[int] = []
+    widget.rowsChanged.connect(lambda: events.append(1))
+
+    assert widget.set_pick_point("NAS", np.array([1.0, 2.0, 3.0])) is True
+
+    rows = widget.collect_fiducial_rows()
+    assert [name for name, _xyz in rows] == ["NAS"]
+    assert rows[0][1].tolist() == [1.0, 2.0, 3.0]
+    assert len(events) == 1
+
+
+def test_fiducials_table_pick_point_of_an_unknown_slot_is_ignored(qapp) -> None:
+    widget = FiducialsTable()
+
+    assert widget.set_pick_point("Extra", np.zeros(3)) is False
+    assert widget.collect_fiducial_rows() == []
 
 
 def test_measurements_table_last_row_wins(qapp) -> None:

@@ -100,6 +100,7 @@ class LocalizationPopup(LocalizationPopupBase):
         # The geometry is known only after the base built the form.
         self._update_prediction_state()
         self._update_surface_status()
+        self._update_pick_state()
         # A prediction is a heavy computation: it runs on a worker
         # thread, so the window stays responsive while it is computed.
         self._prediction_runner = TaskRunner(self)
@@ -143,7 +144,7 @@ class LocalizationPopup(LocalizationPopupBase):
         self._fiducials_table.cleared.connect(self._clear_fiducial_store)
         self._fiducials_table.importRequested.connect(self._import_fiducials_from_file)
         self._measurements_table.rowsChanged.connect(self._on_measurement_table_changed)
-        self._measurements_table.electrodeSetChanged.connect(self._on_electrode_set_changed)
+        self._fiducials_table.pickRequested.connect(self._on_pick_requested)
         self._measurements_table.electrodeEdited.connect(self._on_measurement_edited)
         self._measurements_table.electrodeSetChanged.connect(self._on_electrode_set_changed)
         self._measurements_table.importRequested.connect(self._import_measurements_from_file)
@@ -153,6 +154,7 @@ class LocalizationPopup(LocalizationPopupBase):
         self._stale_timer.setInterval(SETTLE_DELAY_MS)
         self._stale_timer.timeout.connect(self._check_stale_predictions)
         self._prediction_state: PredictionFingerprint | None = None
+        self._pick_slot: str | None = None
         self._prefill_fiducials()
         self._prefill_measurements()
         self._prefill_electrodes()
@@ -486,6 +488,10 @@ class LocalizationPopup(LocalizationPopupBase):
         )
         self._fiducials_table.set_surface_status(status)
 
+    def _update_pick_state(self) -> None:
+        """Tell the table whether a point can be picked (the scalp is needed)."""
+        self._fiducials_table.set_pick_available(self._scalp_mesh is not None)
+
     def _prediction_fingerprint(self) -> PredictionFingerprint:
         """The inputs the predicted measurements depend on.
 
@@ -554,12 +560,35 @@ class LocalizationPopup(LocalizationPopupBase):
         super()._on_inputs_changed()
         self._update_prediction_state()
         self._update_surface_status()
+        self._update_pick_state()
         self._stale_timer.start()
 
     def _on_options_changed(self, *_args: object) -> None:
         """Store the settings and refresh the surface check."""
         super()._on_options_changed()
         self._update_surface_status()
+
+    def _on_pick_requested(self, slot: str) -> None:
+        """Start picking a point for a slot, or stop it for the same slot."""
+        if self._pick_slot == slot:
+            self._pick_slot = None
+            self._fiducials_table.set_pick_target(None)
+            self.pickCancelled.emit()
+            return
+        self._pick_slot = slot
+        self._fiducials_table.set_pick_target(FiducialType(slot))
+        self.pickRequested.emit(slot)
+
+    def set_picked_point(self, slot: str, point: np.ndarray) -> None:
+        """Write a point picked in the 3D view into the fiducials table.
+
+        The store is refreshed right away, so the picked point shows in
+        the 3D view even when the localization cannot run yet.
+        """
+        self._pick_slot = None
+        self._fiducials_table.set_pick_target(None)
+        self._fiducials_table.set_pick_point(slot, point)
+        self._refresh_fiducial_store()
 
     def _ask_json_path(self, title: str) -> Path | None:
         """One JSON file chosen in a dialog, or ``None`` when cancelled."""

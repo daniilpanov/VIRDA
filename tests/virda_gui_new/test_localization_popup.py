@@ -627,6 +627,51 @@ def _fiducials_item_enabled(selector: FrameSelector) -> bool:
     return bool(model.item(index).isEnabled())
 
 
+def test_concrete_popup_pick_button_asks_the_viewer(qapp, popups) -> None:
+    """The Pick button asks the 3D view for a point of that slot."""
+    from PySide6.QtWidgets import QPushButton
+
+    popup = LocalizationPopup(LOCALIZATION, _make_manager())
+    popups.append(popup)
+    events: list[str] = []
+    popup.pickRequested.connect(lambda slot: events.append(slot))
+
+    button = popup._fiducials_table._table.cellWidget(0, 5)
+    assert isinstance(button, QPushButton)
+    button.click()
+
+    assert events == ["NAS"]
+
+
+def test_concrete_popup_pick_button_stops_the_same_slot(qapp, popups) -> None:
+    """Picking the same slot twice leaves the picking mode."""
+    from PySide6.QtWidgets import QPushButton
+
+    popup = LocalizationPopup(LOCALIZATION, _make_manager())
+    popups.append(popup)
+    cancelled: list[int] = []
+    popup.pickCancelled.connect(lambda: cancelled.append(1))
+
+    button = popup._fiducials_table._table.cellWidget(0, 5)
+    assert isinstance(button, QPushButton)
+    button.click()
+    button.click()
+
+    assert cancelled == [1]
+
+
+def test_concrete_popup_writes_the_picked_point(qapp, popups) -> None:
+    """A picked point lands in the row of its slot."""
+    popup = LocalizationPopup(LOCALIZATION, _make_manager())
+    popups.append(popup)
+
+    popup.set_picked_point("NAS", np.array([1.0, 2.0, 3.0]))
+
+    rows = popup.collect_fiducial_rows()
+    assert [name for name, _xyz in rows] == ["NAS"]
+    assert rows[0][1].tolist() == [1.0, 2.0, 3.0]
+
+
 def test_concrete_popup_frame_selectors_default_to_head(qapp, popups) -> None:
     """Both selectors default to head; head is available (scalp mesh set)."""
     popup = LocalizationPopup(LOCALIZATION, _make_manager())

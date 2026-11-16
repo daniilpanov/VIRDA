@@ -4,6 +4,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol
 
+import numpy as np
 from PySide6.QtCore import QEvent
 from PySide6.QtGui import QAction, QCloseEvent
 from PySide6.QtWidgets import QMainWindow, QMenu, QWidget
@@ -101,6 +102,7 @@ class MainWindow(QMainWindow):
         self._viewer3d = SceneViewer3D(self, log=self._log)
         self._viewer3d.sceneLoaded.connect(self._on_scene_loaded)
         self._viewer3d.sceneFailed.connect(self._on_scene_failed)
+        self._viewer3d.surfacePointPicked.connect(self._on_surface_point_picked)
         self.setCentralWidget(self._viewer3d)
 
         if prepared is None:
@@ -172,6 +174,8 @@ class MainWindow(QMainWindow):
         popup = factory()
         popup.completed.connect(self._on_step_completed)
         popup.failed.connect(lambda msg, s=step_n: self._log(f"Step {s} failed: {msg}"))
+        popup.pickRequested.connect(self._viewer3d.start_surface_picking)
+        popup.pickCancelled.connect(self._viewer3d.stop_surface_picking)
         window = open_widget_window(popup, parent=self, title=STEPS[step_n].name)
 
         def on_window_destroyed(*_args: object) -> None:
@@ -180,6 +184,13 @@ class MainWindow(QMainWindow):
         window.destroyed.connect(on_window_destroyed)
         self._popups[step_n] = popup
         self._popup_windows[step_n] = window
+
+    def _on_surface_point_picked(self, slot: str, point: object) -> None:
+        """Write a point picked in the 3D view into the open step popup."""
+        popup = self._popups.get(LOCALIZATION.index)
+        if popup is None:
+            return
+        popup.set_picked_point(slot, np.asarray(point, dtype=np.float64))
 
     def _on_step_completed(self, step_n: int) -> None:
         self._log(f"Step {step_n} done.")

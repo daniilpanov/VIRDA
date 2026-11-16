@@ -4,6 +4,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QLabel, QPushButton, QVBoxLayout, QWidget
 
@@ -33,10 +34,17 @@ class StepPopupBase(QWidget):
     in-flight run before the host closes the popup. ``project`` is the
     open project directory; popups that persist their outputs hand it to
     the artifact savers (``None`` keeps save-free runs, as in tests).
+
+    A step that marks points on a mesh asks the 3D view for them:
+    ``pickRequested`` carries the slot to pick, ``pickCancelled`` asks
+    the view to stop, and the host hands the picked point back through
+    :meth:`set_picked_point`.
     """
 
     completed = Signal(int)  # noqa: N815
     failed = Signal(str)
+    pickRequested = Signal(str)  # noqa: N815 - the slot to pick
+    pickCancelled = Signal()  # noqa: N815 - stop picking
 
     def __init__(
         self,
@@ -100,6 +108,9 @@ class StepPopupBase(QWidget):
     def shutdown(self) -> None:
         """Stop any in-flight run; called by the host before closing."""
         self._runner.stop()
+
+    def set_picked_point(self, slot: str, point: np.ndarray) -> None:
+        """Take a point picked in the 3D view; steps without a picker ignore it."""
 
     def _on_run(self) -> None:
         if self._busy:

@@ -52,11 +52,14 @@ from PySide6.QtWidgets import (
 
 from virda.geometry import Geometry, match_fiducial_name
 from virda.models.coordinates import CoordinateSystem
-from virda.models.fiducial import SLOT_IDS
+from virda.models.fiducial import SLOT_IDS, FiducialType
 from virda_gui_new.services.localization import FiducialRows, SurfaceStatus
 
-#: The status column (leftmost), the name and the coordinates.
-_COLUMNS = ("", "Name", "X", "Y", "Z")
+#: The status column (leftmost), the name, the coordinates and the picker.
+_COLUMNS = ("", "Name", "X", "Y", "Z", "Pick")
+
+#: The column of the "Pick" button.
+_PICK_COLUMN = len(_COLUMNS) - 1
 
 #: The dot that marks a fiducial off the scalp surface.
 _OFF_SURFACE_DOT = "\u25cf"
@@ -78,6 +81,7 @@ class FiducialsTable(QWidget):
     rowsChanged = Signal()  # noqa: N815 - Qt signal API
     cleared = Signal()  # noqa: N815 - Qt signal API
     importRequested = Signal()  # noqa: N815 - Qt signal API
+    pickRequested = Signal(str)  # noqa: N815 - Qt signal API
 
     def __init__(self, converter: Geometry | None = None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -86,10 +90,17 @@ class FiducialsTable(QWidget):
         self._names = [str(slot) for slot in SLOT_IDS]
         self._world: list[np.ndarray | None] = [None] * len(SLOT_IDS)
         self._status: dict[str, SurfaceStatus] = {}
+        self._pick_target: FiducialType | None = None
+        self._pick_buttons: dict[int, QPushButton] = {}
 
         self._table = QTableWidget(len(SLOT_IDS), len(_COLUMNS), self)
         self._table.setHorizontalHeaderLabels(list(_COLUMNS))
         self._table.itemChanged.connect(self._on_item_changed)
+        for row, _slot in enumerate(SLOT_IDS):
+            button = QPushButton("Pick", self._table)
+            button.setCheckable(True)
+            button.clicked.connect(lambda _checked=False, r=row: self._on_pick_clicked(r))
+            self._pick_buttons[row] = button
 
         from_file = QPushButton("From file", self)
         from_file.clicked.connect(self.importRequested)
@@ -209,7 +220,38 @@ class FiducialsTable(QWidget):
                     item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 table.setItem(row, column, item)
             self._render_status(row, name)
+            table.setCellWidget(row, _PICK_COLUMN, self._pick_buttons[row])
         table.blockSignals(False)
+
+    def _on_pick_clicked(self, row: int) -> None:
+        """Ask for a point on the surface to be picked for this row."""
+        self.pickRequested.emit(SLOT_IDS[row].value)
+
+    def set_pick_target(self, slot: FiducialType | None) -> None:
+        """Mark the row whose point is being picked."""
+        self._pick_target = slot
+        for row, button in self._pick_buttons.items():
+            button.setChecked(SLOT_IDS[row] is slot)
+
+    def set_pick_available(self, available: bool) -> None:
+        """Whether a point can be picked at all (the scalp mesh is needed)."""
+        for button in self._pick_buttons.values():
+            button.setEnabled(available)
+
+    def set_pick_point(self, name: str, xyz: np.ndarray) -> bool:
+        """Write a picked point into the row of the given fiducial.
+
+        The point is in world millimetres, like the canonical rows.
+        Returns whether the slot was found.
+        """
+        slot = match_fiducial_name(name)
+        if slot is None:
+            return False
+        row = SLOT_IDS.index(slot)
+        self._world[row] = np.asarray(xyz, dtype=np.float64)
+        self._render()
+        self.rowsChanged.emit()
+        return True
 
     def _render_status(self, row: int, name: str) -> None:
         """Fill the status cell of one row: the dot and its tooltip."""
