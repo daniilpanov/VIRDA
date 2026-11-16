@@ -22,7 +22,7 @@ MEASUREMENTS_KEY = "measurements"
 NIFTI = Step(0, "NIfTI import", ("volume",))
 BASE_MESH = Step(1, "Base mesh", ("scalp_surface",))
 MESH_POSTPROCESSING = Step(2, "Mesh postprocessing", ("mesh",))
-ESE_MESH = Step(3, "ESE mesh", ("ese_mesh",))
+ESE_MESH = Step(3, "ESE mesh", ("ese_mesh", "normals"))
 LOCALIZATION = Step(4, "Localization", ())  # live step: no required keys
 
 STEPS: tuple[Step, ...] = (NIFTI, BASE_MESH, MESH_POSTPROCESSING, ESE_MESH, LOCALIZATION)

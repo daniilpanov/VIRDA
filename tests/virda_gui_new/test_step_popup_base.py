@@ -151,6 +151,9 @@ class _Host:
     def _log(self, message: str) -> None:
         self.logs.append(message)
 
+    def _refresh_filetree(self) -> None:
+        """No file tree on this stub: a completed step refreshes nothing."""
+
     def _on_step_completed(self, step_n: int) -> None:
         MainWindow._on_step_completed(self, step_n)  # type: ignore[arg-type]
 

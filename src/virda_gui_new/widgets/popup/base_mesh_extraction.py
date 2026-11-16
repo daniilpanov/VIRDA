@@ -16,7 +16,7 @@ from virda.models.mri_volume import MRIVolume
 from virda.models.scalp_surface import ScalpSurface
 from virda.ops.build_scalp_surface import generate_scalp_surface
 from virda_gui_new.dto.steps import BASE_MESH, NIFTI
-from virda_gui_new.services import artifact_loading
+from virda_gui_new.services import artifact_loading, artifact_saving
 from virda_gui_new.widgets.popup.abstract import StepPopupBase
 
 _NO_VOLUME = "Base mesh needs the NIfTI volume from step 0 (run NIfTI import first)."
@@ -121,6 +121,8 @@ class BaseMeshExtractionPopup(StepPopupBase):
             )
             # Persist before the result reaches the GUI thread: a save
             # failure fails the run like any other step error.
+            if self._project is not None:
+                artifact_saving.save_scalp_surface(self._project, volume, surface)
             return surface
 
         return run

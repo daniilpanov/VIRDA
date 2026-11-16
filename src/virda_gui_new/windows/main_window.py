@@ -51,7 +51,7 @@ class MainWindow(QMainWindow):
         self._steps.subscribe(self._on_steps_changed)
         self._rebuild_scene()
 
-        self._steps_menu = StepsMenu(self._steps)
+        self._steps_menu = StepsMenu(self._steps, project=self._project_path)
         self._steps_window: WidgetWindow | None = open_widget_window(
             self._steps_menu, parent=self, title="Steps"
         )

@@ -59,6 +59,11 @@ class LocalizationPopup(LocalizationPopupBase):
     def collect_measurement_table(self) -> MeasurementTable:
         return self._measurements_table.collect_measurement_table()
 
+    def _clear_fiducial_store(self) -> None:
+        """Clear the store; the cleared table is the project state now."""
+        super()._clear_fiducial_store()
+        self._save_inputs()
+
     def show_localized(self, electrodes: Electrodes) -> None:
         self._electrodes_table.show_electrodes(electrodes)
 

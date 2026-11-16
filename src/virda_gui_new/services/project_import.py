@@ -82,20 +82,30 @@ def prepare_project(project: Path) -> PreparedProject:
         base_mesh=base_mesh,
         pipeline_config=scanned.pipeline_config,
     )
-    loaded = _with_normals(loaded, project)
+    loaded = _with_normals(loaded, scanned, project, failures)
     return PreparedProject(loaded=loaded, failures=tuple(failures))
 
 
-def _with_normals(loaded: LoadedArtifacts, project: Path) -> LoadedArtifacts:
+def _with_normals(
+    loaded: LoadedArtifacts,
+    scanned: ProjectArtifacts,
+    project: Path,
+    failures: list[str],
+) -> LoadedArtifacts:
     """The loaded artifacts together with the normals of the scalp mesh.
 
     The normals are a byproduct of the ESE step, and the localization
-    needs them: they are estimated once, here, with the settings of the
-    ESE step. The estimate is skipped without an ESE mesh, because the
-    localization cannot run without one.
+    needs them. A project that stored them is read as it is; an older
+    one has them estimated from the scalp mesh, with the settings of
+    the ESE step. Without an ESE mesh there is nothing to estimate:
+    the localization cannot run without one.
     """
     if loaded.ese_mesh is None:
         return loaded
+    if scanned.ese_normals is not None:
+        normals = _load(scanned.ese_normals, artifact_loading.load_ese_normals, project, failures)
+        if normals is not None:
+            return replace(loaded, normals=normals)
     scalp_mesh = loaded.scalp_mesh if loaded.scalp_mesh is not None else loaded.base_mesh
     if scalp_mesh is None:
         return loaded

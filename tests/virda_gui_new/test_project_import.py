@@ -199,6 +199,25 @@ def test_the_seeded_step_three_holds_the_normals(project: Path) -> None:
     assert manager.get_step_context_item(3, "normals") is not None
 
 
+def test_prepare_project_reads_the_stored_normals(project: Path) -> None:
+    """A project that stored its normals is read as it is."""
+    _write_nifti(project / "input" / "a.nii.gz")
+    scalp = project / "scalp"
+    scalp.mkdir(exist_ok=True)
+    _write_ply(scalp / "final_mesh.ply")
+    ese = project / "ese"
+    ese.mkdir(exist_ok=True)
+    _write_ply(ese / "mesh.ply")
+    stored = np.array([[0.0, 0.0, 1.0], [0.0, 1.0, 0.0]])
+    np.save(ese / "normals.npy", stored)
+
+    prepared = prepare_project(project)
+
+    normals = prepared.loaded.normals
+    assert normals is not None
+    assert normals.tolist() == stored.tolist()
+
+
 def test_prepare_project_without_an_ese_mesh_estimates_no_normals(project: Path) -> None:
     scalp = project / "scalp"
     scalp.mkdir(exist_ok=True)

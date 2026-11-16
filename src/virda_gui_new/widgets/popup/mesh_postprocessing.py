@@ -16,6 +16,7 @@ from virda.models.mesh import Mesh
 from virda.ops.clean_mesh import clean_mesh
 from virda.ops.smooth_mesh import smooth_mesh
 from virda_gui_new.dto.steps import MESH_POSTPROCESSING
+from virda_gui_new.services import artifact_saving
 from virda_gui_new.widgets.popup.abstract import StepPopupBase
 
 _NO_MESH = "Mesh postprocessing needs an in-memory mesh (run the previous steps first)."
@@ -172,6 +173,8 @@ class MeshPostprocessingPopup(StepPopupBase):
                 lamb=lamb,
                 nu=nu,
             )
+            if self._project is not None:
+                artifact_saving.save_final_mesh(self._project, processed)
             return processed
 
         return run

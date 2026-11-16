@@ -12,7 +12,8 @@ immediately. Keys written per step:
 - step 2 (Mesh postprocessing): ``mesh`` (the postprocessed mesh
   artifact, which the pipeline overwrites in place)
 - step 3 (ESE mesh): ``ese_mesh``; ``normals`` when the project
-  yields them (they are estimated from the scalp mesh at open)
+  yields them (they are read from the project, or estimated from the
+  scalp mesh at open)
 - step 4 (Localization): ``scalp_points``; ``ese_points``, each when
   present
 
@@ -71,10 +72,13 @@ class StepChainIncompleteError(ValueError):
         )
 
 
-def _normals_of(artifacts: ProjectArtifacts | LoadedArtifacts) -> Normals | None:
-    """The normals of a loaded project; a scanned one holds no normals."""
+def _normals_of(artifacts: ProjectArtifacts | LoadedArtifacts) -> Path | Normals | None:
+    """The normals of a project: an array for a loaded one, a path for a scanned one."""
     value = getattr(artifacts, "normals", None)
-    return value if isinstance(value, np.ndarray) else None
+    if isinstance(value, np.ndarray):
+        return value
+    path = getattr(artifacts, "ese_normals", None)
+    return path if isinstance(path, Path) else None
 
 
 def seed_steps_from_artifacts(

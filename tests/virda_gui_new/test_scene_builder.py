@@ -62,6 +62,7 @@ def _write_full_chain(project: Path) -> None:
     _write_nifti(project / "input" / "a.nii")
     _write_ply(project / "mesh" / "final_mesh.ply")
     _write_ply(project / "ese" / "ese_mesh.ply")
+    np.save(project / "ese" / "normals.npy", np.ones((3, 3)))
 
 
 @pytest.fixture()

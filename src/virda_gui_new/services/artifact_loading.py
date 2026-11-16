@@ -12,11 +12,12 @@ import numpy as np
 
 from virda.io.fiducial_helpers import load_fiducials
 from virda.io.importers.electrode_points import import_electrode_points
+from virda.io.importers.ese_mesh import import_ese_normals
 from virda.io.importers.measurements import import_measurements
 from virda.io.importers.nifti import import_nifti
 from virda.io.importers.scalp_mesh import import_scalp_mesh
 from virda.models.electrode import Electrodes
-from virda.models.mesh import Mesh
+from virda.models.mesh import Mesh, Normals
 from virda.models.mri_volume import MRIVolume
 from virda_gui_new.dto.viewer3d import LabeledPoints
 
@@ -29,6 +30,11 @@ def load_volume(path: Path) -> MRIVolume:
 def load_mesh(path: Path) -> Mesh:
     """Read a PLY/OBJ/STL surface file into a :class:`Mesh`."""
     return import_scalp_mesh(path)
+
+
+def load_ese_normals(path: Path) -> Normals:
+    """Read the per-vertex normals stored next to the ESE mesh."""
+    return import_ese_normals(path)
 
 
 def load_fiducial_points(path: Path) -> LabeledPoints:

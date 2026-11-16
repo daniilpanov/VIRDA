@@ -227,9 +227,17 @@ def test_done_current_step_reopens_without_confirmation(qapp, manager, menu, mon
 
 def test_the_row_names_the_inputs_the_manager_is_missing(qapp, manager, menu) -> None:
     """The menu reads the step's availability from the manager."""
-    for step_n, key in enumerate(("volume", "scalp_surface", "mesh", "ese_mesh")):
-        manager.set_step_context_item(step_n, key, "ready")
-        manager.next_step()
+    manager.set_step_context_item(0, "volume", "ready")
+    manager.next_step()
+    manager.set_step_context_item(1, "scalp_surface", "ready")
+    manager.next_step()
+    manager.set_step_context_item(2, "mesh", "ready")
+    manager.next_step()
+    manager.set_step_context_item(3, "ese_mesh", "ready")
+    manager.set_step_context_item(3, "normals", "ready")
+    manager.next_step()
+    # The normals are gone: the localization cannot run.
+    manager.set_step_context_item(3, "normals", None)
 
     assert _row_texts(menu)[4] == "4. Localization [current] [needs: normals]"
 
@@ -251,7 +259,7 @@ def test_click_beyond_last_step_is_guarded(qapp, manager, menu, monkeypatch) -> 
 
 
 def test_seeded_ese_mesh_shows_done(qapp, manager, menu) -> None:
-    """ESE mesh is done by its ``ese_mesh`` artifact; normals are not required."""
+    """The ESE step is done with its mesh and its normals."""
     manager.set_step_context_item(0, "volume", "ready")
     manager.next_step()
     manager.set_step_context_item(1, "scalp_surface", "ready")
@@ -259,6 +267,7 @@ def test_seeded_ese_mesh_shows_done(qapp, manager, menu) -> None:
     manager.set_step_context_item(2, "mesh", "ready")
     manager.next_step()
     manager.set_step_context_item(3, "ese_mesh", "ready")
+    manager.set_step_context_item(3, "normals", "ready")
     manager.next_step()
 
     assert _row_texts(menu) == [
@@ -266,7 +275,7 @@ def test_seeded_ese_mesh_shows_done(qapp, manager, menu) -> None:
         "1. Base mesh [done]",
         "2. Mesh postprocessing [done]",
         "3. ESE mesh [done]",
-        "4. Localization [current] [needs: normals]",
+        "4. Localization [current]",
     ]
 
 
@@ -299,7 +308,7 @@ def test_a_finished_pipeline_keeps_the_last_step_current(qapp, manager, menu) ->
         "1. Base mesh [done]",
         "2. Mesh postprocessing [done]",
         "3. ESE mesh [done]",
-        "4. Localization [current] [needs: normals]",
+        "4. Localization [current]",
     ]
 
 
@@ -310,3 +319,27 @@ def test_a_destroyed_menu_is_not_called_again(qapp, manager) -> None:
     qapp.processEvents()
 
     manager.set_step_context_item(0, "a", 1)
+
+
+def test_step0_import_copies_the_nifti_into_the_project(
+    qapp, manager, monkeypatch, tmp_path
+) -> None:
+    """The import keeps a copy of the NIfTI inside the project."""
+    project = tmp_path / "project"
+    project.mkdir()
+    project_menu = main_menu.StepsMenu(manager, project=project)
+    nifti = tmp_path / "head.nii"
+    _write_nifti(nifti)
+    monkeypatch.setattr(
+        main_menu.QFileDialog,  # type: ignore[attr-defined]
+        "getOpenFileName",
+        staticmethod(lambda *a, **k: (str(nifti), "")),
+    )
+
+    try:
+        project_menu._on_step_clicked(0)
+    finally:
+        project_menu.deleteLater()
+
+    assert (project / "input" / "head.nii").is_file()
+    assert manager.get_current_step() == 1

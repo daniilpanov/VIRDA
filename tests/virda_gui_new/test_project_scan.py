@@ -39,6 +39,7 @@ def make_project(
         files.append(tmp_path / "localization" / "electrodes_scalp.csv")
     if ese_mesh:
         files.append(tmp_path / "ese" / "ese_mesh.ply")
+        files.append(tmp_path / "ese" / "normals.npy")
     if ese_points:
         files.append(tmp_path / "localization" / "electrodes_ese.csv")
     if base_mesh:
@@ -64,6 +65,7 @@ def test_scan_reports_all_artifacts(tmp_path: Path) -> None:
     assert artifacts.scalp_mesh == project / "mesh" / "final_mesh.ply"
     assert artifacts.scalp_points == project / "localization" / "electrodes_scalp.csv"
     assert artifacts.ese_mesh == project / "ese" / "ese_mesh.ply"
+    assert artifacts.ese_normals == project / "ese" / "normals.npy"
     assert artifacts.ese_points == project / "localization" / "electrodes_ese.csv"
     assert artifacts.measurements is None
     assert artifacts.coordsystem is None
@@ -296,11 +298,13 @@ def test_seed_full_set_without_electrodes(tmp_path: Path) -> None:
     # Every step is finished: the pipeline sits past the last one.
     assert manager.get_current_step() == 5
     contexts = manager.all_contexts()
-    assert contexts[3] == {"ese_mesh": project / "ese" / "ese_mesh.ply"}
+    assert contexts[3] == {
+        "ese_mesh": project / "ese" / "ese_mesh.ply",
+        "normals": project / "ese" / "normals.npy",
+    }
     assert contexts[4] == {"scalp_points": project / "localization" / "electrodes_scalp.csv"}
     assert manager.get_global_item("fiducials") == project / "input" / "fiducials.json"
-    # "normals" is in-memory only and not part of the done state.
-    assert "normals" not in contexts[3]
+    # The ESE step is done with its mesh and its normals.
     assert manager.is_step_done(3) is True
 
 
@@ -337,7 +341,7 @@ def test_seed_ese_points_without_ese_mesh_stops_at_the_gap(tmp_path: Path) -> No
         seed_steps_from_artifacts(manager, find_project_artifacts(project))
 
     assert raised.value.step_n == 3
-    assert raised.value.missing_keys == ("ese_mesh",)
+    assert raised.value.missing_keys == ("ese_mesh", "normals")
     assert manager.get_current_step() == 3
     contexts = manager.all_contexts()
     assert contexts[3] == {}

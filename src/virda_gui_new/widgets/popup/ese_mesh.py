@@ -15,6 +15,7 @@ from virda.models.mesh import Mesh
 from virda.models.stage2_config import Stage2Config
 from virda.ops.build_ese import build_ese
 from virda_gui_new.dto.steps import ESE_MESH
+from virda_gui_new.services import artifact_saving
 from virda_gui_new.widgets.popup.abstract import StepPopupBase
 
 _NO_MESH = "ESE mesh needs the postprocessed mesh (run the previous steps first)."
@@ -149,7 +150,10 @@ class EseMeshPopup(StepPopupBase):
 
         def run() -> tuple[Mesh, Any]:
             ese, normals = build_ese(mesh, config=config, ese_offset_mm=ese_offset_mm)
-            # Normals stay in-memory only; only the ESE surface persists.
+            # The ESE surface and its normals persist: the localization
+            # needs the normals, and a reopened project reads them.
+            if self._project is not None:
+                artifact_saving.save_ese_mesh(self._project, ese, normals)
             return ese, normals
 
         return run

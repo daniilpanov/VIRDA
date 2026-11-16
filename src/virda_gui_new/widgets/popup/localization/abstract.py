@@ -4,19 +4,21 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QCheckBox, QDoubleSpinBox, QPushButton, QVBoxLayout, QWidget
 
 from virda.models.electrode import Electrode, Electrodes
 from virda.models.mesh import Mesh, Normals
 from virda.models.stage3_config import Stage3Config
+from virda_gui_new.constants import SETTLE_DELAY_MS
 from virda_gui_new.dto.steps import (
-    FIDUCIALS_KEY,
-
     ESE_MESH,
+    FIDUCIALS_KEY,
     LOCALIZATION,
     Step,
 )
 from virda_gui_new.dto.viewer3d import LabeledPoints
+from virda_gui_new.services import artifact_saving
 from virda_gui_new.services.localization import (
     FiducialRows,
     LiveLocalizationRunner,
@@ -40,7 +42,6 @@ _NO_GEOMETRY = (
 )
 _STALE_CONTEXT = "Pipeline changed; results dropped."
 _RELOCALIZE = "Re-localization"
-
 
 
 def _as_mesh(value: object) -> Mesh | None:
@@ -145,6 +146,15 @@ class LocalizationPopupBase(StepPopupBase):
         # The options are read when the form is built: the parent sets
         # the step and the project before it calls build_form().
         self._options: Stage3Config = Stage3Config()
+        # The tables are stored once they settle: every edit schedules
+        # the save, so a picked point or an edited cell is never lost.
+        # The timer has no parent yet: the widget is not initialized.
+        # It is destroyed when the popup shuts down.
+        self._save_timer: QTimer | None = QTimer()
+        timer = self._save_timer
+        timer.setSingleShot(True)
+        timer.setInterval(SETTLE_DELAY_MS)
+        timer.timeout.connect(self._save_inputs)
         # The tables are prefilled while the form is built: those changes
         # are the project's own, not the user's, so they start no run.
         self._loading = True
@@ -213,12 +223,24 @@ class LocalizationPopupBase(StepPopupBase):
 
     def shutdown(self) -> None:
         """Stop the debounced live runs, then the base machinery."""
+        timer = self._save_timer
+        self._save_timer = None
+        if timer is not None:
+            timer.stop()
+            # The timer has no parent: dropping the last reference lets
+            # shiboken delete it. A deferred delete would race the
+            # garbage collector and destroy the timer twice.
+            del timer
+        # The pending save would be lost with the timer: the tables the
+        # user entered are written before the popup goes away.
+        self._save_inputs()
         if self._localization_runner is not None:
             self._localization_runner.stop()
         super().shutdown()
 
     def _on_inputs_changed(self) -> None:
         """Rebuild the snapshot and schedule a run when inputs suffice."""
+        self._schedule_save()
         self._update_relocalize_state()
         if self._loading or self._localization_runner is None:
             return
@@ -243,6 +265,9 @@ class LocalizationPopupBase(StepPopupBase):
         """Recompute only a named electrode after its row is complete."""
         if self._loading or self._localization_runner is None:
             return
+        # The edited cell is an input of the step: it is stored like
+        # every other change of the tables.
+        self._schedule_save()
         rows = self.collect_fiducial_rows()
         table = self.collect_measurement_table()
         distances = table.get(electrode_id)
@@ -339,6 +364,7 @@ class LocalizationPopupBase(StepPopupBase):
         unit = "electrode" if count == 1 else "electrodes"
         self._set_hint(f"Localized {count} {unit}.")
         self.show_localized(electrodes)
+        self._save_localization(electrodes)
 
     def _merge_electrode(self, electrode_id: str, fresh: Electrodes) -> Electrodes:
         """Replace one electrode in the results on screen with the fresh one."""
@@ -361,6 +387,51 @@ class LocalizationPopupBase(StepPopupBase):
             else None
         )
         return Electrodes(items, calibrated_offset_shift_mm=offset_shift)
+
+    def _schedule_save(self) -> None:
+        """Store the tables once they settle.
+
+        Every change of a table schedules the save, so an edited cell
+        or a picked point reaches the project even when the
+        localization cannot run.
+        """
+        if self._project is None or self._save_timer is None:
+            return
+        self._save_timer.start()
+
+    def _save_inputs(self) -> None:
+        """Store the current input tables in the project.
+
+        The tables are the inputs of the step, so they are written even
+        when the localization cannot run yet (no fiducials, no
+        measurements): the project then keeps what the user entered or
+        imported.
+        """
+        if self._project is None:
+            return
+        try:
+            artifact_saving.save_localization_inputs(
+                self._project,
+                self.collect_fiducial_rows(),
+                self.collect_measurement_table(),
+            )
+        except Exception as error:  # noqa: BLE001 - any save error is user-facing
+            self._set_hint(f"Failed to save the project inputs: {error}")
+
+    def _save_localization(self, electrodes: Electrodes) -> None:
+        """Persist the run's outputs; a save failure is a failed status."""
+        if self._project is None:
+            return
+        try:
+            artifact_saving.save_localization(
+                self._project,
+                self.collect_fiducial_rows(),
+                self.collect_measurement_table(),
+                electrodes,
+            )
+        except Exception as error:  # noqa: BLE001 - any save error is user-facing
+            self._set_hint(f"Failed to save localization files: {error}")
+            self.failed.emit(str(error))
 
     def _refresh_fiducial_store(self) -> None:
         """Mirror the current fiducial table into the global store.

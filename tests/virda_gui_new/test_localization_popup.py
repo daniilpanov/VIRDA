@@ -6,6 +6,7 @@ heavy mesh work runs; only hint text, context writes and hooks flow.
 
 import json
 import time
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -16,6 +17,7 @@ from virda.models.electrode import Electrode, Electrodes
 from virda.models.fiducial import Fiducials
 from virda.models.mesh import Mesh
 from virda_gui_new.dto.steps import LOCALIZATION, STEPS
+from virda_gui_new.services import artifact_saving
 from virda_gui_new.services.steps_manager import StepsManager
 from virda_gui_new.widgets.popup.localization import LocalizationPopup
 from virda_gui_new.widgets.popup.localization.abstract import (
@@ -301,6 +303,66 @@ def test_stale_context_run_keeps_fiducial_store(qapp, popups) -> None:
     assert manager.get_global_item("fiducials") is points
 
 
+def test_localized_run_persists_localization_files(
+    qapp, popups, monkeypatch, tmp_path: Path
+) -> None:
+    """Each successful run writes fiducials, measurements and electrodes."""
+    from virda_gui_new.services.artifact_loading import load_fiducial_points
+
+    payload = Electrodes(
+        [
+            Electrode("A", {"LPA": 10.0}, ese_coords=np.zeros(3), scalp_coords=np.zeros(3)),
+        ]
+    )
+    _patch_localize(monkeypatch, [], payload)
+    manager = _make_manager()
+    popup = RecordingPopup(
+        manager, fiducial_rows=_FIDUCIAL_ROWS, table=_MEASUREMENTS, project=tmp_path
+    )
+    popups.append(popup)
+
+    popup._on_inputs_changed()
+    _settle(qapp, popup, "Localized 1 electrode.")
+
+    assert popup._hint_label.text() == "Localized 1 electrode."
+    localization = tmp_path / "localization"
+    assert (localization / "fiducials.json").is_file()
+    assert (localization / "measurements.json").is_file()
+    assert (localization / "electrodes_scalp.csv").is_file()
+    assert (localization / "electrodes_ese.csv").is_file()
+    # The saved fiducials match what the popup shows (and the store holds).
+    points = load_fiducial_points(localization / "fiducials.json")
+    assert points.labels == ("Nasion", "LPA", "RPA")
+    assert points.points.tolist() == [[0.0, 0.0, 1.0], [1.0, 0.0, 0.0], [-1.0, 0.0, 0.0]]
+
+
+def test_localization_save_failure_is_a_failed_status(
+    qapp, popups, monkeypatch, tmp_path: Path
+) -> None:
+
+    payload = Electrodes([Electrode("A", {"LPA": 10.0})])
+    _patch_localize(monkeypatch, [], payload)
+    failures: list[str] = []
+
+    def fail_save(*_args: object) -> None:
+        raise RuntimeError("cannot write")
+
+    monkeypatch.setattr(artifact_saving, "save_localization", fail_save)
+    manager = _make_manager()
+    popup = RecordingPopup(
+        manager, fiducial_rows=_FIDUCIAL_ROWS, table=_MEASUREMENTS, project=tmp_path
+    )
+    popups.append(popup)
+    popup.failed.connect(failures.append)
+
+    popup._on_inputs_changed()
+    _settle(qapp, popup, "Failed to save localization files: cannot write")
+
+    assert popup._hint_label.text() == "Failed to save localization files: cannot write"
+    assert failures == ["cannot write"]
+    assert manager.get_step_context_item(LOCALIZATION.index, "electrodes") is payload
+
+
 def test_stale_context_drop(qapp, popups) -> None:
     manager = _make_manager()
     popup = RecordingPopup(manager)
@@ -565,6 +627,33 @@ def test_relocalize_button_recomputes_every_electrode(qapp, popups, monkeypatch)
     assert len(calls) == 1
     _fiducials, electrodes = calls[0]
     assert [item.electrode_id for item in electrodes.items] == ["A", "B"]
+
+
+def _wait_for_the_save(qapp, popup, timeout_s: float = 5.0) -> None:
+    """Pump events until the debounced save has run."""
+    deadline = time.monotonic() + timeout_s
+    while popup._save_timer.isActive() and time.monotonic() < deadline:
+        qapp.processEvents()
+        time.sleep(0.01)
+    qapp.processEvents()
+
+
+def test_the_tables_are_stored_when_they_change(qapp, popups, tmp_path) -> None:
+    """An edited cell reaches the project, even when no run follows."""
+    manager = _make_manager()
+    popup = RecordingPopup(
+        manager,
+        fiducial_rows=_FIDUCIAL_ROWS,
+        table=_MEASUREMENTS,
+        project=tmp_path,
+    )
+    popups.append(popup)
+
+    popup._on_inputs_changed()
+    _wait_for_the_save(qapp, popup)
+
+    assert (tmp_path / "localization" / "fiducials.json").is_file()
+    assert (tmp_path / "localization" / "measurements.json").is_file()
 
 
 def test_localization_options_are_saved_and_restored(qapp, popups, tmp_path) -> None:
