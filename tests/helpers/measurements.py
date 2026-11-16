@@ -5,6 +5,7 @@ from typing import Any
 import numpy as np
 
 from tests.helpers.meshes import make_sphere
+from virda.models.coordinates import CoordinateSystem, Point
 from virda.models.electrode import Electrode, Electrodes
 from virda.models.fiducial import Fiducial, Fiducials, FiducialType
 from virda.models.mesh import Mesh, Normals
@@ -18,20 +19,17 @@ def make_fiducials() -> Fiducials:
             Fiducial(
                 fiducial_id=FiducialType.NAS,
                 name="Nasion",
-                coordinates=np.array([0.0, 88.0, -10.0]),
-                coordinate_system="world",
+                point=Point(x=0.0, y=88.0, z=-10.0, system=CoordinateSystem.WORLD),
             ),
             Fiducial(
                 fiducial_id=FiducialType.LPA,
                 name="Left pre-auricular",
-                coordinates=np.array([-75.0, -1.0, -14.0]),
-                coordinate_system="world",
+                point=Point(x=-75.0, y=-1.0, z=-14.0, system=CoordinateSystem.WORLD),
             ),
             Fiducial(
                 fiducial_id=FiducialType.RPA,
                 name="Right pre-auricular",
-                coordinates=np.array([75.0, -1.0, -14.0]),
-                coordinate_system="world",
+                point=Point(x=75.0, y=-1.0, z=-14.0, system=CoordinateSystem.WORLD),
             ),
         ]
     )
@@ -50,7 +48,7 @@ def make_electrodes(points: np.ndarray, fiducials: Fiducials) -> Electrodes:
     items: list[Electrode] = []
     for i, point in enumerate(points):
         distances = {
-            fiducial.fiducial_id: float(np.linalg.norm(point - fiducial.coordinates))
+            fiducial.fiducial_id: float(np.linalg.norm(point - fiducial.point.as_array()))
             for fiducial in fiducials.items
         }
         items.append(Electrode(electrode_id=f"E{i}", measured_distances=distances))
@@ -73,7 +71,7 @@ def make_measurements_file(
             {
                 "electrode_id": f"E{i}",
                 "measured_distances": {
-                    fiducial.fiducial_id: float(np.linalg.norm(point - fiducial.coordinates))
+                    fiducial.fiducial_id: float(np.linalg.norm(point - fiducial.point.as_array()))
                     for fiducial in fiducials.items
                 },
             }

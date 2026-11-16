@@ -20,12 +20,13 @@ import trimesh
 from nibabel import aff2axcodes
 from scipy.spatial import cKDTree
 
+from virda.geometry import apply_transform
+
 from .scene import (
     downsample,
     load_fiducial_points,
     percentile_clim,
     scene_placement,
-    transform_points,
 )
 
 _BOUNDS = tuple[float, float, float, float, float, float]
@@ -103,7 +104,7 @@ def _detect_cras_conversion(
     scene_transform = None if (affine is None or mm_scene) else np.linalg.inv(affine)
 
     def _median_distance(pts: np.ndarray) -> float:
-        scene_pts = transform_points(pts, scene_transform) if scene_transform is not None else pts
+        scene_pts = apply_transform(pts, scene_transform) if scene_transform is not None else pts
         distances, _ = cKDTree(mesh_points).query(scene_pts)
         return float(np.median(distances))
 
@@ -237,7 +238,7 @@ def _scene_bounds_to_world(bounds: _BOUNDS, transform: np.ndarray) -> _BOUNDS:
     ys = (bounds[2], bounds[3])
     zs = (bounds[4], bounds[5])
     corners = np.array([[x, y, z] for x in xs for y in ys for z in zs], dtype=np.float64)
-    world = corners @ transform[:3, :3].T + transform[:3, 3]
+    world = apply_transform(corners, transform)
     return (
         float(world[:, 0].min()),
         float(world[:, 0].max()),
@@ -249,7 +250,7 @@ def _scene_bounds_to_world(bounds: _BOUNDS, transform: np.ndarray) -> _BOUNDS:
 
 
 def _points_bounds_to_world(points: np.ndarray, transform: np.ndarray) -> _BOUNDS:
-    world = points @ transform[:3, :3].T + transform[:3, 3]
+    world = apply_transform(points, transform)
     return (
         float(world[:, 0].min()),
         float(world[:, 0].max()),
@@ -409,7 +410,7 @@ def collect_scene_data(
     if fiducial_points is not None:
         scene_fiducials = fiducial_points
         if not mm_scene and affine is not None:
-            scene_fiducials = transform_points(fiducial_points, np.linalg.inv(affine))
+            scene_fiducials = apply_transform(fiducial_points, np.linalg.inv(affine))
 
     electrode_groups: list[dict[str, Any]] = []
     for gi, (epath, spec_color) in enumerate(electrode_specs or []):
@@ -427,7 +428,7 @@ def collect_scene_data(
                     points = points + cras_offset
                 log(_cras_decision_message(label, converted, d_raw, d_shift))
         if len(points) > 0 and not mm_scene and affine is not None:
-            points = transform_points(points, np.linalg.inv(affine))
+            points = apply_transform(points, np.linalg.inv(affine))
         electrode_groups.append(
             {
                 "points": points,

@@ -15,8 +15,8 @@ def export_fiducials(path: str | Path, fiducials: Fiducials) -> Path:
             {
                 "fiducial_id": fiducial.fiducial_id,
                 "name": fiducial.name,
-                "coordinates": fiducial.coordinates.tolist(),
-                "coordinate_system": fiducial.coordinate_system,
+                "coordinates": fiducial.point.as_array().tolist(),
+                "coordinate_system": fiducial.point.system.value,
                 "definition_method": fiducial.definition_method,
                 "weight": fiducial.weight,
             }

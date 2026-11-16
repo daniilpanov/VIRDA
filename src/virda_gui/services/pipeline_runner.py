@@ -10,13 +10,15 @@ runs them off the GUI thread and reports completion/failure through Qt signals.
 import logging
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from logging import Logger
 from pathlib import Path
 
+import numpy as np
 from PySide6.QtCore import QObject, Signal
 
 from virda.config import resolve_stage3_config
+from virda.geometry import FrameContext, convert_point
 from virda.io.exporters.electrodes import (
     export_electrodes,
     export_electrodes_ese,
@@ -34,6 +36,7 @@ from virda.io.importers.fiducials import load_manual_fiducials
 from virda.io.importers.measurements import load_measurements
 from virda.io.importers.nifti import import_nifti
 from virda.models.config import Config
+from virda.models.coordinates import CoordinateSystem
 from virda.models.coordsystem import Coordsystem
 from virda.models.electrode import Electrodes
 from virda.models.fiducial import (
@@ -73,6 +76,25 @@ def _resolve_stage1_fiducials(
     raise ValueError(
         "No fiducials available: provide a manual fiducials file"
         " or supply a coordsystem.json config file"
+    )
+
+
+def _world_fiducials(fiducials: Fiducials, affine: np.ndarray) -> Fiducials:
+    """The fiducials with their points in world coordinates.
+
+    A manual fiducials file may carry voxel coordinates; the localizer
+    works in world millimetres, so they are converted through the volume
+    affine before they reach it.
+    """
+    context = FrameContext(affine=affine)
+    return Fiducials(
+        items=[
+            replace(
+                fiducial,
+                point=convert_point(fiducial.point, CoordinateSystem.WORLD, context),
+            )
+            for fiducial in fiducials.items
+        ]
     )
 
 
@@ -176,7 +198,9 @@ def run_stage1(config: Config) -> _Stage1Result:
         load_manual_fiducials(Path(resolved_fiducials_path)) if resolved_fiducials_path else None
     )
 
-    fiducials = _resolve_stage1_fiducials(manual, config.coordsystem)
+    fiducials = _world_fiducials(
+        _resolve_stage1_fiducials(manual, config.coordsystem), volume.affine
+    )
 
     export_scalp_mesh(project_dir / "mesh" / "final_mesh.ply", mesh)
     export_mesh_vertices(project_dir / "mesh" / "scalp_vertices.npy", mesh.vertices)

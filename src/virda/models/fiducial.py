@@ -2,9 +2,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Literal
 
-import numpy as np
+from virda.models.coordinates import Point
 
-FiducialCoordinateSystem = Literal["world", "voxel"]
 DefinitionMethod = Literal["auto", "manual", "imported"]
 
 
@@ -51,21 +50,21 @@ def match_fiducial_name(name: str) -> FiducialType | None:
 
 @dataclass(frozen=True)
 class Fiducial:
+    """One anatomical fiducial: an id, a label and its position.
+
+    The position is a :class:`Point`, so the frame the coordinates are
+    expressed in travels with them.
+    """
+
     fiducial_id: str
     name: str
-    coordinates: np.ndarray
-    coordinate_system: FiducialCoordinateSystem
+    point: Point
     definition_method: DefinitionMethod = "manual"
     weight: float = 1.0
 
     def __post_init__(self) -> None:
-        if self.coordinates.shape != (3,):
-            raise ValueError(f"Coordinates must be (3,) array, got shape {self.coordinates.shape}")
-        if self.coordinate_system not in {"world", "voxel"}:
-            raise ValueError(
-                f"Invalid coordinate_system: {self.coordinate_system!r}, "
-                "expected 'world' or 'voxel'"
-            )
+        if not isinstance(self.point, Point):
+            raise ValueError(f"point must be a Point, got {self.point!r}")
         if self.definition_method not in {"auto", "manual", "imported"}:
             raise ValueError(
                 f"Invalid definition_method: {self.definition_method!r}, "

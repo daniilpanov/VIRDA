@@ -62,16 +62,8 @@ def import_fiducial_rows(path: Path, affine: np.ndarray | None) -> FiducialRows:
         label = fiducial.name or fiducial.fiducial_id
         slot = match_fiducial_name(label) or match_fiducial_name(fiducial.fiducial_id)
         if slot is not None and slot not in matched:
-            coords = fiducial.coordinates
-            xyz = _world_coordinates(
-                Point(
-                    x=float(coords[0]),
-                    y=float(coords[1]),
-                    z=float(coords[2]),
-                    system=CoordinateSystem(fiducial.coordinate_system),
-                ),
-                affine,
-            )
+            xyz = _world_coordinates(fiducial.point, affine)
+
             matched[slot] = (label, xyz)
     rows = [matched[slot] for slot in SLOT_IDS if slot in matched]
     if not rows:

@@ -9,6 +9,7 @@ import pytest
 import trimesh
 
 from virda.io.fiducial_helpers import save_fiducials
+from virda.models.coordinates import CoordinateSystem, Point
 from virda.models.electrode import Electrodes
 from virda.models.fiducial import Fiducial, Fiducials
 from virda.models.mesh import Mesh
@@ -30,7 +31,15 @@ def _write_ply(path: Path) -> None:
 
 
 def _write_fiducials(path: Path) -> None:
-    fiducials = Fiducials(items=[Fiducial("c1", "nas", np.array([0.0, 1.0, 2.0]), "world")])
+    fiducials = Fiducials(
+        items=[
+            Fiducial(
+                "c1",
+                "nas",
+                Point(x=0.0, y=1.0, z=2.0, system=CoordinateSystem.WORLD),
+            )
+        ]
+    )
     save_fiducials(path, fiducials)
 
 

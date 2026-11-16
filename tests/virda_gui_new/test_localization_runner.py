@@ -10,6 +10,7 @@ from typing import cast
 import numpy as np
 import pytest
 
+from virda.models.coordinates import CoordinateSystem, Point
 from virda.models.electrode import Electrode, Electrodes
 from virda.models.fiducial import Fiducial, Fiducials
 from virda.models.mesh import Mesh
@@ -18,7 +19,9 @@ from virda_gui_new.services.localization import LiveLocalizationRunner
 _ESE = Mesh(np.zeros((4, 3)), np.zeros((1, 3), dtype=int))
 _SCALP = Mesh(np.zeros((3, 3)), np.zeros((1, 3), dtype=int))
 _NORMALS = np.ones((4, 3))
-_FIDUCIALS = Fiducials([Fiducial("a", "a", np.zeros(3), "world")])
+_FIDUCIALS = Fiducials(
+    [Fiducial("a", "a", Point(x=0.0, y=0.0, z=0.0, system=CoordinateSystem.WORLD))]
+)
 _ELECTRODES = Electrodes([Electrode(electrode_id="A", measured_distances={"a": 1.0})])
 
 

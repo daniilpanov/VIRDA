@@ -16,7 +16,7 @@ def _closest_vertex_index(ese, point) -> int:
 
 def _exact_distances(point, fiducials: Fiducials) -> dict[str, float]:
     return {
-        fiducial.fiducial_id: float(np.linalg.norm(point - fiducial.coordinates))
+        fiducial.fiducial_id: float(np.linalg.norm(point - fiducial.point.as_array()))
         for fiducial in fiducials.items
     }
 
@@ -147,7 +147,7 @@ class TestLocalizeElectrodes:
         fiducials = make_fiducials()
         vertices = np.asarray(ese.vertices)
 
-        fiducial_coords = np.array([f.coordinates for f in fiducials.items])
+        fiducial_coords = np.array([f.point.as_array() for f in fiducials.items])
         plane_normal = np.cross(
             fiducial_coords[1] - fiducial_coords[0],
             fiducial_coords[2] - fiducial_coords[0],
@@ -228,7 +228,7 @@ class TestOffsetCalibration:
         fiducials = make_fiducials()
 
         vertices = np.asarray(ese.vertices)
-        fiducial_coords = np.array([f.coordinates for f in fiducials.items])
+        fiducial_coords = np.array([f.point.as_array() for f in fiducials.items])
         plane_normal = np.cross(
             fiducial_coords[1] - fiducial_coords[0],
             fiducial_coords[2] - fiducial_coords[0],

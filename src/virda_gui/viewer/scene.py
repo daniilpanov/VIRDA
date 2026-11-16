@@ -56,11 +56,6 @@ def scene_placement(affine: np.ndarray | None) -> ScenePlacement:
     return np.ones(3), np.zeros(3), np.linalg.inv(affine), False
 
 
-def transform_points(points: np.ndarray, transform: np.ndarray) -> np.ndarray:
-    """Apply a 4x4 affine ``transform`` to an (N, 3) array of points."""
-    return np.asarray(points @ transform[:3, :3].T + transform[:3, 3], dtype=float)
-
-
 def load_fiducial_points(path: str | Path) -> tuple[np.ndarray, list[str]]:
     """Read a fiducials JSON file into ``(points, labels)``.
 
@@ -69,7 +64,7 @@ def load_fiducial_points(path: str | Path) -> tuple[np.ndarray, list[str]]:
     files are supported (with unit conversion applied for the latter).
     """
     fiducials = load_fiducials(Path(path))
-    points = np.asarray([item.coordinates for item in fiducials.items], dtype=np.float64)
+    points = np.asarray([item.point.as_array() for item in fiducials.items], dtype=np.float64)
     labels = [f"{item.fiducial_id} ({item.name})" for item in fiducials.items]
     return points, labels
 

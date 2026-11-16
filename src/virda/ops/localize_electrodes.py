@@ -6,6 +6,7 @@ from logging import Logger
 import numpy as np
 from scipy.spatial.distance import cdist
 
+from virda.models.coordinates import CoordinateSystem
 from virda.models.electrode import Electrode, Electrodes
 from virda.models.fiducial import Fiducial, Fiducials
 from virda.models.mesh import Mesh, Normals
@@ -95,7 +96,7 @@ def localize_electrodes(
     vertices = np.asarray(ese.vertices)
     normals = np.asarray(normals)
     scalp_vertices = np.asarray(scalp_mesh.vertices)
-    fiducial_coords = np.asarray([fiducial.coordinates for fiducial in fiducials.items])
+    fiducial_coords = _world_fiducials(fiducials)
 
     offset_shift = 0.0 if fixed_offset_shift_mm is None else fixed_offset_shift_mm
     if fixed_offset_shift_mm is None and config.calibrate_ese_offset:
@@ -146,6 +147,23 @@ def localize_electrodes(
             else None
         ),
     )
+
+
+def _world_fiducials(fiducials: Fiducials) -> np.ndarray:
+    """The fiducial coordinates in the world frame the localizer works in.
+
+    The distances are measured in world millimetres, so a fiducial in
+    another frame has to be converted before it reaches the localizer.
+    """
+    rows: list[np.ndarray] = []
+    for fiducial in fiducials.items:
+        if fiducial.point.system is not CoordinateSystem.WORLD:
+            raise ValueError(
+                f"fiducial {fiducial.fiducial_id!r} is not in world coordinates; "
+                "convert it before localizing"
+            )
+        rows.append(fiducial.point.as_array())
+    return np.asarray(rows, dtype=np.float64)
 
 
 def _localize_one(

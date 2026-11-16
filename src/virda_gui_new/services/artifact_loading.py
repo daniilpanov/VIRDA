@@ -47,7 +47,7 @@ def load_fiducial_points(path: Path) -> LabeledPoints:
     fiducials = load_fiducials(path)
     if not fiducials.items:
         raise ValueError("no fiducials found in file")
-    points = np.stack([fiducial.coordinates for fiducial in fiducials.items])
+    points = np.stack([fiducial.point.as_array() for fiducial in fiducials.items])
     labels = tuple(fiducial.name or fiducial.fiducial_id for fiducial in fiducials.items)
     return LabeledPoints(np.asarray(points, dtype=np.float64), labels)
 

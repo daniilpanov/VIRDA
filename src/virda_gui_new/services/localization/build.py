@@ -3,6 +3,7 @@
 import numpy as np
 
 from virda.geometry import match_fiducial_name
+from virda.models.coordinates import CoordinateSystem, Point
 from virda.models.electrode import Electrode, Electrodes
 from virda.models.fiducial import Fiducial, Fiducials
 from virda_gui_new.dto.viewer3d import LabeledPoints
@@ -40,12 +41,19 @@ def build_fiducials(rows: FiducialRows) -> Fiducials:
         fiducial_name = str(name).strip()
         if not fiducial_name:
             raise ValueError(_EMPTY_NAME)
+        coords = np.asarray(xyz, dtype=float)
+        if coords.shape != (3,):
+            raise ValueError(f"Coordinates must be a (3,) array, got shape {coords.shape}")
         items.append(
             Fiducial(
                 fiducial_id=fiducial_name,
                 name=fiducial_name,
-                coordinates=np.asarray(xyz, dtype=float),
-                coordinate_system="world",
+                point=Point(
+                    x=float(coords[0]),
+                    y=float(coords[1]),
+                    z=float(coords[2]),
+                    system=CoordinateSystem.WORLD,
+                ),
                 definition_method="manual",
             )
         )

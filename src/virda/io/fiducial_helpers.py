@@ -7,8 +7,12 @@ from typing import Any, cast
 
 import numpy as np
 
+from virda.models.coordinates import CoordinateSystem, Point
 from virda.models.coordsystem import _SURFACE_RAS_FRAMES, Coordsystem
 from virda.models.fiducial import Fiducial, Fiducials
+
+#: The frames a stored fiducial may be expressed in.
+_STORED_SYSTEMS = (CoordinateSystem.WORLD, CoordinateSystem.VOXEL)
 
 
 def save_fiducials(path: Path, fiducials: Fiducials) -> None:
@@ -18,8 +22,8 @@ def save_fiducials(path: Path, fiducials: Fiducials) -> None:
             {
                 "fiducial_id": fiducial.fiducial_id,
                 "name": fiducial.name,
-                "coordinates": fiducial.coordinates.tolist(),
-                "coordinate_system": fiducial.coordinate_system,
+                "coordinates": fiducial.point.as_array().tolist(),
+                "coordinate_system": fiducial.point.system.value,
                 "definition_method": fiducial.definition_method,
                 "weight": fiducial.weight,
             }
@@ -56,11 +60,39 @@ def load_fiducials(path: Path, logger: Logger | None = None) -> Fiducials:
         Fiducial(
             fiducial_id=item["fiducial_id"],
             name=item["name"],
-            coordinates=np.asarray(item["coordinates"], dtype=np.float64),
-            coordinate_system=item["coordinate_system"],
+            point=_point_from_record(item),
             definition_method=item["definition_method"],
             weight=float(item.get("weight", 1.0)),
         )
         for item in data["fiducials"]
     ]
     return Fiducials(items=items)
+
+
+def _point_from_record(record: dict[str, Any]) -> Point:
+    """The point of one stored fiducial record.
+
+    Only the world and the voxel frame are stored; any other frame is
+    rejected, and so is a coordinate list that is not a triple.
+    """
+    coordinates = np.asarray(record["coordinates"], dtype=np.float64)
+    if coordinates.shape != (3,):
+        raise ValueError(f"Coordinates must be a (3,) array, got shape {coordinates.shape}")
+    try:
+        system = CoordinateSystem(record["coordinate_system"])
+    except ValueError as error:
+        raise ValueError(
+            f"Invalid coordinate_system: {record['coordinate_system']!r}, "
+            "expected 'world' or 'voxel'"
+        ) from error
+    if system not in _STORED_SYSTEMS:
+        raise ValueError(
+            f"Invalid coordinate_system: {record['coordinate_system']!r}, "
+            "expected 'world' or 'voxel'"
+        )
+    return Point(
+        x=float(coordinates[0]),
+        y=float(coordinates[1]),
+        z=float(coordinates[2]),
+        system=system,
+    )

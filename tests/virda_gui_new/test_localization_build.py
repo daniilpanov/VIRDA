@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 
+from virda.models.coordinates import CoordinateSystem
 from virda_gui_new.services.localization.build import (
     blocked_reason,
     build_electrodes,
@@ -21,8 +22,8 @@ def test_build_fiducials_happy() -> None:
         ("LPA", "LPA"),
     ]
     first = fiducials.items[0]
-    assert first.coordinates.shape == (3,)
-    assert first.coordinate_system == "world"
+    assert first.point.as_array().shape == (3,)
+    assert first.point.system is CoordinateSystem.WORLD
     assert first.definition_method == "manual"
     assert first.weight == 1.0
 
