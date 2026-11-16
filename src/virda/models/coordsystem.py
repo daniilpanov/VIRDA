@@ -5,13 +5,7 @@ from typing import Any, Final
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
 
-from virda.models.fiducial import Fiducial, Fiducials
-
-FIDUCIAL_ID_MAP: Final[dict[str, str]] = {
-    "NASION": "NAS",
-    "LPA": "LPA",
-    "RPA": "RPA",
-}
+from virda.models.fiducial import Fiducial, Fiducials, match_fiducial_name
 
 #: Conversion factors to millimetres for supported ``*CoordinateUnits`` values.
 _MM_PER_UNIT: Final[dict[str, float]] = {"mm": 1.0, "m": 1000.0}
@@ -81,7 +75,7 @@ class Coordsystem(BaseModel):
         unit_scale = self.mri_unit_scale_mm()
         items = [
             Fiducial(
-                fiducial_id=FIDUCIAL_ID_MAP.get(label, label),
+                fiducial_id=match_fiducial_name(label) or label,
                 name=label,
                 coordinates=np.asarray(coordinate.mri, dtype=np.float64) * unit_scale,
                 coordinate_system="world",
