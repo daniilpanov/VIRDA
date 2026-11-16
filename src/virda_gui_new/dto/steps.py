@@ -17,6 +17,9 @@ class Step:
 FIDUCIALS_KEY = "fiducials"
 MEASUREMENTS_KEY = "measurements"
 
+#: The context key of the localization step that holds the results.
+ELECTRODES_KEY = "electrodes"
+
 # Steps of the GUI pipeline, in order. required_keys are the context keys
 # that mark the step done.
 NIFTI = Step(0, "NIfTI import", ("volume",))
