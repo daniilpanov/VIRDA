@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QPushButton,
     QRadioButton,
     QSlider,
     QVBoxLayout,
@@ -51,6 +52,44 @@ _MESH_POINTS_POINT_SIZE = 10
 #: How transparent the meshes are drawn by default: the ESE surface and
 #: the electrode points stay visible through the scalp.
 _DEFAULT_MESH_OPACITY = 0.6
+
+
+#: The state of a camera that has to survive a scene rebuild: its
+#: position, its focal point, its up vector, its view angle and whether
+#: it draws in parallel.
+CameraState = tuple[
+    tuple[float, float, float],
+    tuple[float, float, float],
+    tuple[float, float, float],
+    float,
+    bool,
+]
+
+
+def _camera_state(camera: Any) -> CameraState:
+    """The state of a camera that has to survive a scene rebuild.
+
+    Only the values pyvista reads back from VTK are used: ``azimuth`` and
+    ``elevation`` are pyvista's own cached copies and do not follow the
+    mouse.
+    """
+    return (
+        tuple(camera.position),
+        tuple(camera.focal_point),
+        tuple(camera.up),
+        float(camera.view_angle),
+        bool(camera.parallel_projection),
+    )
+
+
+def _apply_camera_state(camera: Any, state: CameraState) -> None:
+    """Restore a camera state captured by :func:`_camera_state`."""
+    position, focal_point, up, view_angle, parallel_projection = state
+    camera.position = position
+    camera.focal_point = focal_point
+    camera.up = up
+    camera.view_angle = view_angle
+    camera.parallel_projection = parallel_projection
 
 
 def _add_mesh_actor(
@@ -253,24 +292,35 @@ class _SceneViewBase(QWidget):
         super().__init__(parent)
         self._log = log
 
-        self._layout = QHBoxLayout(self)
-        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._outer_layout = QVBoxLayout(self)
+        self._outer_layout.setContentsMargins(0, 0, 0, 0)
+        self._layout = QHBoxLayout()
+        self._outer_layout.addLayout(self._layout, 1)
         self._plotter = QtInteractor(parent=self)
         self._plotter.set_background(background_color)  # type: ignore[arg-type]  # mypy bug
         self._layout.addWidget(self._plotter, 1)
+        self._camera_ready = False
 
     def clear_scene(self) -> None:
         """Remove everything the plotter currently draws."""
         self._plotter.clear()
 
-    def _finalize_render(self, bounds: Bounds | None = None) -> None:
-        """Finish a render pass: axes indicator, camera fit and immediate draw.
+    def _finalize_render(
+        self,
+        camera_state: CameraState | None = None,
+        bounds: Bounds | None = None,
+    ) -> None:
+        """Finish a render pass: axes indicator, camera and immediate draw.
 
-        ``bounds`` frames the camera on the given meshes; without them the
-        plotter fits everything it draws.
+        ``camera_state`` restores the camera of the previous scene; without
+        it the camera frames the meshes of the scene that was just built.
         """
         self._plotter.add_axes(interactive=False)  # type: ignore[call-arg]  # mypy bug
-        self._apply_camera(bounds)
+        if camera_state is None:
+            self._apply_camera(bounds)
+        else:
+            _apply_camera_state(self._plotter.camera, camera_state)
+        self._camera_ready = True
         self._plotter.render()
 
     def _apply_camera(self, bounds: Bounds | None) -> None:
@@ -284,6 +334,24 @@ class _SceneViewBase(QWidget):
         camera.focal_point = focal_point
         camera.up = up
         camera.view_angle = view_angle
+
+    def _camera_before_rebuild(self) -> CameraState | None:
+        """The camera state to restore after the next scene rebuild.
+
+        ``None`` before the first scene: there is no camera to keep yet.
+        """
+        if not self._camera_ready:
+            return None
+        return _camera_state(self._plotter.camera)
+
+    def _reset_camera(self) -> None:
+        """Frame the meshes again, as the "Reset view" button does."""
+        self._apply_camera(self._bounds())
+        self._plotter.render()
+
+    def _bounds(self) -> Bounds | None:
+        """The bounding box of the meshes the camera frames."""
+        return None
 
 
 class BaseViewer3D(_SceneViewBase):
@@ -344,7 +412,7 @@ class BaseViewer3D(_SceneViewBase):
 
         self._plotter.clear()
         renderer.build(self._plotter, scene)
-        self._finalize_render(_bundle_bounds(scene))
+        self._finalize_render(bounds=_bundle_bounds(scene))
         self.sceneLoaded.emit(scene)
 
 
@@ -376,6 +444,11 @@ class SceneViewer3D(_SceneViewBase):
         self._panel_layout.setSpacing(4)
         self._layout.addWidget(self._panel, 0)
         self._panel.setVisible(False)
+        # The reset button lives outside the layers panel: the panel is
+        # rebuilt with every scene, the button is not.
+        self._reset_button = QPushButton("Reset view", self)
+        self._reset_button.clicked.connect(self._reset_camera)
+        self._outer_layout.addWidget(self._reset_button)
 
         # Render state / actors
         self._mesh_opacity = _DEFAULT_MESH_OPACITY
@@ -454,6 +527,7 @@ class SceneViewer3D(_SceneViewBase):
         self._mesh_label_actors = {}
 
     def _build_scene(self, scene: ViewerScene) -> None:
+        camera_state = self._camera_before_rebuild()
         self._plotter.clear()
         self._reset_actors()
 
@@ -510,12 +584,19 @@ class SceneViewer3D(_SceneViewBase):
 
         self._build_panel()
         self._apply_visibility()
-        self._finalize_render(self._scene_bounds(scene))
+        self._finalize_render(camera_state, self._scene_bounds(scene))
 
     def _scene_bounds(self, scene: ViewerScene) -> Bounds | None:
         """The bounding box of the scene meshes; the volume is not one."""
         meshes = [mesh for mesh in (scene.scalp_mesh, scene.ese_mesh) if mesh is not None]
         return mesh_bounds(meshes)
+
+    def _bounds(self) -> Bounds | None:
+        """The bounding box of the meshes the camera frames."""
+        scene = self._scene
+        if scene is None:
+            return None
+        return self._scene_bounds(scene)
 
     def _clear_layout(self) -> None:
         """Remove the widgets of the panel.
