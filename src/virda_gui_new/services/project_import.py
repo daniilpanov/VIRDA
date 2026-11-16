@@ -62,9 +62,11 @@ def prepare_project(project: Path) -> PreparedProject:
             scanned.fiducials, artifact_loading.load_fiducial_points, project, failures
         ),
         scalp_points=_load(
-            scanned.scalp_points, artifact_loading.load_point_rows, project, failures
+            scanned.scalp_points, artifact_loading.load_electrode_points, project, failures
         ),
-        ese_points=_load(scanned.ese_points, artifact_loading.load_point_rows, project, failures),
+        ese_points=_load(
+            scanned.ese_points, artifact_loading.load_electrode_points, project, failures
+        ),
     )
     return PreparedProject(loaded=loaded, failures=tuple(failures))
 
