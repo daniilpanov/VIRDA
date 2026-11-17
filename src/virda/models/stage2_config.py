@@ -14,8 +14,8 @@ class Stage2Config:
             raise ValueError(
                 f"neighborhood_radius_mm must be positive, got {self.neighborhood_radius_mm}"
             )
-        if self.k_neighbors is not None and self.k_neighbors < 2:
-            raise ValueError(f"k_neighbors must be >= 2 when set, got {self.k_neighbors}")
+        if self.k_neighbors is not None and self.k_neighbors < 3:
+            raise ValueError(f"k_neighbors must be >= 3 when set, got {self.k_neighbors}")
         if self.pca_sigma_mm <= 0:
             raise ValueError(f"pca_sigma_mm must be positive, got {self.pca_sigma_mm}")
         if self.min_neighbors < 1:

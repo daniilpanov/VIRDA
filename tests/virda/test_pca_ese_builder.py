@@ -15,6 +15,16 @@ def run_builder(config: Stage2Config, mesh: Mesh) -> tuple[Mesh, np.ndarray]:
 
 
 class TestEstimateNormals:
+    def test_three_neighbors_are_accepted(self) -> None:
+        mesh = make_sphere()
+        normals = estimate_normals(mesh, Stage2Config(k_neighbors=3))
+
+        assert normals.shape == mesh.vertices.shape
+
+    def test_two_neighbors_are_rejected(self) -> None:
+        with pytest.raises(ValueError, match="k_neighbors must be >= 3"):
+            Stage2Config(k_neighbors=2)
+
     def test_the_normals_are_the_ones_of_the_ese_build(self) -> None:
         config = Stage2Config(k_neighbors=30)
         mesh = make_sphere()
