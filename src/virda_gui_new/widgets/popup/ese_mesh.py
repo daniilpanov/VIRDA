@@ -63,7 +63,7 @@ class EseMeshPopup(StepPopupBase):
         layout.addWidget(self._auto_k_check)
 
         self._k_spin = QSpinBox(self)
-        self._k_spin.setRange(1, 100)
+        self._k_spin.setRange(3, 100)
         self._k_spin.setValue(10)
         layout.addWidget(QLabel("K neighbors"))
         layout.addWidget(self._k_spin)

@@ -76,6 +76,7 @@ def test_form_defaults(qapp, manager, popups) -> None:
     assert popup._radius_spin.value() == 10.0
     assert popup._auto_k_check.isChecked()
     assert not popup._k_spin.isEnabled()
+    assert popup._k_spin.minimum() == 3
     assert popup._k_spin.value() == 10
     assert not popup._weighted_check.isChecked()
     assert popup._sigma_spin.value() == 5.0
