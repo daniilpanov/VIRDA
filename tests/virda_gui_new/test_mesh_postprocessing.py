@@ -71,6 +71,7 @@ def _settle(qapp, popup, timeout_s: float = 5.0) -> None:
 def test_form_defaults(qapp, manager, popups) -> None:
     popup = MeshPostprocessingPopup(MESH_POSTPROCESSING, manager)
     popups.append(popup)
+    popup._advanced_settings.setChecked(True)
 
     assert popup._run_button.isEnabled()
     assert popup._min_spin.value() == 100
@@ -85,9 +86,21 @@ def test_form_defaults(qapp, manager, popups) -> None:
     assert popup._nu_spin.isEnabled()
 
 
+def test_advanced_settings_collapse(qapp, manager, popups) -> None:
+    popup = MeshPostprocessingPopup(MESH_POSTPROCESSING, manager)
+    popups.append(popup)
+
+    assert popup._advanced_settings.title() == "Advanced settings"
+    popup._advanced_settings.setChecked(False)
+    assert popup._advanced_settings._content.isHidden()
+    popup._advanced_settings.setChecked(True)
+    assert not popup._advanced_settings._content.isHidden()
+
+
 def test_smoothing_fields_follow_combo(qapp, manager, popups) -> None:
     popup = MeshPostprocessingPopup(MESH_POSTPROCESSING, manager)
     popups.append(popup)
+    popup._advanced_settings.setChecked(True)
 
     popup._smooth_combo.setCurrentText("none")
     assert not popup._iterations_spin.isEnabled()

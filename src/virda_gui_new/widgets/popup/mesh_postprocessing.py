@@ -18,6 +18,7 @@ from virda.ops.smooth_mesh import smooth_mesh
 from virda_gui_new.dto.steps import MESH_POSTPROCESSING
 from virda_gui_new.services import artifact_saving
 from virda_gui_new.widgets.popup.abstract import StepPopupBase
+from virda_gui_new.widgets.popup.advanced import AdvancedSettings
 
 _NO_MESH = "Mesh postprocessing needs an in-memory mesh (run the previous steps first)."
 
@@ -43,20 +44,6 @@ class MeshPostprocessingPopup(StepPopupBase):
             layout.addWidget(QLabel("No in-memory mesh yet."))
             self._run_button.setEnabled(False)
 
-        layout.addWidget(QLabel("Clean"))
-        self._min_spin = QSpinBox(self)
-        self._min_spin.setRange(1, 100000)
-        self._min_spin.setValue(100)
-        layout.addWidget(QLabel("Min component vertices"))
-        layout.addWidget(self._min_spin)
-
-        self._merge_spin = QSpinBox(self)
-        self._merge_spin.setRange(1, 12)
-        self._merge_spin.setValue(7)
-        layout.addWidget(QLabel("Merge digits"))
-        layout.addWidget(self._merge_spin)
-
-        layout.addWidget(QLabel("Decimate"))
         self._density_spin = QDoubleSpinBox(self)
         self._density_spin.setRange(0.1, 100.0)
         self._density_spin.setSingleStep(1.0)
@@ -65,32 +52,50 @@ class MeshPostprocessingPopup(StepPopupBase):
         layout.addWidget(QLabel("Density percent"))
         layout.addWidget(self._density_spin)
 
-        layout.addWidget(QLabel("Smooth"))
+        advanced = AdvancedSettings(self)
+        self._advanced_settings = advanced
+        layout.addWidget(advanced)
+        settings_layout = advanced.content_layout
+
+        settings_layout.addWidget(QLabel("Clean"))
+        self._min_spin = QSpinBox(self)
+        self._min_spin.setRange(1, 100000)
+        self._min_spin.setValue(100)
+        settings_layout.addWidget(QLabel("Min component vertices"))
+        settings_layout.addWidget(self._min_spin)
+
+        self._merge_spin = QSpinBox(self)
+        self._merge_spin.setRange(1, 12)
+        self._merge_spin.setValue(7)
+        settings_layout.addWidget(QLabel("Merge digits"))
+        settings_layout.addWidget(self._merge_spin)
+
+        settings_layout.addWidget(QLabel("Smooth"))
         self._smooth_combo = QComboBox(self)
         self._smooth_combo.addItems(["none", "laplacian", "taubin"])
         self._smooth_combo.setCurrentText("taubin")
-        layout.addWidget(QLabel("Smoother"))
-        layout.addWidget(self._smooth_combo)
+        settings_layout.addWidget(QLabel("Smoother"))
+        settings_layout.addWidget(self._smooth_combo)
 
         self._iterations_spin = QSpinBox(self)
         self._iterations_spin.setRange(0, 50)
         self._iterations_spin.setValue(5)
-        layout.addWidget(QLabel("Iterations"))
-        layout.addWidget(self._iterations_spin)
+        settings_layout.addWidget(QLabel("Iterations"))
+        settings_layout.addWidget(self._iterations_spin)
 
         self._lamb_spin = QDoubleSpinBox(self)
         self._lamb_spin.setRange(0.05, 5.0)
         self._lamb_spin.setDecimals(3)
         self._lamb_spin.setValue(0.5)
-        layout.addWidget(QLabel("Lambda"))
-        layout.addWidget(self._lamb_spin)
+        settings_layout.addWidget(QLabel("Lambda"))
+        settings_layout.addWidget(self._lamb_spin)
 
         self._nu_spin = QDoubleSpinBox(self)
         self._nu_spin.setRange(-5.0, 5.0)
         self._nu_spin.setDecimals(3)
         self._nu_spin.setValue(-0.53)
-        layout.addWidget(QLabel("Nu"))
-        layout.addWidget(self._nu_spin)
+        settings_layout.addWidget(QLabel("Nu"))
+        settings_layout.addWidget(self._nu_spin)
 
         smoothing = self._smooth_combo.currentText() != "none"
         for widget in (self._iterations_spin, self._lamb_spin, self._nu_spin):

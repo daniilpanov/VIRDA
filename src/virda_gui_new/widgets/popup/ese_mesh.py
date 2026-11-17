@@ -17,6 +17,7 @@ from virda.ops.build_ese import build_ese
 from virda_gui_new.dto.steps import ESE_MESH
 from virda_gui_new.services import artifact_saving
 from virda_gui_new.widgets.popup.abstract import StepPopupBase
+from virda_gui_new.widgets.popup.advanced import AdvancedSettings
 
 _NO_MESH = "ESE mesh needs the postprocessed mesh (run the previous steps first)."
 
@@ -50,40 +51,45 @@ class EseMeshPopup(StepPopupBase):
         layout.addWidget(QLabel("ESE offset (mm)"))
         layout.addWidget(self._offset_spin)
 
+        advanced = AdvancedSettings(self)
+        self._advanced_settings = advanced
+        layout.addWidget(advanced)
+        settings_layout = advanced.content_layout
+
         self._radius_spin = QDoubleSpinBox(self)
         self._radius_spin.setRange(0.1, 100.0)
         self._radius_spin.setSingleStep(0.5)
         self._radius_spin.setDecimals(2)
         self._radius_spin.setValue(10.0)
-        layout.addWidget(QLabel("Neighborhood radius (mm)"))
-        layout.addWidget(self._radius_spin)
+        settings_layout.addWidget(QLabel("Neighborhood radius (mm)"))
+        settings_layout.addWidget(self._radius_spin)
 
         self._auto_k_check = QCheckBox("Auto K neighbors", self)
         self._auto_k_check.setChecked(True)
-        layout.addWidget(self._auto_k_check)
+        settings_layout.addWidget(self._auto_k_check)
 
         self._k_spin = QSpinBox(self)
         self._k_spin.setRange(3, 100)
         self._k_spin.setValue(10)
-        layout.addWidget(QLabel("K neighbors"))
-        layout.addWidget(self._k_spin)
+        settings_layout.addWidget(QLabel("K neighbors"))
+        settings_layout.addWidget(self._k_spin)
 
         self._weighted_check = QCheckBox("Weighted PCA", self)
-        layout.addWidget(self._weighted_check)
+        settings_layout.addWidget(self._weighted_check)
 
         self._sigma_spin = QDoubleSpinBox(self)
         self._sigma_spin.setRange(0.1, 50.0)
         self._sigma_spin.setSingleStep(0.5)
         self._sigma_spin.setDecimals(2)
         self._sigma_spin.setValue(5.0)
-        layout.addWidget(QLabel("PCA sigma (mm)"))
-        layout.addWidget(self._sigma_spin)
+        settings_layout.addWidget(QLabel("PCA sigma (mm)"))
+        settings_layout.addWidget(self._sigma_spin)
 
         self._min_neighbors_spin = QSpinBox(self)
         self._min_neighbors_spin.setRange(1, 50)
         self._min_neighbors_spin.setValue(5)
-        layout.addWidget(QLabel("Min neighbors"))
-        layout.addWidget(self._min_neighbors_spin)
+        settings_layout.addWidget(QLabel("Min neighbors"))
+        settings_layout.addWidget(self._min_neighbors_spin)
 
         self._k_spin.setEnabled(False)
         self._auto_k_check.toggled.connect(lambda checked: self._k_spin.setEnabled(not checked))

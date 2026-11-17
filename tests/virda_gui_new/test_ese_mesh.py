@@ -70,6 +70,7 @@ def _settle(qapp, popup, timeout_s: float = 5.0) -> None:
 def test_form_defaults(qapp, manager, popups) -> None:
     popup = EseMeshPopup(ESE_MESH, manager)
     popups.append(popup)
+    popup._advanced_settings.setChecked(True)
 
     assert popup._run_button.isEnabled()
     assert popup._offset_spin.value() == 1.0
@@ -83,9 +84,21 @@ def test_form_defaults(qapp, manager, popups) -> None:
     assert popup._min_neighbors_spin.value() == 5
 
 
+def test_advanced_settings_collapse(qapp, manager, popups) -> None:
+    popup = EseMeshPopup(ESE_MESH, manager)
+    popups.append(popup)
+
+    assert popup._advanced_settings.title() == "Advanced settings"
+    popup._advanced_settings.setChecked(False)
+    assert popup._advanced_settings._content.isHidden()
+    popup._advanced_settings.setChecked(True)
+    assert not popup._advanced_settings._content.isHidden()
+
+
 def test_k_field_follows_auto_check(qapp, manager, popups) -> None:
     popup = EseMeshPopup(ESE_MESH, manager)
     popups.append(popup)
+    popup._advanced_settings.setChecked(True)
 
     popup._auto_k_check.setChecked(False)
     assert popup._k_spin.isEnabled()

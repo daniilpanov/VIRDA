@@ -18,6 +18,7 @@ from virda.ops.build_scalp_surface import generate_scalp_surface
 from virda_gui_new.dto.steps import BASE_MESH, NIFTI
 from virda_gui_new.services import artifact_loading, artifact_saving
 from virda_gui_new.widgets.popup.abstract import StepPopupBase
+from virda_gui_new.widgets.popup.advanced import AdvancedSettings
 
 _NO_VOLUME = "Base mesh needs the NIfTI volume from step 0 (run NIfTI import first)."
 
@@ -53,17 +54,22 @@ class BaseMeshExtractionPopup(StepPopupBase):
         layout.addWidget(QLabel("Voxel size (mm)"))
         layout.addWidget(self._voxel_spin)
 
+        advanced = AdvancedSettings(self)
+        self._advanced_settings = advanced
+        layout.addWidget(advanced)
+        settings_layout = advanced.content_layout
+
         self._seal_box = QCheckBox("Seal mask", self)
         self._seal_box.setChecked(True)
-        layout.addWidget(self._seal_box)
+        settings_layout.addWidget(self._seal_box)
 
         self._radius_spin = QSpinBox(self)
         self._radius_spin.setRange(0, 50)
         self._radius_spin.setValue(4)
         self._radius_spin.setEnabled(self._seal_box.isChecked())
         self._seal_box.toggled.connect(self._radius_spin.setEnabled)
-        layout.addWidget(QLabel("Seal radius"))
-        layout.addWidget(self._radius_spin)
+        settings_layout.addWidget(QLabel("Seal radius"))
+        settings_layout.addWidget(self._radius_spin)
 
         self._restore_config()
         self._voxel_spin.valueChanged.connect(self._store_config)

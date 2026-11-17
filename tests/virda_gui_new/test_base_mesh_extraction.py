@@ -69,6 +69,7 @@ def _settle(qapp, popup, timeout_s: float = 5.0) -> None:
 def test_form_defaults(qapp, manager, popups) -> None:
     popup = BaseMeshExtractionPopup(BASE_MESH, manager)
     popups.append(popup)
+    popup._advanced_settings.setChecked(True)
 
     assert popup._run_button.isEnabled()
     assert popup._voxel_spin.value() == 0.0
@@ -76,6 +77,17 @@ def test_form_defaults(qapp, manager, popups) -> None:
     assert popup._seal_box.isChecked()
     assert popup._radius_spin.value() == 4
     assert popup._radius_spin.isEnabled()
+
+
+def test_advanced_settings_collapse(qapp, manager, popups) -> None:
+    popup = BaseMeshExtractionPopup(BASE_MESH, manager)
+    popups.append(popup)
+
+    assert popup._advanced_settings.title() == "Advanced settings"
+    popup._advanced_settings.setChecked(False)
+    assert popup._advanced_settings._content.isHidden()
+    popup._advanced_settings.setChecked(True)
+    assert not popup._advanced_settings._content.isHidden()
 
 
 def test_collect_run_defaults_stay_native_and_sealed(qapp, manager, popups, monkeypatch) -> None:
