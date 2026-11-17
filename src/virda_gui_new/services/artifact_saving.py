@@ -20,6 +20,7 @@ from virda.io.exporters.scalp_mesh import export_scalp_mesh
 from virda.io.exporters.segmentation import export_head_mask
 from virda.models.electrode import Electrodes
 from virda.models.mri_volume import MRIVolume
+from virda_gui_new.dto.steps import BASE_MESH, ESE_MESH, LOCALIZATION, MESH_POSTPROCESSING, STEPS
 from virda_gui_new.services import artifact_paths
 from virda_gui_new.services.localization import (
     FiducialRows,
@@ -27,6 +28,7 @@ from virda_gui_new.services.localization import (
     build_electrodes,
     build_fiducials,
 )
+from virda_gui_new.services.project_scan import artifact_files
 
 if TYPE_CHECKING:
     from virda.models.mesh import Mesh, Normals
@@ -122,3 +124,30 @@ def save_localization(
         export_electrodes_scalp(artifact_paths.scalp_points(project), electrodes)
     if any(electrode.ese_coords is not None for electrode in electrodes.items):
         export_electrodes_ese(artifact_paths.ese_points(project), electrodes)
+
+
+def remove_artifacts_after_step(project: Path, step_n: int) -> tuple[Path, ...]:
+    """Remove persisted outputs of steps later than ``step_n``.
+
+    Fiducials and measurements are global-store inputs, so their files
+    are retained. Removing downstream context artifacts prevents the
+    next project load from restoring results invalidated in memory.
+    """
+    if not 0 <= step_n < len(STEPS):
+        raise ValueError(f"step index {step_n} is out of range")
+
+    outputs = {
+        BASE_MESH.index: ("head_mask", "base_mesh"),
+        MESH_POSTPROCESSING.index: ("scalp_mesh",),
+        ESE_MESH.index: ("ese_mesh", "ese_normals"),
+        LOCALIZATION.index: ("scalp_points", "ese_points"),
+    }
+    removed: list[Path] = []
+    for owner_step, slots in outputs.items():
+        if owner_step <= step_n:
+            continue
+        for slot in slots:
+            for path in artifact_files(project, slot):
+                path.unlink(missing_ok=True)
+                removed.append(path)
+    return tuple(removed)

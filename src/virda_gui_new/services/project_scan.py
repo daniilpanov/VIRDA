@@ -107,6 +107,17 @@ def project_files(project: Path) -> list[Path]:
     return found
 
 
+def artifact_files(project: Path, slot: str) -> tuple[Path, ...]:
+    """Every recognized project file belonging to one artifact slot.
+
+    Unlike :func:`find_project_artifacts`, this includes alternate and
+    duplicate names that the scanner could otherwise pick after a stale
+    canonical artifact is removed.
+    """
+    rules = (rule for rule in _ARTIFACT_RULES if rule.slot == slot)
+    return tuple(dict.fromkeys(path for rule in rules for path in _candidates(project, rule)))
+
+
 def find_project_artifacts(project: Path) -> ProjectArtifacts:
     """Scan a VIRDA project directory for ready artifact files.
 

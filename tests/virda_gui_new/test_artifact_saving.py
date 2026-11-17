@@ -22,6 +22,7 @@ from virda.models.scalp_surface import ScalpSurface
 from virda.models.segmentation_mask import SegmentationMask
 from virda_gui_new.services.artifact_loading import load_fiducial_points
 from virda_gui_new.services.artifact_saving import (
+    remove_artifacts_after_step,
     save_ese_mesh,
     save_final_mesh,
     save_localization,
@@ -198,3 +199,38 @@ def test_save_localization_rejects_invalid_fiducial_rows(tmp_path: Path) -> None
         assert "fiducial" in str(error).lower()
     else:
         raise AssertionError("expected empty fiducial rows to fail")
+
+
+def test_invalidation_removes_downstream_files_but_keeps_step_and_global_inputs(
+    tmp_path: Path,
+) -> None:
+    paths = (
+        "input/source.nii.gz",
+        "segmentation/head_mask.nii.gz",
+        "scalp/base_mesh.ply",
+        "scalp/final_mesh.ply",
+        "ese/mesh.ply",
+        "ese/normals.npy",
+        "localization/fiducials.json",
+        "localization/measurements.json",
+        "localization/electrodes_scalp.csv",
+        "localization/electrodes_ese.csv",
+    )
+    for relative in paths:
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("artifact")
+
+    removed = remove_artifacts_after_step(tmp_path, 1)
+
+    assert {path.relative_to(tmp_path).as_posix() for path in removed} == {
+        "scalp/final_mesh.ply",
+        "ese/mesh.ply",
+        "ese/normals.npy",
+        "localization/electrodes_scalp.csv",
+        "localization/electrodes_ese.csv",
+    }
+    assert all((tmp_path / relative).is_file() for relative in paths[:3])
+    assert all((tmp_path / relative).is_file() for relative in paths[6:8])
+    assert all(not (tmp_path / relative).exists() for relative in paths[3:6])
+    assert all(not (tmp_path / relative).exists() for relative in paths[8:])

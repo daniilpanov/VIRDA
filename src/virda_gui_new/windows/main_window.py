@@ -7,6 +7,7 @@ from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import QMainWindow
 
 from virda_gui_new.dto.steps import BASE_MESH, ESE_MESH, LOCALIZATION, MESH_POSTPROCESSING, STEPS
+from virda_gui_new.services import artifact_saving
 from virda_gui_new.services.project_import import PreparedProject, prepare_project
 from virda_gui_new.services.scene_builder import collect_scene_sources
 from virda_gui_new.services.step_seeding import seed_steps_from_artifacts
@@ -111,6 +112,8 @@ class MainWindow(QMainWindow):
 
     def _on_steps_invalidated(self, n: int) -> None:
         self._log(f"Steps after {n} invalidated.")
+        if self._project_path is not None:
+            artifact_saving.remove_artifacts_after_step(self._project_path, n)
 
     def _toggle_steps_menu(self) -> None:
         """Show (or re-raise) / hide the steps menu from the toggle button."""
