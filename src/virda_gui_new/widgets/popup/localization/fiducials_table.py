@@ -59,7 +59,7 @@ class FiducialsTable(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._names = list(SLOT_IDS)
+        self._names = [str(slot) for slot in SLOT_IDS]
         self._world: list[np.ndarray | None] = [None] * len(SLOT_IDS)
 
         self._table = QTableWidget(len(SLOT_IDS), len(_COLUMNS), self)
@@ -77,14 +77,14 @@ class FiducialsTable(QWidget):
         layout.addLayout(buttons)
         self._render()
 
-    def set_rows(self, rows: Sequence[tuple[str, Sequence[float]]]) -> None:
+    def set_rows(self, rows: Sequence[tuple[str, Sequence[float] | np.ndarray]]) -> None:
         """Replace the grid from ``(name, xyz)`` rows; one change signal.
 
         Rows are matched onto the fixed slots by name
         (case-insensitive alias match); a matched slot shows the given
         label and coordinates, unmatched slots are cleared.
         """
-        self._names = list(SLOT_IDS)
+        self._names = [str(slot) for slot in SLOT_IDS]
         self._world = [None] * len(SLOT_IDS)
         for name, xyz in rows:
             slot = self._slot(name)
@@ -96,7 +96,7 @@ class FiducialsTable(QWidget):
 
     def clear_grid(self) -> None:
         """Blank the whole grid: canonical names, no coordinates."""
-        self._names = list(SLOT_IDS)
+        self._names = [str(slot) for slot in SLOT_IDS]
         self._world = [None] * len(SLOT_IDS)
         self._render()
         self.cleared.emit()

@@ -6,7 +6,7 @@ import numpy as np
 
 from tests.helpers.meshes import make_sphere
 from virda.models.electrode import Electrode, Electrodes
-from virda.models.fiducial import Fiducial, Fiducials
+from virda.models.fiducial import Fiducial, Fiducials, FiducialType
 from virda.models.mesh import Mesh, Normals
 from virda.models.stage2_config import Stage2Config
 from virda.ops.build_ese import build_ese
@@ -16,19 +16,19 @@ def make_fiducials() -> Fiducials:
     return Fiducials(
         items=[
             Fiducial(
-                fiducial_id="NAS",
+                fiducial_id=FiducialType.NAS,
                 name="Nasion",
                 coordinates=np.array([0.0, 88.0, -10.0]),
                 coordinate_system="world",
             ),
             Fiducial(
-                fiducial_id="LPA",
+                fiducial_id=FiducialType.LPA,
                 name="Left pre-auricular",
                 coordinates=np.array([-75.0, -1.0, -14.0]),
                 coordinate_system="world",
             ),
             Fiducial(
-                fiducial_id="RPA",
+                fiducial_id=FiducialType.RPA,
                 name="Right pre-auricular",
                 coordinates=np.array([75.0, -1.0, -14.0]),
                 coordinate_system="world",
