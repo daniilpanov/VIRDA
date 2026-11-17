@@ -397,8 +397,14 @@ class LocalizationPopup(LocalizationPopupBase):
         the user.
         """
         self._prediction_busy = busy
-        self._measurements_table.setEnabled(not busy)
-        self._fiducials_table.setEnabled(not busy)
+        self._update_input_tables_enabled()
+
+    def _update_input_tables_enabled(self) -> None:
+        """Block every table while localization or prediction is running."""
+        blocked = self._localization_busy or getattr(self, "_prediction_busy", False)
+        self._measurements_table.setEnabled(not blocked)
+        self._fiducials_table.setEnabled(not blocked)
+        self._electrodes_table.setEnabled(not blocked)
 
     def _prediction_blocked_reason(self, electrode_id: str, missing: FiducialType) -> str | None:
         """Why the prediction cannot run, or ``None`` when it can."""
@@ -469,11 +475,13 @@ class LocalizationPopup(LocalizationPopupBase):
         """Tell the table whether a prediction can run at all."""
         if self._ese_mesh is None:
             self._measurements_table.set_prediction_state(False, "the ESE mesh is needed")
-            return
-        if len(self.collect_fiducial_rows()) < 3:
+        elif len(self.collect_fiducial_rows()) < 3:
             self._measurements_table.set_prediction_state(False, "the three fiducials are needed")
-            return
-        self._measurements_table.set_prediction_state(True)
+        else:
+            self._measurements_table.set_prediction_state(True)
+        # The state above says nothing about a localization in flight:
+        # apply the busy block on top of it.
+        self._measurements_table.set_prediction_blocked(self._localization_busy)
 
     def _update_surface_status(self) -> None:
         """Show how far the fiducials are from the scalp surface."""
@@ -491,6 +499,20 @@ class LocalizationPopup(LocalizationPopupBase):
     def _update_pick_state(self) -> None:
         """Tell the table whether a point can be picked (the scalp is needed)."""
         self._fiducials_table.set_pick_available(self._scalp_mesh is not None)
+        # The availability above says nothing about a localization in
+        # flight: apply the busy block on top of it.
+        self._fiducials_table.set_pick_blocked(getattr(self, "_localization_busy", False))
+
+    def _on_localization_busy(self, busy: bool) -> None:
+        """Block the pick and predict buttons while a localization run goes on."""
+        self._localization_busy = busy
+        if getattr(self, "_pick_slot", None) is not None:
+            self._pick_slot = None
+            self._fiducials_table.set_pick_target(None)
+            self.pickCancelled.emit()
+        self._update_pick_state()
+        self._measurements_table.set_prediction_blocked(busy)
+        self._update_input_tables_enabled()
 
     def _prediction_fingerprint(self) -> PredictionFingerprint:
         """The inputs the predicted measurements depend on.

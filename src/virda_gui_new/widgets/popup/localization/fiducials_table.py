@@ -92,6 +92,8 @@ class FiducialsTable(QWidget):
         self._status: dict[str, SurfaceStatus] = {}
         self._pick_target: FiducialType | None = None
         self._pick_buttons: dict[int, QPushButton] = {}
+        self._pick_available = True
+        self._pick_blocked = False
 
         self._table = QTableWidget(len(SLOT_IDS), len(_COLUMNS), self)
         self._table.setHorizontalHeaderLabels(list(_COLUMNS))
@@ -235,8 +237,23 @@ class FiducialsTable(QWidget):
 
     def set_pick_available(self, available: bool) -> None:
         """Whether a point can be picked at all (the scalp mesh is needed)."""
+        self._pick_available = available
+        self._refresh_pick_buttons()
+
+    def set_pick_blocked(self, blocked: bool) -> None:
+        """Block picking while a localization run makes a pick stale.
+
+        The block is independent of the availability: a button is active
+        only when picking is available and not blocked, so unblocking
+        restores exactly the buttons that were available before.
+        """
+        self._pick_blocked = blocked
+        self._refresh_pick_buttons()
+
+    def _refresh_pick_buttons(self) -> None:
+        """Apply the availability and the busy block to every Pick button."""
         for button in self._pick_buttons.values():
-            button.setEnabled(available)
+            button.setEnabled(self._pick_available and not self._pick_blocked)
 
     def set_pick_point(self, name: str, xyz: np.ndarray) -> bool:
         """Write a picked point into the row of the given fiducial.

@@ -169,6 +169,8 @@ class LocalizationPopupBase(StepPopupBase):
         # attribute must exist from the start: build_form() prefills the
         # fiducial table, and the prefill schedules an input change.
         self._localization_runner: LiveLocalizationRunner | None = None
+        # Input changes during prefill query this before the runner exists.
+        self._localization_busy = False
         self._pending_scope: str | None = None
         self._relocalize_button: QPushButton | None = None
         # The geometry is read after the form is built, but the
@@ -211,6 +213,7 @@ class LocalizationPopupBase(StepPopupBase):
             )
             self._localization_runner.localized.connect(self._on_localized)
             self._localization_runner.failed.connect(self._on_run_failed)
+            self._localization_runner.busyChanged.connect(self._on_localization_busy)
             # The step does not run on its own: the first edit (or the
             # re-localization button) starts it.
             reason = self._blocked_reason()
@@ -263,6 +266,9 @@ class LocalizationPopupBase(StepPopupBase):
 
     def on_status(self, text: str) -> None:
         """Hook: called with every status line shown in the hint label."""
+
+    def _on_localization_busy(self, busy: bool) -> None:
+        """Hook: called while a localization run is scheduled or in flight."""
 
     def shutdown(self) -> None:
         """Stop the debounced live runs, then the base machinery."""

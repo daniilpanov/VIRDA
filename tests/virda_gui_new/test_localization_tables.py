@@ -273,6 +273,39 @@ def test_fiducials_table_pick_button_can_be_disabled(qapp) -> None:
     assert button.isEnabled() is False
 
 
+def test_fiducials_table_blocked_pick_button_stays_down_when_available(qapp) -> None:
+    """The busy block is independent of the availability."""
+    from PySide6.QtWidgets import QPushButton
+
+    widget = FiducialsTable()
+
+    widget.set_pick_blocked(True)
+
+    for row in range(3):
+        button = widget._table.cellWidget(row, 5)
+        assert isinstance(button, QPushButton)
+        assert button.isEnabled() is False
+
+
+def test_fiducials_table_unblocked_pick_restores_only_the_available_buttons(qapp) -> None:
+    """Releasing the block keeps the original unavailability in place."""
+    from PySide6.QtWidgets import QPushButton
+
+    widget = FiducialsTable()
+    widget.set_pick_available(False)
+
+    widget.set_pick_blocked(True)
+    widget.set_pick_blocked(False)
+
+    button = widget._table.cellWidget(0, 5)
+    assert isinstance(button, QPushButton)
+    assert button.isEnabled() is False
+
+    widget.set_pick_available(True)
+
+    assert button.isEnabled() is True
+
+
 def test_fiducials_table_pick_point_writes_the_row(qapp) -> None:
     widget = FiducialsTable()
     events: list[int] = []

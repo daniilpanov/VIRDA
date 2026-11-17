@@ -26,6 +26,9 @@ _PREDICT_COLUMN = len(_COLUMNS) - 1
 #: Why a prediction cannot run when the electrode has too few measurements.
 _TOO_FEW = "two measured distances are needed"
 
+#: Why a prediction cannot run while a localization is in progress.
+_LOCALIZATION_BUSY = "a localization run is in progress"
+
 
 class MeasurementsTable(QWidget):
     """Pivot grid of the measured distances: one row per electrode.
@@ -71,6 +74,7 @@ class MeasurementsTable(QWidget):
         self._predict_buttons: dict[int, QPushButton] = {}
         self._prediction_available = True
         self._prediction_reason = ""
+        self._prediction_blocked = False
 
         from_file = QPushButton("From file", self)
         from_file.clicked.connect(self.importRequested)
@@ -177,6 +181,17 @@ class MeasurementsTable(QWidget):
         self._prediction_reason = reason
         self._refresh_predict_buttons()
 
+    def set_prediction_blocked(self, blocked: bool) -> None:
+        """Block predictions while a localization run makes one stale.
+
+        The block is independent of the availability: unblocking
+        restores exactly the buttons that were available before, and a
+        row that was unavailable for its own reason keeps showing that
+        original reason.
+        """
+        self._prediction_blocked = blocked
+        self._refresh_predict_buttons()
+
     def set_predicted(
         self, electrode_id: str, fiducial_id: str, distance: float, note: str
     ) -> bool:
@@ -277,6 +292,9 @@ class MeasurementsTable(QWidget):
             elif not self._prediction_available:
                 button.setEnabled(False)
                 button.setToolTip(self._prediction_reason)
+            elif self._prediction_blocked:
+                button.setEnabled(False)
+                button.setToolTip(_LOCALIZATION_BUSY)
             else:
                 button.setEnabled(True)
                 button.setToolTip("")

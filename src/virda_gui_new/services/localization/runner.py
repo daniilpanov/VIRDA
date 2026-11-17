@@ -22,6 +22,7 @@ class LiveLocalizationRunner(QObject):
 
     localized = Signal(object)  # noqa: N815 - Electrodes
     failed = Signal(str)
+    busyChanged = Signal(bool)  # noqa: N815 - whether a run is scheduled or in flight
 
     def __init__(
         self,
@@ -44,6 +45,7 @@ class LiveLocalizationRunner(QObject):
         self._scalp_mesh = scalp_mesh
         self._options = Stage3Config()
         self._fixed_offset_shift_mm: float | None = None
+        self._busy = False
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self._run)
@@ -65,6 +67,7 @@ class LiveLocalizationRunner(QObject):
         recomputes a single edited electrode on its own. The options
         travel with the run, so a changed setting takes effect at once.
         """
+        self._set_busy(True)
         self._timer.start(SETTLE_DELAY_MS)
         self._fiducials = fiducials
         self._electrodes = electrodes
@@ -75,6 +78,7 @@ class LiveLocalizationRunner(QObject):
         """Stop the debounce timer and any in-flight run."""
         self._timer.stop()
         self._runner.stop()
+        self._set_busy(False)
 
     def _run(self) -> None:
         self._runner.start(
@@ -91,6 +95,21 @@ class LiveLocalizationRunner(QObject):
 
     def _on_done(self, result: Electrodes) -> None:
         self.localized.emit(result)
+        self._finish_run()
 
     def _on_failed(self, message: str) -> None:
         self.failed.emit(message)
+        self._finish_run()
+
+    def _finish_run(self) -> None:
+        """A delivered result ends the busy state unless a new run waits."""
+        if not self._timer.isActive():
+            self._set_busy(False)
+
+    def _set_busy(self, busy: bool) -> None:
+        """Move the busy flag, announcing every real change."""
+        if busy == self._busy:
+            return
+
+        self._busy = busy
+        self.busyChanged.emit(busy)
