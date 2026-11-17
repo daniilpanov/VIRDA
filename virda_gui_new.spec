@@ -24,6 +24,13 @@ from PyInstaller.utils.hooks import (
 ENTRY_SCRIPT = "src/virda_gui_new/__main__.py"
 APP_NAME = "virda"
 
+if sys.platform == "win32":
+    ICON = "assets/app-icons/icon.ico"
+elif sys.platform == "darwin":
+    ICON = "assets/app-icons/icon.icns"
+else:
+    ICON = None
+
 PATH_EX: list[str] = []
 
 # The GUI ships its own log pane; a console window would be a duplicate.
@@ -148,6 +155,7 @@ exe = EXE(
     a.datas,
     [],
     name=APP_NAME,
+    icon=ICON,
     debug=DEBUG,
     bootloader_ignore_signals=False,
     strip=False,
