@@ -108,6 +108,7 @@ class MeshPostprocessingPopup(StepPopupBase):
         for widget in (self._density_spin, self._lamb_spin, self._nu_spin):
             widget.valueChanged.connect(self._store_config)
         self._smooth_combo.currentTextChanged.connect(self._store_config)
+        layout.addStretch(1)
 
     def _restore_config(self) -> None:
         """Put the stored settings into the widgets."""

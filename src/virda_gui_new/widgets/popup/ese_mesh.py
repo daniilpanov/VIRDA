@@ -101,6 +101,7 @@ class EseMeshPopup(StepPopupBase):
             spin.valueChanged.connect(self._store_config)
         self._auto_k_check.toggled.connect(self._store_config)
         self._weighted_check.toggled.connect(self._store_config)
+        layout.addStretch(1)
 
     def _restore_config(self) -> None:
         """Put the stored settings into the widgets."""

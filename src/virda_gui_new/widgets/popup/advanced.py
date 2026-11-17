@@ -1,6 +1,6 @@
 """Shared collapsible container for less commonly used step settings."""
 
-from PySide6.QtWidgets import QGroupBox, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QGroupBox, QSizePolicy, QVBoxLayout, QWidget
 
 
 class AdvancedSettings(QGroupBox):
@@ -11,8 +11,10 @@ class AdvancedSettings(QGroupBox):
         self.setObjectName("advanced_settings")
         self.setCheckable(True)
         self.setChecked(False)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
 
         self._content = QWidget(self)
+        self._content.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         self._content.hide()
         self.content_layout = QVBoxLayout(self._content)
         outer_layout = QVBoxLayout(self)

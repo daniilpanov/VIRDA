@@ -75,6 +75,7 @@ class BaseMeshExtractionPopup(StepPopupBase):
         self._voxel_spin.valueChanged.connect(self._store_config)
         self._seal_box.toggled.connect(self._store_config)
         self._radius_spin.valueChanged.connect(self._store_config)
+        layout.addStretch(1)
 
     def _restore_config(self) -> None:
         """Put the stored settings into the widgets."""
