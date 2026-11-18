@@ -38,8 +38,9 @@ recent projects). There is no preferences dialog with editable fields.
 - Separate `Qt.Tool` windows: `Steps`, `File tree`, the four step popups and the
   export popups. Floating pills `Steps` and `Files` toggle the two navigators.
 - `&File` menu: `&Open project...`, `&New project...`, `&Recent` and `&Export`
-  with `&Measurements`, `&Electrodes`, `&Fiducials`, `&Mesh`. Export actions are
-  always enabled; a missing source is reported when `Export` is clicked.
+  with `&Measurements`, `&Electrodes`, `&Fiducials`, `&Mesh` and `Mesh &arrays`.
+  Export actions are always enabled; a missing source is reported when `Export`
+  is clicked.
 
 ### Steps navigator
 
@@ -163,22 +164,27 @@ and two decimals (integer indices for `Voxel`); `Flagged` reads `yes`/`no`.
 
 ## Export popups
 
-Every popup has a `Coordinate frame` selector (except measurements), a `File`
-path field prefilled with the canonical project path, a `Browse` button and an
-`Export` button. The `Export to` file dialog chooses the target. A successful
+Every popup has a `Coordinate frame` selector (except measurements), an output
+path field, a `Browse` button and an `Export` button. The mesh arrays popup
+selects an output directory; the other popups select a file. A successful
 export closes the popup and shows `Export successful`; a failure shows
 `Export error` with `Close` and `Retry`.
 
-| Popup | Frames offered | Default file |
+| Popup | Frames offered | Default output |
 |---|---|---|
 | `Export measurements` | none (no coordinates) | `localization/measurements.json` |
 | `Export electrodes` | Head, World, Fiducials, Voxel | `localization/electrodes.csv` |
 | `Export fiducials` | World, Head, Voxel | `localization/fiducials.json` |
 | `Export mesh` | World, Head, Fiducials | `scalp/base_mesh.ply`, `scalp/final_mesh.ply`, `ese/mesh.ply` |
+| `Export mesh arrays` | World, Head, Fiducials, Voxel | `exports/scalp` or `exports/ese` |
 
 The mesh popup adds a `Mesh type` combobox with `Base`, `Postprocessed` and
 `ESE`; changing it resets the path to that source's default. The voxel frame is
 not offered for meshes because PLY carries no coordinate-frame metadata.
+The mesh arrays popup offers the same mesh types and writes `<scalp|ese>_vertices.npy`
+and `<scalp|ese>_faces.npy` into the selected directory. Vertices are converted
+from the stored world coordinates into the selected frame; face indices do not
+change. The arrays do not include a coordinate-frame metadata file.
 The fiducials frame is never offered for fiducials themselves, which define it.
 
 The electrodes CSV tags each row with `coordinate_system`, and the fiducials

@@ -2,10 +2,14 @@
 
 from pathlib import Path
 
-from PySide6.QtWidgets import QComboBox, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QComboBox, QFileDialog, QLabel, QVBoxLayout, QWidget
 
 from virda.models.coordinates import CoordinateSystem
-from virda_gui_new.services.artifact_exporting import ExportKind, MeshExportKind
+from virda_gui_new.services.artifact_exporting import (
+    ExportKind,
+    MeshExportKind,
+    default_export_path,
+)
 from virda_gui_new.services.steps_manager import StepsManager
 from virda_gui_new.widgets.popup.export.base import ExportPopupBase
 
@@ -134,4 +138,52 @@ class MeshExportPopup(ExportPopupBase):
 
     def _on_mesh_kind_changed(self, _index: int) -> None:
         """Follow the new mesh source with its canonical default path."""
+        self._apply_default_path()
+
+
+class MeshArraysExportPopup(ExportPopupBase):
+    """Export mesh vertices and faces as NumPy arrays in a chosen frame."""
+
+    _TITLE = "Export mesh arrays"
+    _HINT = (
+        "Exports the chosen mesh as vertices and faces NumPy arrays in the selected "
+        "coordinate frame."
+    )
+
+    def __init__(
+        self,
+        manager: StepsManager,
+        parent: QWidget | None = None,
+        *,
+        project: Path | None = None,
+    ) -> None:
+        super().__init__(manager, ExportKind.MESH_ARRAYS, parent, project=project)
+
+    def build_form(self, layout: QVBoxLayout) -> None:
+        self._mesh_combo = QComboBox(self)
+        for label, kind in _MESH_ITEMS:
+            self._mesh_combo.addItem(label, kind)
+        layout.addWidget(QLabel("Mesh type", self))
+        layout.addWidget(self._mesh_combo)
+        self._mesh_combo.currentIndexChanged.connect(self._on_mesh_kind_changed)
+
+    def _offered_frames(self) -> frozenset[CoordinateSystem]:
+        return frozenset(CoordinateSystem)
+
+    def _path_label_text(self) -> str:
+        return "Directory"
+
+    def _apply_default_path(self) -> None:
+        """Use the canonical scalp or ESE folder when a project is open."""
+        default = default_export_path(self._project, self._kind, self._mesh_kind())
+        self._path_edit.setText("" if default is None else str(default))
+
+    def _browse(self) -> None:
+        """Choose the directory that will receive the two NPY files."""
+        start = self._path_edit.text().strip()
+        path = QFileDialog.getExistingDirectory(self, "Export to", start)
+        if path:
+            self._path_edit.setText(path)
+
+    def _on_mesh_kind_changed(self, _index: int) -> None:
         self._apply_default_path()

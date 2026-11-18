@@ -94,7 +94,7 @@ class ExportPopupBase(QWidget):
         browse = QPushButton("Browse", self)
         browse.clicked.connect(self._browse)
         path_row = QHBoxLayout()
-        path_row.addWidget(QLabel("File", self))
+        path_row.addWidget(QLabel(self._path_label_text(), self))
         path_row.addWidget(self._path_edit, stretch=1)
         path_row.addWidget(browse)
 
@@ -111,6 +111,10 @@ class ExportPopupBase(QWidget):
 
     def build_form(self, layout: QVBoxLayout) -> None:
         """Extension hook: add kind-specific rows here."""
+
+    def _path_label_text(self) -> str:
+        """Label for the output path field."""
+        return "File"
 
     def _offered_frames(self) -> frozenset[CoordinateSystem]:
         """The frames this popup offers at all; subclasses may narrow it."""

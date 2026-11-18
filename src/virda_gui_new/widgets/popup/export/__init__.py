@@ -15,6 +15,7 @@ from virda_gui_new.widgets.popup.export.popups import (
     ElectrodesExportPopup,
     FiducialsExportPopup,
     MeasurementsExportPopup,
+    MeshArraysExportPopup,
     MeshExportPopup,
 )
 
@@ -23,5 +24,6 @@ __all__ = [
     "ExportPopupBase",
     "FiducialsExportPopup",
     "MeasurementsExportPopup",
+    "MeshArraysExportPopup",
     "MeshExportPopup",
 ]
