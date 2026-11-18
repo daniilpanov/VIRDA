@@ -2,6 +2,7 @@
 
 import numpy as np
 
+from virda.geometry import match_fiducial_name
 from virda.models.electrode import Electrode, Electrodes
 from virda.models.fiducial import Fiducial, Fiducials
 from virda_gui_new.dto.viewer3d import LabeledPoints
@@ -13,15 +14,6 @@ type MeasurementTable = dict[str, dict[str, float]]
 """Per electrode id: fiducial name -> measured distance in mm."""
 
 _EMPTY_NAME = "Fiducial name must be non-empty."
-
-#: The lowercased aliases of the canonical fiducial slots.
-_FIDUCIAL_SLOTS: dict[str, str] = {
-    "nas": "NAS",
-    "nasion": "NAS",
-    "nz": "NAS",
-    "lpa": "LPA",
-    "rpa": "RPA",
-}
 
 
 def labeled_points_from_rows(rows: FiducialRows) -> LabeledPoints:
@@ -121,9 +113,11 @@ def canonical_fiducial_name(name: str) -> str | None:
     """The canonical name of a fiducial, or ``None`` when it is unknown.
 
     The project artifacts name the NAS point either way (``NAS`` or
-    ``NASION``), so both spellings are the same slot.
+    ``NASION``), so both spellings are the same slot. The core knows the
+    slots, so it holds the alias table.
     """
-    return _FIDUCIAL_SLOTS.get(str(name).strip().lower())
+    slot = match_fiducial_name(name)
+    return slot.value if slot is not None else None
 
 
 def blocked_reason(n_fiducials: int, n_complete: int, n_incomplete: int) -> str | None:

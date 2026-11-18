@@ -6,12 +6,15 @@ the electrodes checkbox hides the ese/scalp points but keeps mesh and
 fiducials, and both flags survive a surface switch and a scene rebuild.
 """
 
+import numpy as np
 import pytest
 import pyvista as pv
 from PySide6.QtWidgets import QCheckBox, QRadioButton, QSlider
+from vtkmodules.vtkRenderingCore import vtkCellPicker
 
 from tests.virda_gui_new.fixtures.viewer3d import points
 from virda_gui_new.dto.viewer3d import SceneSources
+from virda_gui_new.services.viewer_scene import collect_viewer_scene
 
 
 def _checkbox(viewer, text: str) -> QCheckBox:
@@ -184,3 +187,69 @@ def test_the_mesh_edges_survive_a_scene_rebuild(viewer) -> None:
 
     scalp = viewer._mesh_actors["scalp"].GetProperty()
     assert scalp.GetEdgeVisibility() == 1
+
+
+def test_the_cell_picker_returns_a_point_on_the_surface() -> None:
+    """The VTK picker the viewer uses returns the point on the surface.
+
+    The Qt viewer cannot render offscreen, so the picker is exercised
+    on a plain plotter: the picked point lies on the sphere, not on a
+    vertex of it.
+    """
+    plotter = pv.Plotter(off_screen=True)
+    try:
+        actor = plotter.add_mesh(pv.Sphere(radius=10.0))
+        plotter.camera.position = (0.0, 0.0, 60.0)
+        plotter.camera.focal_point = (0.0, 0.0, 0.0)
+        plotter.render()
+
+        picker = vtkCellPicker()
+        picker.SetTolerance(0.025)
+        picker.PickFromListOn()
+        picker.InitializePickList()
+        picker.AddPickList(actor)
+
+        render_window = plotter.render_window
+        assert render_window is not None
+        size = render_window.GetSize()
+        picked = picker.Pick(size[0] // 2, size[1] // 2, 0, plotter.renderer)
+
+        assert picked
+        position = np.asarray(picker.GetPickPosition(), dtype=np.float64)
+        assert float(np.linalg.norm(position)) == pytest.approx(10.0, abs=0.05)
+    finally:
+        plotter.close()
+
+
+def test_the_picker_ignores_the_other_actors(viewer) -> None:
+    """Only the scalp surface is in the pick list."""
+    scalp_actor = viewer._mesh_actors["scalp"]
+
+    assert viewer._picker.GetPickList().GetNumberOfItems() == 1
+    assert viewer._picker.GetPickList().GetItemAsObject(0) is scalp_actor
+
+
+def test_the_scene_point_is_converted_into_the_world_frame(viewer) -> None:
+    """A scene in voxel coordinates is converted back to the world."""
+    scene = viewer._scene
+    assert scene is not None
+    scene.world_from_scene = np.array(
+        [[2.0, 0.0, 0.0, 10.0], [0.0, 2.0, 0.0, 0.0], [0.0, 0.0, 2.0, 0.0], [0.0, 0.0, 0.0, 1.0]]
+    )
+
+    world = viewer._world_point(np.array([1.0, 1.0, 1.0]))
+
+    assert world.tolist() == [12.0, 2.0, 2.0]
+
+
+def test_a_voxel_scene_carries_the_transform_back_to_the_world() -> None:
+    """The scene of a flipped affine knows the way back to the world."""
+    affine = np.array(
+        [[-1.0, 0.0, 0.0, 100.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]]
+    )
+    data = np.zeros((2, 2, 2), dtype=np.float32)
+
+    scene = collect_viewer_scene(SceneSources(nifti=(data, affine), scalp=pv.Sphere()))
+
+    assert scene.mm_scene is False
+    np.testing.assert_allclose(scene.world_from_scene, affine)

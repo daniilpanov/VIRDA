@@ -7,6 +7,7 @@
 from collections.abc import Callable
 from typing import Any, Protocol, cast
 
+import numpy as np
 import pyvista as pv
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -14,6 +15,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QPushButton,
     QRadioButton,
     QSlider,
     QVBoxLayout,
@@ -21,7 +23,9 @@ from PySide6.QtWidgets import (
 )
 from pyvista import Actor
 from pyvistaqt import QtInteractor
+from vtkmodules.vtkRenderingCore import vtkCellPicker
 
+from virda.geometry import apply_transform
 from virda_gui_new.dto.viewer3d import (
     LabeledPoints,
     MeshBundle,
@@ -51,6 +55,47 @@ _MESH_POINTS_POINT_SIZE = 10
 #: How transparent the meshes are drawn by default: the ESE surface and
 #: the electrode points stay visible through the scalp.
 _DEFAULT_MESH_OPACITY = 0.6
+#: How far from the surface a click may land, as a fraction of the
+#: window diagonal (the VTK pick tolerance of the cell picker).
+_PICK_TOLERANCE = 0.025
+
+
+#: The state of a camera that has to survive a scene rebuild: its
+#: position, its focal point, its up vector, its view angle and whether
+#: it draws in parallel.
+CameraState = tuple[
+    tuple[float, float, float],
+    tuple[float, float, float],
+    tuple[float, float, float],
+    float,
+    bool,
+]
+
+
+def _camera_state(camera: Any) -> CameraState:
+    """The state of a camera that has to survive a scene rebuild.
+
+    Only the values pyvista reads back from VTK are used: ``azimuth`` and
+    ``elevation`` are pyvista's own cached copies and do not follow the
+    mouse.
+    """
+    return (
+        tuple(camera.position),
+        tuple(camera.focal_point),
+        tuple(camera.up),
+        float(camera.view_angle),
+        bool(camera.parallel_projection),
+    )
+
+
+def _apply_camera_state(camera: Any, state: CameraState) -> None:
+    """Restore a camera state captured by :func:`_camera_state`."""
+    position, focal_point, up, view_angle, parallel_projection = state
+    camera.position = position
+    camera.focal_point = focal_point
+    camera.up = up
+    camera.view_angle = view_angle
+    camera.parallel_projection = parallel_projection
 
 
 def _add_mesh_actor(
@@ -60,6 +105,7 @@ def _add_mesh_actor(
     color: str,
     opacity: float,
     wireframe: bool,
+    pickable: bool = False,
 ) -> Actor:
     return plotter.add_mesh(
         mesh,
@@ -67,6 +113,7 @@ def _add_mesh_actor(
         opacity=opacity,
         show_edges=wireframe,
         edge_color=_EDGE_COLOR,
+        pickable=pickable,
     )
 
 
@@ -93,6 +140,7 @@ def _add_point_actor(
         color=color,
         point_size=point_size,
         render_points_as_spheres=True,
+        pickable=False,
     )
 
 
@@ -253,24 +301,35 @@ class _SceneViewBase(QWidget):
         super().__init__(parent)
         self._log = log
 
-        self._layout = QHBoxLayout(self)
-        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._outer_layout = QVBoxLayout(self)
+        self._outer_layout.setContentsMargins(0, 0, 0, 0)
+        self._layout = QHBoxLayout()
+        self._outer_layout.addLayout(self._layout, 1)
         self._plotter = QtInteractor(parent=self)
         self._plotter.set_background(background_color)  # type: ignore[arg-type]  # mypy bug
         self._layout.addWidget(self._plotter, 1)
+        self._camera_ready = False
 
     def clear_scene(self) -> None:
         """Remove everything the plotter currently draws."""
         self._plotter.clear()
 
-    def _finalize_render(self, bounds: Bounds | None = None) -> None:
-        """Finish a render pass: axes indicator, camera fit and immediate draw.
+    def _finalize_render(
+        self,
+        camera_state: CameraState | None = None,
+        bounds: Bounds | None = None,
+    ) -> None:
+        """Finish a render pass: axes indicator, camera and immediate draw.
 
-        ``bounds`` frames the camera on the given meshes; without them the
-        plotter fits everything it draws.
+        ``camera_state`` restores the camera of the previous scene; without
+        it the camera frames the meshes of the scene that was just built.
         """
         self._plotter.add_axes(interactive=False)  # type: ignore[call-arg]  # mypy bug
-        self._apply_camera(bounds)
+        if camera_state is None:
+            self._apply_camera(bounds)
+        else:
+            _apply_camera_state(self._plotter.camera, camera_state)
+        self._camera_ready = True
         self._plotter.render()
 
     def _apply_camera(self, bounds: Bounds | None) -> None:
@@ -284,6 +343,24 @@ class _SceneViewBase(QWidget):
         camera.focal_point = focal_point
         camera.up = up
         camera.view_angle = view_angle
+
+    def _camera_before_rebuild(self) -> CameraState | None:
+        """The camera state to restore after the next scene rebuild.
+
+        ``None`` before the first scene: there is no camera to keep yet.
+        """
+        if not self._camera_ready:
+            return None
+        return _camera_state(self._plotter.camera)
+
+    def _reset_camera(self) -> None:
+        """Frame the meshes again, as the "Reset view" button does."""
+        self._apply_camera(self._bounds())
+        self._plotter.render()
+
+    def _bounds(self) -> Bounds | None:
+        """The bounding box of the meshes the camera frames."""
+        return None
 
 
 class BaseViewer3D(_SceneViewBase):
@@ -344,7 +421,7 @@ class BaseViewer3D(_SceneViewBase):
 
         self._plotter.clear()
         renderer.build(self._plotter, scene)
-        self._finalize_render(_bundle_bounds(scene))
+        self._finalize_render(bounds=_bundle_bounds(scene))
         self.sceneLoaded.emit(scene)
 
 
@@ -357,7 +434,14 @@ class SceneViewer3D(_SceneViewBase):
     electrode toggles apply to whichever surface is active and survive both
     a surface switch and a scene rebuild; the other checkboxes reset per
     scene as before.
+
+    The viewer also picks points on the scalp surface:
+    :meth:`start_surface_picking` arms the picker for one fiducial slot and
+    :attr:`surfacePointPicked` reports the picked vertex. A click that moves
+    the camera is a rotation, not a pick.
     """
+
+    surfacePointPicked = Signal(str, object)  # noqa: N815 - the slot and the point
 
     def __init__(
         self,
@@ -376,6 +460,11 @@ class SceneViewer3D(_SceneViewBase):
         self._panel_layout.setSpacing(4)
         self._layout.addWidget(self._panel, 0)
         self._panel.setVisible(False)
+        # The reset button lives outside the layers panel: the panel is
+        # rebuilt with every scene, the button is not.
+        self._reset_button = QPushButton("Reset view", self)
+        self._reset_button.clicked.connect(self._reset_camera)
+        self._outer_layout.addWidget(self._reset_button)
 
         # Render state / actors
         self._mesh_opacity = _DEFAULT_MESH_OPACITY
@@ -396,6 +485,21 @@ class SceneViewer3D(_SceneViewBase):
         self._mesh_actors: dict[str, Actor] = {}
         self._mesh_points_actors: dict[str, Actor | None] = {}
         self._mesh_label_actors: dict[str, Actor | None] = {}
+
+        # Surface picking: the slot being picked and the camera before the
+        # click (a click that moved the camera is a rotation, not a pick).
+        self._pick_slot: str | None = None
+        self._pick_camera: CameraState | None = None
+        interactor = self._plotter.iren
+        interactor.add_observer("LeftButtonPressEvent", self._on_pick_press)
+        interactor.add_observer("LeftButtonReleaseEvent", self._on_pick_release)
+        interactor.add_key_event("Escape", self.stop_surface_picking)
+        # The cell picker returns the point on the surface that was
+        # clicked, not the closest vertex; its tolerance is a fraction
+        # of the window diagonal.
+        self._picker = vtkCellPicker()
+        self._picker.SetTolerance(_PICK_TOLERANCE)
+        self._picker.PickFromListOn()
 
         if sources is not None and not sources.is_empty():
             self.set_scene(sources)
@@ -445,6 +549,83 @@ class SceneViewer3D(_SceneViewBase):
         super().clear_scene()
         self._plotter.render()
 
+    # --- surface picking ---
+
+    def start_surface_picking(self, slot: str) -> None:
+        """Arm the picker for one fiducial slot on the scalp surface.
+
+        The scalp surface is shown and the ESE surface hidden, so the
+        click cannot land on the wrong mesh. The mode ends with the first
+        pick, with Escape, or with another :meth:`stop_surface_picking`.
+        """
+        self._pick_slot = slot
+        self._pick_camera = None
+        self._set_mode("scalp")
+        self._build_panel()
+        self._plotter.render()
+
+    def stop_surface_picking(self) -> None:
+        """Leave the surface picking mode."""
+        if self._pick_slot is None:
+            return
+        self._pick_slot = None
+        self._pick_camera = None
+        self._build_panel()
+        self._plotter.render()
+
+    def _on_pick_press(self, *_args: object) -> None:
+        """Remember the camera before a possible rotation."""
+        if self._pick_slot is None:
+            return
+        self._pick_camera = _camera_state(self._plotter.camera)
+
+    def _on_pick_release(self, *_args: object) -> None:
+        """Pick the point under the cursor when the camera did not move."""
+        slot = self._pick_slot
+        if slot is None or self._pick_camera is None:
+            return
+        if _camera_state(self._plotter.camera) != self._pick_camera:
+            # The camera moved: this was a rotation, not a click.
+            return
+        self._pick_camera = None
+        point = self._pick_surface_point()
+        if point is None:
+            return
+        self.stop_surface_picking()
+        self.surfacePointPicked.emit(slot, point)
+
+    def _arm_picker(self) -> None:
+        """Let the picker hit the scalp surface only.
+
+        The pick list holds the scalp actor, so a click on the volume
+        or on the ESE surface picks nothing.
+        """
+        self._picker.InitializePickList()
+        scalp_actor = self._mesh_actors.get("scalp")
+        if scalp_actor is not None:
+            self._picker.AddPickList(scalp_actor)
+
+    def _pick_surface_point(self) -> np.ndarray | None:
+        """The picked point on the scalp surface, in world millimetres."""
+        interactor = self._plotter.iren
+        renderer = interactor.get_poked_renderer()
+        x, y = interactor.get_event_position()
+        picker = self._picker
+        if not picker.Pick(x, y, 0, renderer):
+            return None
+        if picker.GetActor() is None:
+            return None
+        scene_point = np.asarray(picker.GetPickPosition(), dtype=np.float64)
+        return self._world_point(scene_point)
+
+    def _world_point(self, point: np.ndarray) -> np.ndarray:
+        """The point of the scene frame in world millimetres."""
+        scene = self._scene
+        if scene is None:
+            return point
+        transform = scene.world_from_scene
+        return apply_transform(point, transform)
+
     def _reset_actors(self) -> None:
         self._volume_actor = None
         self._fid_points_actor = None
@@ -454,6 +635,7 @@ class SceneViewer3D(_SceneViewBase):
         self._mesh_label_actors = {}
 
     def _build_scene(self, scene: ViewerScene) -> None:
+        camera_state = self._camera_before_rebuild()
         self._plotter.clear()
         self._reset_actors()
 
@@ -487,6 +669,8 @@ class SceneViewer3D(_SceneViewBase):
                     color=_MESH_COLOR,
                     opacity=self._mesh_opacity,
                     wireframe=self._wireframe,
+                    # Only the scalp surface carries the fiducial marks.
+                    pickable=key == "scalp",
                 )
             if points is not None:
                 points_actor: Actor | None = None
@@ -510,12 +694,20 @@ class SceneViewer3D(_SceneViewBase):
 
         self._build_panel()
         self._apply_visibility()
-        self._finalize_render(self._scene_bounds(scene))
+        self._arm_picker()
+        self._finalize_render(camera_state, self._scene_bounds(scene))
 
     def _scene_bounds(self, scene: ViewerScene) -> Bounds | None:
         """The bounding box of the scene meshes; the volume is not one."""
         meshes = [mesh for mesh in (scene.scalp_mesh, scene.ese_mesh) if mesh is not None]
         return mesh_bounds(meshes)
+
+    def _bounds(self) -> Bounds | None:
+        """The bounding box of the meshes the camera frames."""
+        scene = self._scene
+        if scene is None:
+            return None
+        return self._scene_bounds(scene)
 
     def _clear_layout(self) -> None:
         """Remove the widgets of the panel.
@@ -591,6 +783,11 @@ class SceneViewer3D(_SceneViewBase):
             surface_layout.addWidget(scalp_radio)
             surface_layout.addWidget(ese_radio)
             self._panel_layout.addWidget(surface_box)
+            has_controls = True
+
+        if self._pick_slot is not None:
+            hint = QLabel(f"Picking: {self._pick_slot} - click the scalp", self._panel)
+            self._panel_layout.addWidget(hint)
             has_controls = True
 
         self._panel.setVisible(has_controls)
