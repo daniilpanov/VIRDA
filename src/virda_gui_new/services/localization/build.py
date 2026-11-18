@@ -28,14 +28,16 @@ def labeled_points_from_rows(rows: FiducialRows) -> LabeledPoints:
     return LabeledPoints(points, labels)
 
 
-def build_fiducials(rows: FiducialRows) -> Fiducials:
-    """Build one world-coordinate manual fiducial per row.
+def build_fiducials(rows: FiducialRows, system: CoordinateSystem) -> Fiducials:
+    """Build one manual fiducial per row, tagged with ``system``.
 
     The normalized non-empty name doubles as the label; the id is the
     canonical slot the name matches (so the measurements and the
     fiducials agree on the id), and the name itself when it matches no
     slot. Coordinates must be ``(3,)`` float arrays and names unique
-    (mismatched shapes or duplicate names raise ``ValueError``).
+    (mismatched shapes or duplicate names raise ``ValueError``). ``system``
+    is mandatory: the coordinates must carry the frame they are given in,
+    or an export would tag voxel indices as world millimetres.
     """
     items = []
     for name, xyz in rows:
@@ -54,7 +56,7 @@ def build_fiducials(rows: FiducialRows) -> Fiducials:
                     x=float(coords[0]),
                     y=float(coords[1]),
                     z=float(coords[2]),
-                    system=CoordinateSystem.WORLD,
+                    system=system,
                 ),
                 definition_method="manual",
             )

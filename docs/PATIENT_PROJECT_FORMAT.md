@@ -80,9 +80,12 @@ Example `fiducials.json` — fiducial table:
 }
 ```
 
-- `coordinates` are world millimeters (scanner RAS of the source NIfTI);
-  `coordinate_system` mirrors the model value (`"world"` on standard runs,
-  `"voxel"` is also valid in the schema).
+- `coordinates` are world millimeters (scanner RAS of the source NIfTI) on
+  standard runs; `coordinate_system` always tags the numbers that were actually
+  written (`"world"` on standard runs, `"voxel"` for a fiducials export made in
+  the voxel frame — both are valid in the schema). A fiducials export made in
+  the head frame is tagged `"head"` for external use; the project loader accepts
+  only world and voxel, so such a file is not re-importable as a project input.
 - `weight` is an optional positive float (default `1.0`) that scales the
   fiducial's influence during Stage 3 localization; files written by earlier
   versions without the field load with unit weight.

@@ -266,9 +266,10 @@ def test_export_fiducials_head_frame_subtracts_the_centroid(tmp_path: Path) -> N
         manager, ExportKind.FIDUCIALS, tmp_path / "fiducials.json", frame=CoordinateSystem.HEAD
     )
 
-    points = load_fiducial_points(path)
+    document = json.loads(path.read_text(encoding="utf-8"))
     expected = _WORLD_FIDUCIALS - _CENTROID
-    assert points.points.tolist() == expected.tolist()
+    assert [item["coordinates"] for item in document["fiducials"]] == expected.tolist()
+    assert [item["coordinate_system"] for item in document["fiducials"]] == ["head"] * 3
 
 
 def test_export_fiducials_in_fiducials_frame_is_rejected(tmp_path: Path) -> None:

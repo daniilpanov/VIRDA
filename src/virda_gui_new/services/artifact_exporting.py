@@ -197,7 +197,7 @@ def _compute_results(manager: StepsManager, options: Stage3Config | None) -> Ele
     if not isinstance(points, LabeledPoints) or not isinstance(measurements, Electrodes):
         return None
     try:
-        fiducials = build_fiducials(_fiducial_rows(points))
+        fiducials = build_fiducials(_fiducial_rows(points), CoordinateSystem.WORLD)
     except ValueError:
         return None
     if options is None:
@@ -231,7 +231,10 @@ def _export_fiducials(
 
     The ``fiducials`` frame is not offered for fiducials themselves;
     head frame export is a plain centroid translation of the store's
-    world coordinates.
+    world coordinates. The written ``coordinate_system`` tag always
+    matches the numbers that were written: a head-frame export is tagged
+    ``head`` and is meant for external tools, not for re-import as a
+    project fiducials file (those accept only world and voxel).
     """
     if frame is CoordinateSystem.FIDUCIALS:
         raise ValueError(
@@ -246,7 +249,7 @@ def _export_fiducials(
         (label, coordinates.from_world(xyz, frame))
         for label, xyz in zip(points.labels, points.points, strict=True)
     ]
-    return export_fiducials(path, build_fiducials(rows))
+    return export_fiducials(path, build_fiducials(rows, frame))
 
 
 def _export_mesh(

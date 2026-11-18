@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from virda.models.coordinates import CoordinateSystem
 from virda.models.electrode import Electrode, Electrodes
 from virda.models.mesh import Mesh, Normals
 from virda.models.stage3_config import Stage3Config
@@ -290,7 +291,7 @@ class LocalizationPopupBase(StepPopupBase):
             self._set_hint(f"Blocked: {reason}.")
             return
         try:
-            fiducials = build_fiducials(rows)
+            fiducials = build_fiducials(rows, CoordinateSystem.WORLD)
             electrodes = build_electrodes(table)
         except ValueError as exc:
             self._set_hint(str(exc))
@@ -328,7 +329,7 @@ class LocalizationPopupBase(StepPopupBase):
             self._set_hint(f"Blocked: {reason}.")
             return
         try:
-            fiducials = build_fiducials(rows)
+            fiducials = build_fiducials(rows, CoordinateSystem.WORLD)
             electrodes = build_electrodes({electrode_id: distances})
         except ValueError:
             self._update_relocalize_state()
@@ -390,7 +391,7 @@ class LocalizationPopupBase(StepPopupBase):
         if self._blocked_reason() is not None:
             return
         try:
-            fiducials = build_fiducials(self.collect_fiducial_rows())
+            fiducials = build_fiducials(self.collect_fiducial_rows(), CoordinateSystem.WORLD)
             table = complete_measurement_table(self.collect_measurement_table())
             electrodes = build_electrodes(table)
         except ValueError:

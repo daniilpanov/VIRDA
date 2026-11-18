@@ -315,7 +315,7 @@ class LocalizationPopup(LocalizationPopupBase):
         if self._ese_mesh is None:
             return {}, []
         try:
-            fiducials = build_fiducials(self.collect_fiducial_rows())
+            fiducials = build_fiducials(self.collect_fiducial_rows(), CoordinateSystem.WORLD)
         except ValueError:
             return {}, []
         return predict_missing_measurements(table, fiducials, self._ese_mesh, self._coordinates)
@@ -424,7 +424,7 @@ class LocalizationPopup(LocalizationPopupBase):
         if self._ese_mesh is None:
             return None
         try:
-            fiducials = build_fiducials(self.collect_fiducial_rows())
+            fiducials = build_fiducials(self.collect_fiducial_rows(), CoordinateSystem.WORLD)
         except ValueError:
             return None
         table = self._measurements_table.collect_measurement_table()

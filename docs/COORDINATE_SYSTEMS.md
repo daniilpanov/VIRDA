@@ -97,9 +97,10 @@ surface is shifted along the scalp normals to match the measured distances.
   are understood as the scanner surface-RAS, which is the world frame. The file
   may describe the layout in metres (the BIDS default) or in millimetres; any other
   unit is rejected.
-- **The project's `fiducials.json`** — written by VIRDA, always in millimetres.
-  It may also store the fiducials in the volume's voxel indices; such a file needs
-  the NIfTI volume to be interpreted.
+- **The project's `fiducials.json`** — written by VIRDA, in millimetres for the
+  usual world and head exports. A fiducials export made in the voxel frame writes
+  voxel indices with `"coordinate_system": "voxel"`, so the tag always matches
+  the numbers; such a file needs the NIfTI volume to be interpreted.
 
 ## If something looks wrong
 
