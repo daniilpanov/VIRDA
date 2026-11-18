@@ -33,6 +33,7 @@ from virda_gui_new.widgets.popup.export import (
     ExportPopupBase,
     FiducialsExportPopup,
     MeasurementsExportPopup,
+    MeshArraysExportPopup,
     MeshExportPopup,
 )
 from virda_gui_new.widgets.popup.localization import LocalizationPopup
@@ -62,6 +63,7 @@ _EXPORT_POPUPS: dict[ExportKind, _ExportPopupFactory] = {
     ExportKind.ELECTRODES: ElectrodesExportPopup,
     ExportKind.FIDUCIALS: FiducialsExportPopup,
     ExportKind.MESH: MeshExportPopup,
+    ExportKind.MESH_ARRAYS: MeshArraysExportPopup,
 }
 
 #: Events that mean the main window came to the front and has to bring
@@ -297,6 +299,7 @@ class MainWindow(QMainWindow):
             (ExportKind.ELECTRODES, "&Electrodes"),
             (ExportKind.FIDUCIALS, "&Fiducials"),
             (ExportKind.MESH, "&Mesh"),
+            (ExportKind.MESH_ARRAYS, "Mesh &arrays"),
         )
         file_menu = self.menuBar().addMenu("&File")
         open_action = QAction("&Open project...", self)

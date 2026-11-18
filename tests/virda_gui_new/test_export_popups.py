@@ -29,6 +29,7 @@ from virda_gui_new.widgets.popup.export import (
     ElectrodesExportPopup,
     FiducialsExportPopup,
     MeasurementsExportPopup,
+    MeshArraysExportPopup,
     MeshExportPopup,
 )
 from virda_gui_new.widgets.popup.export import base as export_base
@@ -219,6 +220,38 @@ def test_mesh_type_change_resets_default_path(qapp, manager, tmp_path: Path) -> 
             cast("QComboBox", popup._mesh_combo).findData(MeshExportKind.BASE)
         )
         assert popup._path_edit.text() == str(tmp_path / "scalp" / "base_mesh.ply")
+    finally:
+        popup.close()
+
+
+def test_mesh_arrays_popup_uses_output_directory_and_updates_for_mesh_kind(
+    qapp, manager, tmp_path: Path
+) -> None:
+    popup = MeshArraysExportPopup(manager, project=tmp_path)
+    try:
+        assert popup._path_label_text() == "Directory"
+        assert popup._path_edit.text() == str(tmp_path / "exports" / "scalp")
+
+        cast("QComboBox", popup._mesh_combo).setCurrentIndex(
+            cast("QComboBox", popup._mesh_combo).findData(MeshExportKind.ESE)
+        )
+        assert popup._path_edit.text() == str(tmp_path / "exports" / "ese")
+    finally:
+        popup.close()
+
+
+def test_mesh_arrays_popup_browse_selects_a_directory(
+    qapp, manager, monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        QFileDialog,
+        "getExistingDirectory",
+        staticmethod(lambda *_args, **_kwargs: str(tmp_path / "mesh arrays")),
+    )
+    popup = MeshArraysExportPopup(manager)
+    try:
+        popup._browse()
+        assert popup._path_edit.text() == str(tmp_path / "mesh arrays")
     finally:
         popup.close()
 

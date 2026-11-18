@@ -405,6 +405,39 @@ def test_export_mesh_leaves_the_context_world_canonical(tmp_path: Path) -> None:
     assert stored.vertices.tolist() == _MESH.vertices.tolist()
 
 
+def test_export_mesh_arrays_in_voxel_frame_writes_vertices_and_faces(tmp_path: Path) -> None:
+    manager = _make_manager()
+    _set_volume(manager)
+
+    path = export_artifact(
+        manager,
+        ExportKind.MESH_ARRAYS,
+        tmp_path / "arrays",
+        frame=CoordinateSystem.VOXEL,
+        mesh_kind=MeshExportKind.POSTPROCESSED,
+    )
+
+    vertices = np.load(path / "scalp_vertices.npy")
+    faces = np.load(path / "scalp_faces.npy")
+    assert np.allclose(vertices[0], [-20.0, 10.0, -6.0])
+    assert faces.tolist() == _MESH.faces.tolist()
+
+
+def test_export_ese_mesh_arrays_uses_ese_names_and_selected_frame(tmp_path: Path) -> None:
+    path = export_artifact(
+        _make_manager(),
+        ExportKind.MESH_ARRAYS,
+        tmp_path / "arrays",
+        frame=CoordinateSystem.HEAD,
+        mesh_kind=MeshExportKind.ESE,
+    )
+
+    vertices = np.load(path / "ese_vertices.npy")
+    faces = np.load(path / "ese_faces.npy")
+    assert np.allclose(vertices, np.eye(3) * 10.0 - _CENTROID)
+    assert faces.tolist() == _ESE_MESH.faces.tolist()
+
+
 # --- default paths ---
 
 
@@ -426,6 +459,12 @@ def test_default_export_paths_follow_the_canonical_names(tmp_path: Path) -> None
     )
     assert default_export_path(tmp_path, ExportKind.MESH, MeshExportKind.ESE) == (
         tmp_path / "ese" / "mesh.ply"
+    )
+    assert default_export_path(tmp_path, ExportKind.MESH_ARRAYS, MeshExportKind.BASE) == (
+        tmp_path / "exports" / "scalp"
+    )
+    assert default_export_path(tmp_path, ExportKind.MESH_ARRAYS, MeshExportKind.ESE) == (
+        tmp_path / "exports" / "ese"
     )
 
 

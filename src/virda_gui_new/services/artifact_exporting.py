@@ -18,6 +18,7 @@ from virda.io.exporters.electrodes import export_electrodes
 from virda.io.exporters.ese_mesh import export_ese_mesh
 from virda.io.exporters.fiducials import export_fiducials
 from virda.io.exporters.measurements import export_measurements
+from virda.io.exporters.mesh_arrays import export_mesh_faces, export_mesh_vertices
 from virda.io.exporters.scalp_mesh import export_scalp_mesh
 from virda.models.coordinates import CoordinateSystem
 from virda.models.electrode import Electrode, Electrodes
@@ -47,12 +48,13 @@ __all__ = [
 
 
 class ExportKind(Enum):
-    """The four user-facing export kinds of the File -> Export menu."""
+    """The user-facing export kinds of the File -> Export menu."""
 
     MEASUREMENTS = "measurements"
     ELECTRODES = "electrodes"
     FIDUCIALS = "fiducials"
     MESH = "mesh"
+    MESH_ARRAYS = "mesh_arrays"
 
 
 class MeshExportKind(Enum):
@@ -88,14 +90,16 @@ def default_export_path(
     kind: ExportKind,
     mesh_kind: MeshExportKind = MeshExportKind.BASE,
 ) -> Path | None:
-    """The canonical default path of an export kind inside ``project``.
+    """The default output path of an export kind inside ``project``.
 
     The same file names the artifact savers write:
     ``localization/measurements.json``, ``localization/electrodes.csv``,
     ``localization/fiducials.json`` and, for meshes,
     ``scalp/base_mesh.ply`` / ``scalp/final_mesh.ply`` / ``ese/mesh.ply``
-    depending on the mesh kind. ``None`` without an open project (the
-    popup then leaves the path field empty).
+    depending on the mesh kind. Array exports go to ``exports/scalp`` or
+    ``exports/ese`` so a non-world export cannot overwrite canonical
+    project artifacts. ``None`` without an open project (the popup then
+    leaves the path field empty).
     """
     if project is None:
         return None
@@ -105,6 +109,9 @@ def default_export_path(
         return artifact_paths.electrodes(project)
     if kind is ExportKind.FIDUCIALS:
         return artifact_paths.fiducials(project)
+    if kind is ExportKind.MESH_ARRAYS:
+        mesh_folder = "ese" if mesh_kind is MeshExportKind.ESE else "scalp"
+        return project / "exports" / mesh_folder
     if mesh_kind is MeshExportKind.BASE:
         return artifact_paths.base_mesh(project)
     if mesh_kind is MeshExportKind.ESE:
@@ -140,6 +147,8 @@ def export_artifact(
         return _export_electrodes(manager, target, frame, coordinates, options)
     if kind is ExportKind.FIDUCIALS:
         return _export_fiducials(manager, target, frame, coordinates)
+    if kind is ExportKind.MESH_ARRAYS:
+        return _export_mesh_arrays(manager, target, mesh_kind, frame, coordinates)
     return _export_mesh(manager, target, mesh_kind, frame, coordinates)
 
 
@@ -285,6 +294,42 @@ def _export_mesh(
     converted = Mesh(vertices, mesh.faces)
     writer = export_ese_mesh if mesh_kind is MeshExportKind.ESE else export_scalp_mesh
     return writer(path, converted)
+
+
+def _export_mesh_arrays(
+    manager: StepsManager,
+    directory: Path,
+    mesh_kind: MeshExportKind,
+    frame: CoordinateSystem,
+    coordinates: Geometry,
+) -> Path:
+    """Write the selected mesh's transformed vertices and faces as NPY files."""
+    mesh = _mesh_for_export(manager, mesh_kind, frame, coordinates)
+    prefix = "ese" if mesh_kind is MeshExportKind.ESE else "scalp"
+    directory.mkdir(parents=True, exist_ok=True)
+    export_mesh_vertices(directory / f"{prefix}_vertices.npy", mesh.vertices)
+    export_mesh_faces(directory / f"{prefix}_faces.npy", mesh.faces)
+    return directory
+
+
+def _mesh_for_export(
+    manager: StepsManager,
+    mesh_kind: MeshExportKind,
+    frame: CoordinateSystem,
+    coordinates: Geometry,
+) -> Mesh:
+    """Return the chosen mesh with vertices converted from world coordinates."""
+    step_n, key = _MESH_CONTEXTS[mesh_kind]
+    mesh = _context_item(manager, step_n, key)
+    if not isinstance(mesh, Mesh):
+        raise ValueError(
+            f"No {mesh_kind.value} mesh to export: run the pipeline up to that step first."
+        )
+    vertices = np.asarray(
+        coordinates.from_world(np.asarray(mesh.vertices, dtype=np.float64), frame),
+        dtype=np.float64,
+    )
+    return Mesh(vertices, mesh.faces)
 
 
 def _convert_electrode(

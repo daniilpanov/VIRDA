@@ -78,7 +78,7 @@ def test_popup_windows_are_tool_windows_parented_to_main(qapp, tmp_path: Path) -
         qapp.processEvents()
 
 
-def test_menu_bar_has_file_export_with_four_actions(qapp, tmp_path: Path) -> None:
+def test_menu_bar_has_file_export_actions(qapp, tmp_path: Path) -> None:
     """File -> Export holds one action per export kind."""
     main = _build_main_window(tmp_path)
     try:
@@ -92,7 +92,13 @@ def test_menu_bar_has_file_export_with_four_actions(qapp, tmp_path: Path) -> Non
         export_menu = file_menu.actions()[-1].menu()
         assert export_menu is not None
         titles = [action.text() for action in export_menu.actions()]
-        assert titles == ["&Measurements", "&Electrodes", "&Fiducials", "&Mesh"]
+        assert titles == [
+            "&Measurements",
+            "&Electrodes",
+            "&Fiducials",
+            "&Mesh",
+            "Mesh &arrays",
+        ]
     finally:
         main.close()
         qapp.processEvents()
