@@ -18,7 +18,8 @@ from virda.models.coordinates import CoordinateSystem
 from virda.models.electrode import Electrode, Electrodes
 from virda.models.fiducial import Fiducials
 from virda.models.mesh import Mesh
-from virda_gui_new.dto.steps import LOCALIZATION, STEPS
+from virda.models.mri_volume import MRIVolume
+from virda_gui_new.dto.steps import LOCALIZATION, NIFTI, STEPS
 from virda_gui_new.services import artifact_saving
 from virda_gui_new.services.steps_manager import StepsManager
 from virda_gui_new.widgets.popup.localization import LocalizationPopup
@@ -34,6 +35,14 @@ _SCALP = Mesh(np.zeros((3, 3)), np.zeros((1, 3), dtype=int))
 # World fiducials whose frame comes out axis-aligned (NAS at the origin).
 _WORLD_FIDUCIALS = np.array([[0.0, 100.0, 0.0], [-70.0, 0.0, 0.0], [70.0, 0.0, 0.0]])
 _FIDUCIAL_LABELS = ("NASION", "LPA", "RPA")
+_VOXEL_AFFINE = np.array(
+    [
+        [0.5, 0.0, 0.0, 10.0],
+        [0.0, 0.5, 0.0, -5.0],
+        [0.0, 0.0, 0.5, 3.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+)
 # Mesh whose centroid is (7.5, 7.5, 7.5): the head frame shifts by that.
 _MESH_VERTICES = np.array([[0.0, 0.0, 0.0], [30.0, 0.0, 0.0], [0.0, 30.0, 0.0], [0.0, 0.0, 30.0]])
 _FIDUCIAL_ROWS = [
@@ -625,6 +634,56 @@ def _fiducials_item_enabled(selector: FrameSelector) -> bool:
     model = selector.model()
     assert isinstance(model, QStandardItemModel)
     return bool(model.item(index).isEnabled())
+
+
+def _frame_item_enabled(selector: FrameSelector, frame: CoordinateSystem) -> bool:
+    """Whether a frame item exists and is enabled."""
+    from PySide6.QtGui import QStandardItemModel
+
+    index = selector.findData(frame)
+    if index < 0:
+        return False
+    model = selector.model()
+    assert isinstance(model, QStandardItemModel)
+    return bool(model.item(index).isEnabled())
+
+
+def test_concrete_popup_fiducials_frame_offers_voxel_when_volume_is_loaded(qapp, popups) -> None:
+    """The fiducials table can display voxel coordinates with a NIfTI affine."""
+    from virda_gui_new.dto.viewer3d import LabeledPoints
+
+    manager = _make_manager()
+    manager.set_step_context_item(
+        NIFTI.index,
+        "volume",
+        MRIVolume(np.zeros((2, 2, 2)), _VOXEL_AFFINE, (0.5, 0.5, 0.5), ("R", "A", "S")),
+    )
+    manager.set_global_item("fiducials", LabeledPoints(_WORLD_FIDUCIALS, _FIDUCIAL_LABELS))
+
+    popup = LocalizationPopup(LOCALIZATION, manager)
+    popups.append(popup)
+
+    index = popup._fiducials_frames.findData(CoordinateSystem.VOXEL)
+    assert index >= 0
+    assert _frame_item_enabled(popup._fiducials_frames, CoordinateSystem.VOXEL)
+    popup._fiducials_frames.setCurrentIndex(index)
+
+    assert popup._fiducials_table._frame is CoordinateSystem.VOXEL
+    assert [_cell_text(popup._fiducials_table._table, 0, c) for c in (2, 3, 4)] == [
+        "-20",
+        "210",
+        "-6",
+    ]
+    assert popup.collect_fiducial_rows()[0][1].tolist() == _WORLD_FIDUCIALS[0].tolist()
+
+
+def test_concrete_popup_disables_voxel_frame_without_volume(qapp, popups) -> None:
+    """The voxel option remains visible but disabled without an affine."""
+    popup = LocalizationPopup(LOCALIZATION, _make_manager())
+    popups.append(popup)
+
+    assert popup._fiducials_frames.findData(CoordinateSystem.VOXEL) >= 0
+    assert not _frame_item_enabled(popup._fiducials_frames, CoordinateSystem.VOXEL)
 
 
 def test_concrete_popup_pick_button_asks_the_viewer(qapp, popups) -> None:

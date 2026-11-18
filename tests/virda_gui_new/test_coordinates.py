@@ -8,8 +8,10 @@ from virda.mesh.center_of_mass import center_of_mass
 from virda.models.coordinates import CoordinateSystem
 from virda.models.fiducial import FiducialType
 from virda.models.mesh import Mesh
-from virda_gui_new.dto.steps import STEPS
+from virda.models.mri_volume import MRIVolume
+from virda_gui_new.dto.steps import NIFTI, STEPS
 from virda_gui_new.dto.viewer3d import LabeledPoints
+from virda_gui_new.services import artifact_loading
 from virda_gui_new.services.steps_manager import StepsManager
 
 # NAS on the +y axis, LPA/RPA symmetric on the x axis: the fiducials
@@ -17,6 +19,14 @@ from virda_gui_new.services.steps_manager import StepsManager
 _NAS = np.array([0.0, 100.0, 0.0])
 _LPA = np.array([-70.0, 0.0, 0.0])
 _RPA = np.array([70.0, 0.0, 0.0])
+_AFFINE = np.array(
+    [
+        [0.5, 0.0, 0.0, 10.0],
+        [0.0, 0.5, 0.0, -5.0],
+        [0.0, 0.0, 0.5, 3.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+)
 
 
 def _make_manager(mesh: Mesh | None = None, fiducials: LabeledPoints | None = None) -> StepsManager:
@@ -118,6 +128,40 @@ def test_world_is_always_available() -> None:
     assert geometry.is_available(CoordinateSystem.WORLD)
     converted = geometry.from_world(np.array([[1.0, 2.0, 3.0]]), CoordinateSystem.WORLD)
     assert np.allclose(converted, [[1.0, 2.0, 3.0]])
+
+
+def test_voxel_needs_the_step_0_volume() -> None:
+    manager = _make_manager()
+
+    assert not manager.geometry.is_available(CoordinateSystem.VOXEL)
+
+    manager.set_step_context_item(
+        NIFTI.index,
+        "volume",
+        MRIVolume(np.zeros((2, 2, 2)), _AFFINE, (0.5, 0.5, 0.5), ("R", "A", "S")),
+    )
+
+    geometry = manager.geometry
+    assert geometry.is_available(CoordinateSystem.VOXEL)
+    assert np.allclose(geometry.from_world(_NAS, CoordinateSystem.VOXEL), [-20.0, 210.0, -6.0])
+
+
+def test_a_path_volume_is_loaded_once(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    path = tmp_path / "scan.nii.gz"
+    calls: list[object] = []
+
+    def fake_load(source) -> MRIVolume:
+        calls.append(source)
+        return MRIVolume(np.zeros((2, 2, 2)), _AFFINE, (0.5, 0.5, 0.5), ("R", "A", "S"))
+
+    monkeypatch.setattr(artifact_loading, "load_volume", fake_load)
+    manager = _make_manager()
+    manager.set_step_context_item(NIFTI.index, "volume", path)
+
+    assert manager.geometry.is_available(CoordinateSystem.VOXEL)
+    manager.set_global_item("fiducials", LabeledPoints(np.array([_NAS]), ("NAS",)))
+    assert manager.geometry.is_available(CoordinateSystem.VOXEL)
+    assert calls == [path]
 
 
 def test_the_geometry_instance_is_stable_across_reads() -> None:

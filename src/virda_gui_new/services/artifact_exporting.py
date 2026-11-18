@@ -124,7 +124,8 @@ def export_artifact(
     """Export one in-memory artifact to ``path`` and return it.
 
     ``frame`` is the target coordinate frame of the exported numbers
-    (ignored by ``measurements``, which carries no coordinates);
+    (ignored by ``measurements``, which carries no coordinates; the voxel
+    frame is not allowed for meshes, whose PLY has no frame metadata);
     ``mesh_kind`` selects the mesh source for the ``mesh`` kind;
     ``options`` are the localization settings the electrodes are
     localized with when the project holds no results yet.
@@ -264,8 +265,13 @@ def _export_mesh(
     ``base``/``postprocessed`` meshes go through ``export_scalp_mesh``
     (plain PLY, like the step savers), the ESE mesh through
     ``export_ese_mesh``; the exported copy keeps the source faces and
-    only its vertices are converted.
+    only its vertices are converted. PLY carries no frame metadata, so
+    the voxel frame is rejected instead of writing ambiguous indices.
     """
+    if frame is CoordinateSystem.VOXEL:
+        raise ValueError(
+            "Meshes cannot be exported in the voxel frame; choose world, head or fiducials."
+        )
     step_n, key = _MESH_CONTEXTS[mesh_kind]
     mesh = _context_item(manager, step_n, key)
     if not isinstance(mesh, Mesh):

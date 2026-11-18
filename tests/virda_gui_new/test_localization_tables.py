@@ -13,7 +13,8 @@ from virda.models.coordinates import CoordinateSystem
 from virda.models.electrode import Electrode, Electrodes
 from virda.models.fiducial import FiducialType
 from virda.models.mesh import Mesh
-from virda_gui_new.dto.steps import STEPS
+from virda.models.mri_volume import MRIVolume
+from virda_gui_new.dto.steps import NIFTI, STEPS
 from virda_gui_new.dto.viewer3d import LabeledPoints
 from virda_gui_new.services.localization import SurfaceStatus
 from virda_gui_new.services.steps_manager import StepsManager
@@ -28,6 +29,15 @@ _FIDUCIAL_LABELS = ("NASION", "LPA", "RPA")
 # Mesh whose centroid is (7.5, 7.5, 7.5): the head frame shifts by that.
 _MESH_VERTICES = np.array([[0.0, 0.0, 0.0], [30.0, 0.0, 0.0], [0.0, 30.0, 0.0], [0.0, 0.0, 30.0]])
 _HEAD_ORIGIN = cast("Any", np.array([7.5, 7.5, 7.5]))
+# A scaling + translation affine, as a NIfTI volume would carry.
+_VOXEL_AFFINE = np.array(
+    [
+        [0.5, 0.0, 0.0, 10.0],
+        [0.0, 0.5, 0.0, -5.0],
+        [0.0, 0.0, 0.5, 3.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+)
 
 
 @pytest.fixture
@@ -52,6 +62,15 @@ def _service(fiducials: bool = True) -> Geometry:
     manager.set_step_context_item(2, "mesh", mesh)
     if fiducials:
         manager.set_global_item("fiducials", LabeledPoints(_WORLD_FIDUCIALS, _FIDUCIAL_LABELS))
+    return manager.geometry
+
+
+def _voxel_service() -> Geometry:
+    """Geometry service with the NIfTI affine of step 0 available."""
+    manager = StepsManager(tuple(step.required_keys for step in STEPS))
+    advance_to(manager, 4)
+    volume = MRIVolume(np.zeros((2, 2, 2)), _VOXEL_AFFINE, (0.5, 0.5, 0.5), ("R", "A", "S"))
+    manager.set_step_context_item(NIFTI.index, "volume", volume)
     return manager.geometry
 
 
@@ -680,3 +699,58 @@ def test_electrodes_table_without_converter_stays_world(qapp) -> None:
 
     assert widget._frame is CoordinateSystem.WORLD
     assert cast("QTableWidgetItem", widget._table.item(0, 1)).text() == "1.00"
+
+
+def test_frame_selector_offers_the_voxel_frame(qapp) -> None:
+    widget = FrameSelector()
+
+    assert widget.findData(CoordinateSystem.VOXEL) >= 0
+
+
+def test_fiducials_table_voxel_frame_shows_integer_indices(qapp) -> None:
+    widget = FiducialsTable(_voxel_service())
+    widget.set_rows([("NASION", _WORLD_FIDUCIALS[0])])
+
+    widget.set_display_frame(CoordinateSystem.VOXEL)
+
+    # World (0, 100, 0) -> voxel (-20, 210, -6) through the inverse affine.
+    assert [
+        cast("QTableWidgetItem", widget._table.item(0, column)).text() for column in (2, 3, 4)
+    ] == ["-20", "210", "-6"]
+    assert widget.collect_fiducial_rows()[0][1].tolist() == [0.0, 100.0, 0.0]
+
+
+def test_fiducials_table_voxel_edit_stores_world(qapp) -> None:
+    widget = FiducialsTable(_voxel_service())
+    widget.set_display_frame(CoordinateSystem.VOXEL)
+
+    for column, text in enumerate(("0", "0", "0"), start=2):
+        widget._table.setItem(0, column, _item(text))
+
+    assert widget.collect_fiducial_rows()[0][1].tolist() == [10.0, -5.0, 3.0]
+
+
+def test_fiducials_table_voxel_without_volume_falls_back_to_world(qapp) -> None:
+    widget = FiducialsTable(_service())
+    widget.set_rows([("NASION", _WORLD_FIDUCIALS[0])])
+
+    widget.set_display_frame(CoordinateSystem.VOXEL)
+
+    assert widget._frame is CoordinateSystem.WORLD
+    assert cast("QTableWidgetItem", widget._table.item(0, 2)).text() == "0"
+
+
+def test_electrodes_table_voxel_frame_shows_integer_indices(qapp) -> None:
+    widget = ElectrodesTable(_voxel_service())
+    widget.show_electrodes(
+        Electrodes([Electrode("A", {"LPA": 1.0}, ese_coords=_WORLD_FIDUCIALS[0])])
+    )
+
+    widget.set_display_frame(CoordinateSystem.VOXEL)
+
+    grid = widget._table
+    assert [cast("QTableWidgetItem", grid.item(0, column)).text() for column in (1, 2, 3)] == [
+        "-20",
+        "210",
+        "-6",
+    ]

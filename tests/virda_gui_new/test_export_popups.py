@@ -19,8 +19,9 @@ from tests.virda_gui_new.fixtures.steps import advance, advance_to
 from virda.models.coordinates import CoordinateSystem
 from virda.models.electrode import Electrode, Electrodes
 from virda.models.mesh import Mesh
+from virda.models.mri_volume import MRIVolume
 from virda.models.stage3_config import Stage3Config
-from virda_gui_new.dto.steps import STEPS
+from virda_gui_new.dto.steps import NIFTI, STEPS
 from virda_gui_new.dto.viewer3d import LabeledPoints
 from virda_gui_new.services.artifact_exporting import ExportKind, MeshExportKind
 from virda_gui_new.services.steps_manager import StepsManager
@@ -42,6 +43,7 @@ _MESH = Mesh(
     np.array([[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]]),
 )
 _MEASUREMENTS = Electrodes([Electrode("Fz", {"NAS": 120.5})])
+_VOXEL_AFFINE = np.eye(4)
 
 
 class _FakeMessageBox:
@@ -153,6 +155,23 @@ def _head_item_enabled(selector: QComboBox) -> bool:
     return bool(model.item(index).isEnabled())
 
 
+def _voxel_item_enabled(selector: QComboBox) -> bool:
+    from PySide6.QtGui import QStandardItemModel
+
+    index = selector.findData(CoordinateSystem.VOXEL)
+    model = selector.model()
+    assert isinstance(model, QStandardItemModel)
+    return bool(model.item(index).isEnabled())
+
+
+def _with_volume(manager: StepsManager) -> None:
+    manager.set_step_context_item(
+        NIFTI.index,
+        "volume",
+        MRIVolume(np.zeros((2, 2, 2)), _VOXEL_AFFINE, (1.0, 1.0, 1.0), ("R", "A", "S")),
+    )
+
+
 # --- structure and default paths ---
 
 
@@ -248,6 +267,28 @@ def test_fiducials_popup_never_offers_the_fiducials_frame(qapp, manager) -> None
         assert _head_item_enabled(cast("FrameSelector", popup._frame_selector))
     finally:
         popup.close()
+
+
+def test_voxel_frame_availability_per_popup_and_volume(qapp, manager) -> None:
+    bare = ElectrodesExportPopup(_make_manager_without_geometry())
+    try:
+        assert not _voxel_item_enabled(cast("FrameSelector", bare._frame_selector))
+    finally:
+        bare.close()
+
+    _with_volume(manager)
+    electrodes = ElectrodesExportPopup(manager)
+    fiducials = FiducialsExportPopup(manager)
+    mesh = MeshExportPopup(manager)
+    try:
+        assert _voxel_item_enabled(cast("FrameSelector", electrodes._frame_selector))
+        assert _voxel_item_enabled(cast("FrameSelector", fiducials._frame_selector))
+        # PLY has no frame metadata, so the mesh popup never offers voxel.
+        assert not _voxel_item_enabled(cast("FrameSelector", mesh._frame_selector))
+    finally:
+        electrodes.close()
+        fiducials.close()
+        mesh.close()
 
 
 def test_mesh_popup_mesh_kind_selection(qapp, manager) -> None:

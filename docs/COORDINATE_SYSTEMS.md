@@ -16,6 +16,7 @@ stored values.
 | **World** (default) | the scanner | comparing with the scanner data; the safest choice |
 | **Head** | the centre of the head | comparing heads that sat differently in the scanner |
 | **Fiducials** | the nasion (NAS) | comparing anatomically, independent of the head's size |
+| **Voxel** | the NIfTI volume's grid origin | reading indices as the scanner image stores them |
 
 **World** is the frame the scanner's images are in. The scalp mesh, the ESE mesh,
 the electrodes and the fiducials are stored in it, and it is the frame the exports
@@ -43,6 +44,10 @@ p_frame = Rᵀ · (p − origin)
 where `R` is the matrix whose columns are the frame's three axes. The way back is
 `p = origin + R · p_frame`.
 
+The **voxel** frame is reached through the NIfTI affine: `p_voxel = A⁻¹ · p`.
+Its numbers are grid indices `(i, j, k)`, not millimetres, and the tables
+show them rounded to integers.
+
 The **fiducials** axes are built from the three fiducials:
 
 - the origin is **NAS**;
@@ -62,6 +67,7 @@ A frame is unavailable while the project cannot provide it:
 |---|---|
 | **Head** | the scalp mesh (run the mesh steps first) |
 | **Fiducials** | all three fiducials (NAS, LPA, RPA) |
+| **Voxel** | the NIfTI volume (run the NIfTI import step first) |
 
 The **world** frame is always available.
 
@@ -86,9 +92,12 @@ surface is shifted along the scalp normals to match the measured distances.
   that grid to the scanner's millimetres. The program reads the mapping and shows
   the volume, the meshes and the points in one piece; the numbers you enter and
   read in the tables still belong to the frame you chose.
-- **PLY (the meshes)** stores the vertices in **world** millimetres — the scanner's
-  coordinates. The scalp mesh, the postprocessed mesh and the ESE mesh are all in
-  this frame, and so are the localized electrode points.
+- **PLY (the meshes)** carries no coordinate-frame metadata. Project meshes are
+  stored in **world** millimetres — the scanner's coordinates — and the scalp,
+  postprocessed and ESE meshes all use this frame, as do the stored localized
+  electrode points. A mesh export can convert the vertices to the head or the
+  fiducials frame, but the voxel frame is not offered: PLY would then contain
+  indices that no reader could tell from millimetres.
 
 ## About the files
 
@@ -107,6 +116,6 @@ surface is shifted along the scalp normals to match the measured distances.
 - The numbers are shifted → check the frame selector: the numbers are shown in the
   selected frame, while the stored values stay in world.
 - A frame is greyed out → run the steps it needs: the scalp mesh for **Head**, the
-  three fiducials for **Fiducials**.
+  three fiducials for **Fiducials**, the NIfTI import for **Voxel**.
 - The export carries different numbers than the table → the export dialog has its
-  own frame selector; both default to **World**.
+  own frame selector; both start on **Head** and World is always available.

@@ -19,17 +19,15 @@ from virda.models.coordinates import CoordinateSystem
 from virda.models.electrode import Electrodes
 from virda.models.fiducial import FiducialType
 from virda.models.measurement import MeasurementPrediction
-from virda.models.mri_volume import MRIVolume
 from virda_gui_new.constants import SETTLE_DELAY_MS
 from virda_gui_new.dto.steps import (
     FIDUCIALS_KEY,
     LOCALIZATION,
     MEASUREMENTS_KEY,
-    NIFTI,
     Step,
 )
 from virda_gui_new.dto.viewer3d import LabeledPoints
-from virda_gui_new.services import artifact_importing, artifact_loading
+from virda_gui_new.services import artifact_importing
 from virda_gui_new.services.localization import (
     FiducialRows,
     MeasurementTable,
@@ -121,10 +119,11 @@ class LocalizationPopup(LocalizationPopupBase):
         self._measurements_table = MeasurementsTable(self)
         self._electrodes_table = ElectrodesTable(self._coordinates, self)
         # The fiducials frame is defined by the rows the fiducials table
-        # shows, so the table is displayed in the world and the head
-        # frame only.
+        # shows, so that frame is excluded from this selector. World,
+        # head and voxel remain available when their anchors exist.
         self._fiducials_frames = FrameSelector(
-            self, frames=(CoordinateSystem.HEAD, CoordinateSystem.WORLD)
+            self,
+            frames=(CoordinateSystem.HEAD, CoordinateSystem.WORLD, CoordinateSystem.VOXEL),
         )
         self._electrodes_frames = FrameSelector(self)
         self._fiducials_frames.frameChanged.connect(self._fiducials_table.set_display_frame)
@@ -213,20 +212,23 @@ class LocalizationPopup(LocalizationPopupBase):
 
         Called at build time and whenever the fiducials store changes:
         the fiducials frame is greyed out while fewer than three
-        fiducials have coordinates and the head frame while no scalp
-        mesh exists; a currently selected frame that became unavailable
-        falls back to head (or world without a scalp mesh). The change
+        fiducials have coordinates, the head frame while no scalp mesh
+        exists and the voxel frame while no NIfTI volume is loaded; a
+        currently selected frame that became unavailable falls back to
+        head (or world without a scalp mesh). The change
         signal keeps the table in step; for an available frame the
         table is set explicitly (a same-frame set is a no-op there).
         """
         head_ok = self._coordinates.is_available(CoordinateSystem.HEAD)
         fiducials_ok = self._coordinates.is_available(CoordinateSystem.FIDUCIALS)
+        voxel_ok = self._coordinates.is_available(CoordinateSystem.VOXEL)
         for selector, table in (
             (self._fiducials_frames, self._fiducials_table),
             (self._electrodes_frames, self._electrodes_table),
         ):
             selector.set_frame_enabled(CoordinateSystem.HEAD, head_ok)
             selector.set_frame_enabled(CoordinateSystem.FIDUCIALS, fiducials_ok)
+            selector.set_frame_enabled(CoordinateSystem.VOXEL, voxel_ok)
             frame = selector.frame()
             if not self._coordinates.is_available(frame):
                 fallback = CoordinateSystem.HEAD if head_ok else CoordinateSystem.WORLD
@@ -247,7 +249,7 @@ class LocalizationPopup(LocalizationPopupBase):
         if path is None:
             return
         try:
-            rows = artifact_importing.import_fiducial_rows(path, self._volume_affine())
+            rows = artifact_importing.import_fiducial_rows(path, self._coordinates.context.affine)
         except Exception as error:  # noqa: BLE001 - any import error is user-facing
             self._set_hint(f"Failed to import fiducials: {error}")
             return
@@ -256,15 +258,6 @@ class LocalizationPopup(LocalizationPopupBase):
         # The import replaces the table and is stored right away, even
         # when the localization cannot run yet.
         self._save_inputs()
-
-    def _volume_affine(self) -> np.ndarray | None:
-        """Affine of the step-0 volume, or ``None`` when it is absent."""
-        volume = self._read_context_item(NIFTI.index, "volume")
-        if isinstance(volume, MRIVolume):
-            return volume.affine
-        if isinstance(volume, Path):
-            return artifact_loading.load_volume(volume).affine
-        return None
 
     def _import_measurements_from_file(self) -> None:
         """ "From file": fill the measurement grid from a measurements JSON.

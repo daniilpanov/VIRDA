@@ -12,16 +12,17 @@ _ITEMS = (
     ("Head", CoordinateSystem.HEAD),
     ("World", CoordinateSystem.WORLD),
     ("Fiducials", CoordinateSystem.FIDUCIALS),
+    ("Voxel (i, j, k)", CoordinateSystem.VOXEL),
 )
 
 
 class FrameSelector(QComboBox):
     """Combo of the display frames; unavailable ones are greyed out.
 
-    Head is the default selection (item order: head, world, fiducials).
-    ``frames`` limits the frames the combo offers: the fiducials table
-    is shown in the world and the head frame only, because the
-    fiducials frame is defined by the very rows the table shows.
+    Head is the default selection (item order: head, world, fiducials,
+    voxel). ``frames`` limits the frames the combo offers: the fiducials
+    table omits the fiducials frame because that frame is defined by the
+    very rows the table shows.
     :meth:`set_frame_enabled` enables/disables a frame's item; picking
     an enabled frame emits :attr:`frameChanged` with the
     :class:`CoordinateSystem`. Changing availability never changes the

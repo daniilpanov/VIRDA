@@ -47,7 +47,7 @@ class ExportPopupBase(QWidget):
     Subclasses set the ``_TITLE``/``_HINT`` class attributes, may add
     kind-specific rows in :meth:`build_form` (added between the frame
     selector and the path row) and may restrict frame availability by
-    overriding :meth:`_fiducials_frame_offered`. The base owns the
+    overriding :meth:`_offered_frames`. The base owns the
     frame selector (unless the kind has no frames), the path picker,
     the Export button and both result dialogs.
     """
@@ -112,9 +112,9 @@ class ExportPopupBase(QWidget):
     def build_form(self, layout: QVBoxLayout) -> None:
         """Extension hook: add kind-specific rows here."""
 
-    def _fiducials_frame_offered(self) -> bool:
-        """Whether the popup offers the fiducials frame at all."""
-        return True
+    def _offered_frames(self) -> frozenset[CoordinateSystem]:
+        """The frames this popup offers at all; subclasses may narrow it."""
+        return frozenset(CoordinateSystem)
 
     # --- current selections ---
 
@@ -150,22 +150,26 @@ class ExportPopupBase(QWidget):
     def _sync_frame_availability(self) -> None:
         """Enable available frames; fall back to head/world when needed.
 
-        The fiducials frame is greyed while unavailable (fewer than
-        three fiducials have coordinates) or not offered by the popup;
-        the head frame while no scalp mesh exists. A selected frame that
-        is not available falls back to head (or world without a scalp
-        mesh).
+        A frame is greyed while its anchors are missing — three fiducials
+        for the fiducials frame, a scalp mesh for the head frame, the
+        NIfTI volume for the voxel frame — or when the popup does not
+        offer it. A selected frame that is not available falls back to
+        head (or world without a scalp mesh).
         """
         if self._frame_selector is None:
             return
+        offered = self._offered_frames()
         head_ok = self._coordinates.is_available(CoordinateSystem.HEAD)
-        fiducials_ok = self._fiducials_frame_offered() and self._coordinates.is_available(
-            CoordinateSystem.FIDUCIALS
-        )
-        self._frame_selector.set_frame_enabled(CoordinateSystem.HEAD, head_ok)
-        self._frame_selector.set_frame_enabled(CoordinateSystem.FIDUCIALS, fiducials_ok)
+        fiducials_ok = self._coordinates.is_available(CoordinateSystem.FIDUCIALS)
+        voxel_ok = self._coordinates.is_available(CoordinateSystem.VOXEL)
+        for frame, ok in (
+            (CoordinateSystem.HEAD, head_ok),
+            (CoordinateSystem.FIDUCIALS, fiducials_ok),
+            (CoordinateSystem.VOXEL, voxel_ok),
+        ):
+            self._frame_selector.set_frame_enabled(frame, ok and frame in offered)
         frame = self._frame_selector.frame()
-        if not self._coordinates.is_available(frame):
+        if frame not in offered or not self._coordinates.is_available(frame):
             fallback = CoordinateSystem.HEAD if head_ok else CoordinateSystem.WORLD
             self._frame_selector.setCurrentIndex(self._frame_selector.findData(fallback))
 
