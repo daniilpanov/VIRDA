@@ -40,7 +40,7 @@ research = [
 packages = ["src/virda", "src/lib"]
 
 [tool.uv.workspace]
-members = ["src/virda_gui"]
+members = ["src/virda_gui", "src/virda_gui_new"]
 
 [tool.mypy]
 exclude = "research/"

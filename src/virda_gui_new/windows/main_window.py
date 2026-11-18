@@ -1,0 +1,471 @@
+"""Main window assembling the 3D viewer over the pipeline step contexts."""
+
+from collections.abc import Callable
+from pathlib import Path
+from typing import Protocol
+
+from PySide6.QtCore import QEvent
+from PySide6.QtGui import QAction, QCloseEvent
+from PySide6.QtWidgets import QMainWindow, QMenu, QWidget
+
+from virda_gui_new.dialogs.project_dialog import ask_create_project_folder, ask_open_project_folder
+from virda_gui_new.dialogs.warnings import confirm_partial_import
+from virda_gui_new.dto.steps import BASE_MESH, ESE_MESH, LOCALIZATION, MESH_POSTPROCESSING, STEPS
+from virda_gui_new.services import artifact_saving
+from virda_gui_new.services.artifact_exporting import ExportKind
+from virda_gui_new.services.preferences import Preferences
+from virda_gui_new.services.project_import import PreparedProject, prepare_project
+from virda_gui_new.services.project_scan import project_files
+from virda_gui_new.services.scene_builder import collect_scene_sources
+from virda_gui_new.services.step_seeding import (
+    StepChainIncompleteError,
+    seed_steps_from_artifacts,
+)
+from virda_gui_new.services.steps_manager import StepsManager
+from virda_gui_new.widgets.files_toggle_button import FilesToggleButton
+from virda_gui_new.widgets.filetree import FileTree
+from virda_gui_new.widgets.popup.abstract import StepPopupBase
+from virda_gui_new.widgets.popup.base_mesh_extraction import BaseMeshExtractionPopup
+from virda_gui_new.widgets.popup.ese_mesh import EseMeshPopup
+from virda_gui_new.widgets.popup.export import (
+    ElectrodesExportPopup,
+    ExportPopupBase,
+    FiducialsExportPopup,
+    MeasurementsExportPopup,
+    MeshExportPopup,
+)
+from virda_gui_new.widgets.popup.localization import LocalizationPopup
+from virda_gui_new.widgets.popup.main_menu import StepsMenu
+from virda_gui_new.widgets.popup.mesh_postprocessing import MeshPostprocessingPopup
+from virda_gui_new.widgets.steps_toggle_button import StepsToggleButton
+from virda_gui_new.widgets.viewer3d import SceneViewer3D
+from virda_gui_new.windows.widget_windows import WidgetWindow, is_alive, open_widget_window
+
+
+class _ExportPopupFactory(Protocol):
+    """Constructor shared by every export popup subclass."""
+
+    def __call__(
+        self,
+        manager: StepsManager,
+        parent: QWidget | None = None,
+        *,
+        project: Path | None = None,
+    ) -> ExportPopupBase: ...
+
+
+#: One popup factory per File -> Export action. The subclasses share
+#: ``(manager, parent=None, *, project=None)`` constructors.
+_EXPORT_POPUPS: dict[ExportKind, _ExportPopupFactory] = {
+    ExportKind.MEASUREMENTS: MeasurementsExportPopup,
+    ExportKind.ELECTRODES: ElectrodesExportPopup,
+    ExportKind.FIDUCIALS: FiducialsExportPopup,
+    ExportKind.MESH: MeshExportPopup,
+}
+
+#: Events that mean the main window came to the front and has to bring
+#: its tool windows up with it.
+_RAISE_EVENTS = frozenset(
+    {
+        QEvent.Type.WindowActivate,
+        QEvent.Type.ActivationChange,
+        QEvent.Type.ZOrderChange,
+    }
+)
+
+
+class MainWindow(QMainWindow):
+    #: Guards the raise of the tracked tool windows against recursion.
+    _raising_tool_windows = False
+
+    def __init__(
+        self,
+        project_path: Path,
+        prepared: PreparedProject | None = None,
+        steps: StepsManager | None = None,
+        preferences: Preferences | None = None,
+    ) -> None:
+        super().__init__()
+
+        self.setWindowTitle("VIRDA: Electrode Localization System")
+        self._project_path = project_path
+        # The recent projects of the menu bar come from the preferences.
+        self._preferences = preferences or Preferences()
+        # The tool windows tracked next to their owner: they are raised
+        # together with this window.
+        self._steps_window: WidgetWindow | None = None
+        self._filetree_window: WidgetWindow | None = None
+        self._popup_windows: dict[int, WidgetWindow] = {}
+        self._export_windows: dict[ExportKind, WidgetWindow] = {}
+
+        self._viewer3d = SceneViewer3D(self, log=self._log)
+        self._viewer3d.sceneLoaded.connect(self._on_scene_loaded)
+        self._viewer3d.sceneFailed.connect(self._on_scene_failed)
+        self.setCentralWidget(self._viewer3d)
+
+        if prepared is None:
+            prepared = prepare_project(project_path)
+        if steps is None:
+            # No manager was handed over: seed one here. The seeding stops
+            # at a gap in the chain and raises StepChainIncompleteError.
+            steps = StepsManager(tuple(step.required_keys for step in STEPS))
+            seed_steps_from_artifacts(steps, prepared.loaded)
+        self._steps = steps
+        self._steps.subscribe(self._rebuild_scene)
+        self._steps.subscribe(self._on_steps_changed)
+        self._rebuild_scene()
+
+        self._steps_menu = StepsMenu(self._steps, project=self._project_path)
+        # The steps menu is hidden by default: the pill opens it. The
+        # window keeps the menu alive when it is closed, so the manager
+        # never calls a destroyed widget.
+        self._steps_window = open_widget_window(
+            self._steps_menu, parent=self, title="Steps", show=False, delete_on_close=False
+        )
+        self._steps_window.destroyed.connect(self._forget_steps_menu)
+        self._popup_factories: dict[int, Callable[[], StepPopupBase]] = {}
+        project = self._project_path
+        self._popup_factories[1] = lambda: BaseMeshExtractionPopup(
+            BASE_MESH, self._steps, project=project
+        )
+        self._popup_factories[2] = lambda: MeshPostprocessingPopup(
+            MESH_POSTPROCESSING, self._steps, project=project
+        )
+        self._popup_factories[3] = lambda: EseMeshPopup(ESE_MESH, self._steps, project=project)
+        self._popup_factories[4] = lambda: LocalizationPopup(
+            LOCALIZATION, self._steps, project=project
+        )
+        self._popups: dict[int, StepPopupBase] = {}
+        self._steps_menu.stepRequested.connect(self._open_step_popup)
+        self._steps_menu.stepsInvalidated.connect(self._on_steps_invalidated)
+
+        self._filetree: FileTree | None = FileTree()
+        self._filetree.set_files(project_files(self._project_path), self._project_path)
+        self._filetree.fileActivated.connect(lambda path: self._log(f"File selected: {path}"))
+
+        self._build_menu_bar()
+        # Built after the menu bar so the pill can anchor below it.
+        self._steps_toggle = StepsToggleButton(self)
+        self._steps_toggle.toggleRequested.connect(self._toggle_steps_menu)
+        # The file tree pill sits in the same column, below the steps pill.
+        self._files_toggle = FilesToggleButton(self, below=self._steps_toggle)
+        self._files_toggle.toggleRequested.connect(self._toggle_filetree)
+
+        self.showMaximized()
+
+    def _rebuild_scene(self) -> None:
+        failures: list[str] = []
+        sources = collect_scene_sources(self._steps, failures)
+        for failure in failures:
+            self._log(failure)
+        if sources.is_empty():
+            self._viewer3d.clear_scene()
+        else:
+            self._viewer3d.set_scene(sources)
+
+    def _open_step_popup(self, step_n: int) -> None:
+        factory = self._popup_factories.get(step_n)
+        if factory is None:
+            self._log(f"Step {step_n}: editor not implemented yet.")
+            return
+        self._close_popup(step_n)
+        popup = factory()
+        popup.completed.connect(self._on_step_completed)
+        popup.failed.connect(lambda msg, s=step_n: self._log(f"Step {s} failed: {msg}"))
+        window = open_widget_window(popup, parent=self, title=STEPS[step_n].name)
+
+        def on_window_destroyed(*_args: object) -> None:
+            self._forget_popup(step_n)
+
+        window.destroyed.connect(on_window_destroyed)
+        self._popups[step_n] = popup
+        self._popup_windows[step_n] = window
+
+    def _on_step_completed(self, step_n: int) -> None:
+        self._log(f"Step {step_n} done.")
+        self._refresh_filetree()
+        self._close_popup(step_n)
+        if step_n + 1 < len(STEPS):
+            self._open_step_popup(step_n + 1)
+        elif step_n == len(STEPS) - 1:
+            self._log("Pipeline complete.")
+
+    def _on_steps_changed(self) -> None:
+        self._close_stale_popups(self._steps.get_current_step())
+
+    def _on_steps_invalidated(self, n: int) -> None:
+        self._log(f"Steps after {n} invalidated.")
+        if self._project_path is not None:
+            artifact_saving.remove_artifacts_after_step(self._project_path, n)
+        self._refresh_filetree()
+
+    def _refresh_filetree(self) -> None:
+        """Re-scan the project and rebuild the file tree rows."""
+        if self._filetree is not None:
+            self._filetree.set_files(project_files(self._project_path), self._project_path)
+
+    def _forget_filetree(self) -> None:
+        """Drop the file tree references once its window was destroyed."""
+        self._filetree = None
+        self._filetree_window = None
+
+    def _open_filetree(self) -> WidgetWindow | None:
+        """Create the file tree window and show it.
+
+        The file tree is hidden by default: its window is created on the
+        first toggle instead of at startup, so the main window opens
+        without it.
+        """
+        filetree = self._filetree
+        if filetree is None:
+            return None
+        window = open_widget_window(filetree, parent=self, title="File tree")
+        window.destroyed.connect(self._forget_filetree)
+        self._filetree_window = window
+        return window
+
+    def _toggle_filetree(self) -> None:
+        """Show (or re-raise) / hide the file tree from the toggle button."""
+        window = self._filetree_window
+        if window is None:
+            # First toggle: the window is created and shown right away.
+            self._open_filetree()
+            return
+        if window.isVisible():
+            window.hide()
+        else:
+            window.show()
+            window.raise_()
+            window.activateWindow()
+
+    def _toggle_steps_menu(self) -> None:
+        """Show (or re-raise) / hide the steps menu from the toggle button."""
+        window = self._steps_window
+        if window is None:
+            return
+        if window.isVisible():
+            window.hide()
+        else:
+            window.show()
+            window.raise_()
+            window.activateWindow()
+
+    def _forget_steps_menu(self) -> None:
+        """Drop the steps menu reference once its window was destroyed."""
+        self._steps_window = None
+
+    def _close_stale_popups(self, step_n: int) -> None:
+        """Close open popup windows of steps beyond the current step."""
+        for step in [s for s in self._popup_windows if s > step_n]:
+            self._close_popup(step)
+
+    def _close_popup(self, step_n: int) -> None:
+        """Shut down and close this step's popup window, if open."""
+        popup = self._popups.pop(step_n, None)
+        window = self._popup_windows.pop(step_n, None)
+        if popup is not None:
+            popup.shutdown()
+        if window is not None and is_alive(window):
+            window.close()
+
+    def _forget_popup(self, step_n: int) -> None:
+        """Drop tracking of a popup window destroyed outside the dispatcher."""
+        self._popup_windows.pop(step_n, None)
+        self._popups.pop(step_n, None)
+
+    def _build_menu_bar(self) -> None:
+        """Build the File menu with the project actions and the exports.
+
+        Availability approach: every export action always opens its
+        popup; a missing source (e.g. electrodes never localized) is
+        surfaced by the Export click through the popup's error dialog
+        with the reason. The actions are therefore never disabled.
+        """
+        export_items = (
+            (ExportKind.MEASUREMENTS, "&Measurements"),
+            (ExportKind.ELECTRODES, "&Electrodes"),
+            (ExportKind.FIDUCIALS, "&Fiducials"),
+            (ExportKind.MESH, "&Mesh"),
+        )
+        file_menu = self.menuBar().addMenu("&File")
+        open_action = QAction("&Open project...", self)
+        open_action.triggered.connect(self._on_open_project)
+        file_menu.addAction(open_action)
+        create_action = QAction("&New project...", self)
+        create_action.triggered.connect(self._on_new_project)
+        file_menu.addAction(create_action)
+        recent_menu = file_menu.addMenu("&Recent")
+        self._fill_recent_menu(recent_menu)
+        recent_menu.aboutToShow.connect(lambda: self._fill_recent_menu(recent_menu))
+        file_menu.addSeparator()
+        export_menu = file_menu.addMenu("&Export")
+        for kind, label in export_items:
+            action = QAction(label, self)
+            action.triggered.connect(lambda _checked, k=kind: self._open_export_popup(k))
+            export_menu.addAction(action)
+
+    def _on_open_project(self) -> None:
+        """Open another project: the user picks its folder."""
+        project = ask_open_project_folder(self)
+        if project is not None:
+            self._open_project(project)
+
+    def _on_new_project(self) -> None:
+        """Create a project folder and open it."""
+        project = ask_create_project_folder(self)
+        if project is not None:
+            self._open_project(project)
+
+    def _open_project(self, project: Path) -> None:
+        """Open the project in its own window and close this one."""
+        if open_project_window(project, parent=self) is None:
+            return
+        self.close()
+
+    def _fill_recent_menu(self, menu: QMenu) -> None:
+        """List the recently opened projects, newest first."""
+        menu.clear()
+        recent = self._preferences.recent_project_paths()
+        if not recent:
+            empty = QAction("(no recent projects)", self)
+            empty.setEnabled(False)
+            menu.addAction(empty)
+            return
+        for project in recent:
+            action = QAction(str(project), self)
+            action.triggered.connect(lambda _checked, p=project: self._open_project(p))
+            menu.addAction(action)
+
+    def _open_export_popup(self, kind: ExportKind) -> None:
+        """Open the export popup of ``kind``, replacing an open one.
+
+        Like the step popups, the popup is created fresh on every menu
+        action (parented to this window through ``open_widget_window``)
+        so selectors and default paths reflect the live manager state.
+        """
+        self._close_export_popup(kind)
+        popup = _EXPORT_POPUPS[kind](self._steps, project=self._project_path)
+        popup.exportSucceeded.connect(lambda path, k=kind: self._log(f"Exported {k.value}: {path}"))
+        popup.exportFailed.connect(
+            lambda message, k=kind: self._log(f"Export {k.value} failed: {message}")
+        )
+        window = open_widget_window(popup, parent=self, title=f"Export {kind.value}")
+
+        def on_window_destroyed(*_args: object) -> None:
+            # Only drop the registry entry while it still maps to this
+            # window: the destroyed signal of a replaced popup must not
+            # unregister its successor.
+            if self._export_windows.get(kind) is window:
+                self._forget_export_popup(kind)
+
+        window.destroyed.connect(on_window_destroyed)
+        self._export_windows[kind] = window
+
+    def _close_export_popup(self, kind: ExportKind) -> None:
+        """Close this kind's export popup window, if open."""
+        window = self._export_windows.pop(kind, None)
+        if window is not None and is_alive(window):
+            window.close()
+
+    def _forget_export_popup(self, kind: ExportKind) -> None:
+        """Drop tracking of an export window destroyed outside the dispatcher."""
+        self._export_windows.pop(kind, None)
+
+    def _tool_windows(self) -> list[WidgetWindow]:
+        """Every tracked tool window that is still alive.
+
+        Dead windows (destroyed outside the dispatchers) are filtered
+        out, so they are never touched again.
+        """
+        tracked: list[WidgetWindow] = []
+        for window in (self._steps_window, self._filetree_window):
+            if window is not None:
+                tracked.append(window)
+        tracked.extend(self._popup_windows.values())
+        tracked.extend(self._export_windows.values())
+        return [window for window in tracked if is_alive(window)]
+
+    def _raise_tool_windows(self) -> None:
+        """Bring every tracked tool window up with the main window.
+
+        The tool windows are separate top-level windows: without this
+        the main window would cover them whenever it is raised or
+        activated (e.g. by a click on its title bar).
+        """
+        if self._raising_tool_windows:
+            return
+        self._raising_tool_windows = True
+        try:
+            for window in self._tool_windows():
+                window.raise_()
+        finally:
+            self._raising_tool_windows = False
+
+    def event(self, event: QEvent) -> bool:
+        """Keep the tool windows above the main window when it comes up.
+
+        PySide6 exposes neither ``raiseEvent`` nor ``activateEvent``, so
+        the window level events that precede them are handled here: the
+        main window was activated, its activation state changed or its
+        stacking order changed.
+        """
+        if event.type() in _RAISE_EVENTS:
+            self._raise_tool_windows()
+        return super().event(event)
+
+    def _log(self, message: str) -> None:
+        self.statusBar().showMessage(message)
+
+    def _on_scene_loaded(self, scene: object) -> None:
+        self._log("3D scene loaded.")
+
+    def _on_scene_failed(self, message: str) -> None:
+        self._log(f"3D viewer failed: {message}")
+
+    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt override
+        """Close every tracked popup so nothing outlives the main window.
+
+        Closing each host stops its hosted widget's background work
+        (including any running :class:`~virda_gui_new.services.task_runner.
+        TaskRunner` thread) before the application exits.
+        """
+        for step_n in list(self._popup_windows):
+            self._close_popup(step_n)
+        for kind in list(self._export_windows):
+            self._close_export_popup(kind)
+        if self._steps_window is not None and is_alive(self._steps_window):
+            self._steps_window.close()
+            # The steps window keeps its menu alive when it is closed,
+            # so it is deleted explicitly here.
+            self._steps_window.deleteLater()
+        if self._filetree_window is not None and is_alive(self._filetree_window):
+            self._filetree_window.close()
+        super().closeEvent(event)
+
+
+def open_project_window(project: Path, parent: QWidget | None = None) -> MainWindow | None:
+    """Prepare the project, seed its steps and open its window.
+
+    The import is checked with the user: a project with a gap in its
+    chain or an unreadable file is confirmed before the window opens.
+    ``None`` when the user declines the import.
+    """
+    prepared = prepare_project(project)
+    # The steps are seeded before the window exists: a project with a
+    # gap in its chain stops at that step, and the user decides in the
+    # dialog whether to continue from there.
+    steps = StepsManager(tuple(step.required_keys for step in STEPS))
+    incomplete: StepChainIncompleteError | None = None
+    try:
+        seed_steps_from_artifacts(steps, prepared.loaded)
+    except StepChainIncompleteError as error:
+        incomplete = error
+    if (prepared.failures or incomplete) and not confirm_partial_import(
+        parent, prepared.failures, steps.get_current_step(), incomplete
+    ):
+        return None
+
+    Preferences().note_project_opened(project)
+    window = MainWindow(project, prepared=prepared, steps=steps)
+    window.show()
+    return window

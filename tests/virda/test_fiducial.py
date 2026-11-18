@@ -10,9 +10,9 @@ from tests.helpers.fiducials import make_fiducials
 from virda.io.fiducial_helpers import load_fiducials, save_fiducials
 from virda.models.coordsystem import Coordsystem
 from virda.models.fiducial import (
-    CoordinateSystem,
     DefinitionMethod,
     Fiducial,
+    FiducialCoordinateSystem,
     Fiducials,
 )
 
@@ -33,7 +33,7 @@ class TestFiducialModel:
                 fiducial_id="NAS",
                 name="Nasion",
                 coordinates=np.array([0.0, 88.0, -10.0]),
-                coordinate_system=cast(CoordinateSystem, "nonsense"),
+                coordinate_system=cast(FiducialCoordinateSystem, "nonsense"),
             )
 
     def test_fiducial_validates_definition_method(self) -> None:

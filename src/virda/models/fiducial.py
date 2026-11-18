@@ -4,7 +4,7 @@ from typing import Literal
 
 import numpy as np
 
-CoordinateSystem = Literal["world", "voxel"]
+FiducialCoordinateSystem = Literal["world", "voxel"]
 DefinitionMethod = Literal["auto", "manual", "imported"]
 
 
@@ -54,7 +54,7 @@ class Fiducial:
     fiducial_id: str
     name: str
     coordinates: np.ndarray
-    coordinate_system: CoordinateSystem
+    coordinate_system: FiducialCoordinateSystem
     definition_method: DefinitionMethod = "manual"
     weight: float = 1.0
 

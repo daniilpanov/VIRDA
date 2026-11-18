@@ -1,0 +1,273 @@
+"""Unit tests for :class:`virda_gui_new.widgets.popup.mesh_postprocessing`.
+
+Runs under the offscreen Qt platform; skips without a Qt install. The
+``ops`` clean/decimate/smooth facades are mocked, so no heavy mesh work
+runs; only form values flow to the mocks and a tiny real result back.
+"""
+
+import json
+import time
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import pytest
+
+from tests.virda_gui_new.fixtures.steps import advance
+from virda.models.mesh import Mesh
+from virda_gui_new.dto.steps import MESH_POSTPROCESSING, STEPS
+from virda_gui_new.services.steps_manager import StepsManager
+from virda_gui_new.widgets.popup.mesh_postprocessing import MeshPostprocessingPopup
+
+_NO_MESH = "Mesh postprocessing needs an in-memory mesh (run the previous steps first)."
+_MESH = Mesh(np.zeros((4, 3)), np.zeros((1, 3), dtype=int))
+
+
+def _make_manager(mesh: Mesh | None) -> StepsManager:
+    """Manager at step 2; sets the step-1 scalp surface plus a step-2 mesh."""
+    steps = StepsManager(tuple(step.required_keys for step in STEPS))
+    advance(steps)
+    steps.set_step_context_item(1, "scalp_surface", _MESH)
+    advance(steps)
+    if mesh is not None:
+        steps.set_step_context_item(2, "mesh", mesh)
+    return steps
+
+
+@pytest.fixture
+def manager(qapp) -> StepsManager:
+    """Manager at step 2 with a ready mesh in the step-1 context."""
+    return _make_manager(None)
+
+
+def _patch_ops(monkeypatch, calls: list[tuple[str, Any, Any]]) -> None:
+    def fake_clean(mesh, *, min_component_vertices, merge_digits):
+        calls.append(("clean", mesh, (min_component_vertices, merge_digits)))
+        return _MESH
+
+    def fake_decimate(mesh, *, density_percent):
+        calls.append(("decimate", mesh, density_percent))
+        return _MESH
+
+    def fake_smooth(mesh, *, smoother_type, iterations, lamb, nu):
+        calls.append(("smooth", mesh, (smoother_type, iterations, lamb, nu)))
+        return _MESH
+
+    module = "virda_gui_new.widgets.popup.mesh_postprocessing"
+    monkeypatch.setattr(f"{module}.clean_mesh", fake_clean)
+    monkeypatch.setattr(f"{module}.decimate_mesh", fake_decimate)
+    monkeypatch.setattr(f"{module}.smooth_mesh", fake_smooth)
+
+
+def _settle(qapp, popup, timeout_s: float = 5.0) -> None:
+    """Pump events until the run settles (busy flag cleared)."""
+    deadline = time.monotonic() + timeout_s
+    while popup._busy and time.monotonic() < deadline:
+        qapp.processEvents()
+        time.sleep(0.01)
+    qapp.processEvents()
+
+
+def test_form_defaults(qapp, manager, popups) -> None:
+    popup = MeshPostprocessingPopup(MESH_POSTPROCESSING, manager)
+    popups.append(popup)
+    popup._advanced_settings.setChecked(True)
+
+    assert popup._run_button.isEnabled()
+    assert popup._min_spin.value() == 100
+    assert popup._merge_spin.value() == 7
+    assert popup._density_spin.value() == 100.0
+    assert popup._smooth_combo.currentText() == "taubin"
+    assert popup._iterations_spin.value() == 5
+    assert popup._lamb_spin.value() == 0.5
+    assert popup._nu_spin.value() == -0.53
+    assert popup._iterations_spin.isEnabled()
+    assert popup._lamb_spin.isEnabled()
+    assert popup._nu_spin.isEnabled()
+
+
+def test_advanced_settings_collapse(qapp, manager, popups) -> None:
+    popup = MeshPostprocessingPopup(MESH_POSTPROCESSING, manager)
+    popups.append(popup)
+
+    assert popup._advanced_settings.title() == "Advanced settings"
+    popup._advanced_settings.setChecked(False)
+    assert popup._advanced_settings._content.isHidden()
+    popup._advanced_settings.setChecked(True)
+    assert not popup._advanced_settings._content.isHidden()
+
+
+def test_smoothing_fields_follow_combo(qapp, manager, popups) -> None:
+    popup = MeshPostprocessingPopup(MESH_POSTPROCESSING, manager)
+    popups.append(popup)
+    popup._advanced_settings.setChecked(True)
+
+    popup._smooth_combo.setCurrentText("none")
+    assert not popup._iterations_spin.isEnabled()
+    assert not popup._lamb_spin.isEnabled()
+    assert not popup._nu_spin.isEnabled()
+
+    popup._smooth_combo.setCurrentText("taubin")
+    assert popup._iterations_spin.isEnabled()
+
+
+def test_input_resolution(qapp, popups, manager) -> None:
+    popup = MeshPostprocessingPopup(MESH_POSTPROCESSING, manager)
+    popups.append(popup)
+    assert popup._resolve_input() is _MESH
+
+    steps = _make_manager(_MESH)
+    fallback = Mesh(np.zeros((3, 3)), np.zeros((1, 3), dtype=int))
+    steps.set_step_context_item(1, "scalp_surface", fallback)
+    popup2 = MeshPostprocessingPopup(MESH_POSTPROCESSING, steps)
+    popups.append(popup2)
+    assert popup2._resolve_input() is _MESH  # step-2 mesh wins
+
+
+def test_collect_run_step1_fallback(qapp, manager, popups, monkeypatch) -> None:
+    calls: list[tuple[str, Any, Any]] = []
+    _patch_ops(monkeypatch, calls)
+    popup = MeshPostprocessingPopup(MESH_POSTPROCESSING, manager)
+    popups.append(popup)
+
+    work = popup._collect_run()
+    assert calls == []  # nothing runs until the work callable is invoked
+
+    work()
+    assert calls == [
+        ("clean", _MESH, (100, 7)),
+        ("decimate", _MESH, 100.0),
+        (
+            "smooth",
+            _MESH,
+            ("taubin", 5, 0.5, -0.53),
+        ),
+    ]
+
+
+def test_collect_run_maps_form_values(qapp, manager, popups, monkeypatch) -> None:
+    calls: list[tuple[str, Any, Any]] = []
+    _patch_ops(monkeypatch, calls)
+    popup = MeshPostprocessingPopup(MESH_POSTPROCESSING, manager)
+    popups.append(popup)
+
+    popup._min_spin.setValue(50)
+    popup._merge_spin.setValue(3)
+    popup._density_spin.setValue(25.5)
+    popup._smooth_combo.setCurrentText("taubin")
+    popup._iterations_spin.setValue(10)
+    popup._lamb_spin.setValue(1.25)
+    popup._nu_spin.setValue(-2.5)
+
+    popup._collect_run()()
+    smoother = "taubin"
+    assert calls == [
+        ("clean", _MESH, (50, 3)),
+        ("decimate", _MESH, 25.5),
+        (
+            "smooth",
+            _MESH,
+            (smoother, 10, 1.25, -2.5),
+        ),
+    ]
+
+
+def test_collect_run_none_smoother_still_calls_smooth(qapp, manager, popups, monkeypatch) -> None:
+    calls: list[tuple[str, Any, Any]] = []
+    _patch_ops(monkeypatch, calls)
+    popup = MeshPostprocessingPopup(MESH_POSTPROCESSING, manager)
+    popups.append(popup)
+
+    popup._smooth_combo.setCurrentText("none")
+    popup._collect_run()()
+    assert calls == [
+        ("clean", _MESH, (100, 7)),
+        ("decimate", _MESH, 100.0),
+        (
+            "smooth",
+            _MESH,
+            ("none", 5, 0.5, -0.53),
+        ),
+    ]
+
+
+def test_apply_result_writes_mesh(qapp, manager, popups) -> None:
+    popup = MeshPostprocessingPopup(MESH_POSTPROCESSING, manager)
+    popups.append(popup)
+
+    popup._apply_result(_MESH)
+
+    assert manager.get_step_context_item(2, "mesh") is _MESH
+
+
+def test_mocked_run_writes_context_and_advances(qapp, manager, popups, monkeypatch) -> None:
+    calls: list[tuple[str, Any, Any]] = []
+    _patch_ops(monkeypatch, calls)
+    popup = MeshPostprocessingPopup(MESH_POSTPROCESSING, manager)
+    popups.append(popup)
+    completed: list[int] = []
+    popup.completed.connect(completed.append)
+
+    popup._run_button.click()
+    _settle(qapp, popup)
+
+    assert popup._hint_label.text() == "Done."
+    assert completed == [2]
+    assert manager.get_step_context_item(2, "mesh") is _MESH
+    assert manager.get_current_step() == 3  # base advanced past step 2
+
+
+def test_run_with_project_persists_final_mesh(
+    qapp, manager, popups, monkeypatch, tmp_path: Path
+) -> None:
+    _patch_ops(monkeypatch, [])
+    popup = MeshPostprocessingPopup(MESH_POSTPROCESSING, manager, project=tmp_path)
+    popups.append(popup)
+
+    popup._run_button.click()
+    _settle(qapp, popup)
+
+    assert popup._hint_label.text() == "Done."
+    assert (tmp_path / "scalp" / "final_mesh.ply").is_file()
+
+
+def test_missing_mesh_fails_collect(qapp, popups) -> None:
+    steps = StepsManager(tuple(step.required_keys for step in STEPS))
+    popup = MeshPostprocessingPopup(MESH_POSTPROCESSING, steps)
+    popups.append(popup)
+
+    assert not popup._run_button.isEnabled()
+    with pytest.raises(ValueError, match="Mesh postprocessing needs an in-memory mesh"):
+        popup._collect_run()
+
+
+def test_path_mesh_still_fails_collect(qapp, popups) -> None:
+    steps = _make_manager(None)
+    steps.set_step_context_item(2, "mesh", Path("some.ply"))
+    popup = MeshPostprocessingPopup(MESH_POSTPROCESSING, steps)
+    popups.append(popup)
+
+    with pytest.raises(ValueError) as excinfo:
+        popup._collect_run()
+    assert str(excinfo.value) == _NO_MESH
+
+
+def test_configuration_is_saved_and_restored(qapp, manager, popups, tmp_path) -> None:
+    """The step settings are stored in the project and read back."""
+    popup = MeshPostprocessingPopup(MESH_POSTPROCESSING, manager, project=tmp_path)
+    popups.append(popup)
+
+    popup._merge_spin.setValue(9)
+    popup._smooth_combo.setCurrentText("taubin")
+
+    stored = json.loads(
+        (tmp_path / "config" / "mesh_postprocessing.json").read_text(encoding="utf-8")
+    )
+    assert stored["merge_digits"] == 9
+    assert stored["smoother"] == "taubin"
+
+    restored = MeshPostprocessingPopup(MESH_POSTPROCESSING, manager, project=tmp_path)
+    popups.append(restored)
+
+    assert restored._merge_spin.value() == 9
+    assert restored._smooth_combo.currentText() == "taubin"

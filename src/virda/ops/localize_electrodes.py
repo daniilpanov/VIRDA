@@ -77,6 +77,7 @@ def localize_electrodes(
     electrodes: Electrodes,
     *,
     config: Stage3Config,
+    fixed_offset_shift_mm: float | None = None,
     logger: Logger | None = None,
 ) -> Electrodes:
     """Localize real electrodes by brute-force search over the ESE point cloud.
@@ -96,8 +97,8 @@ def localize_electrodes(
     scalp_vertices = np.asarray(scalp_mesh.vertices)
     fiducial_coords = np.asarray([fiducial.coordinates for fiducial in fiducials.items])
 
-    offset_shift = 0.0
-    if config.calibrate_ese_offset:
+    offset_shift = 0.0 if fixed_offset_shift_mm is None else fixed_offset_shift_mm
+    if fixed_offset_shift_mm is None and config.calibrate_ese_offset:
         offset_shift = _calibrate_offset(
             vertices, normals, fiducial_coords, fiducials, electrodes, logger=logger
         )
@@ -139,7 +140,11 @@ def localize_electrodes(
             logger.info("No electrodes localized (%d provided)", len(localized))
     return Electrodes(
         items=localized,
-        calibrated_offset_shift_mm=(offset_shift if config.calibrate_ese_offset else None),
+        calibrated_offset_shift_mm=(
+            offset_shift
+            if fixed_offset_shift_mm is not None or config.calibrate_ese_offset
+            else None
+        ),
     )
 
 
