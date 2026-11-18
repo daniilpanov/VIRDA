@@ -319,6 +319,7 @@ def test_export_electrodes_voxel_frame_writes_indices(tmp_path: Path) -> None:
     )
 
     row = _read_csv(path)[0]
+    assert row["coordinate_system"] == "voxel"
     # World (10, 0, 0) -> voxel (0, 10, -6) through the inverse affine.
     assert [float(row[axis]) for axis in ("ese_x", "ese_y", "ese_z")] == [0.0, 10.0, -6.0]
     assert [float(row[axis]) for axis in ("scalp_x", "scalp_y", "scalp_z")] == [-20.0, 30.0, -6.0]

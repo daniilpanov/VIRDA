@@ -8,6 +8,7 @@ from virda.io.exporters.electrodes import (
     export_electrodes_ese,
     export_electrodes_scalp,
 )
+from virda.models.coordinates import CoordinateSystem
 from virda.models.electrode import Electrode, Electrodes
 
 
@@ -40,11 +41,14 @@ class TestExportElectrodes:
     def test_writes_full_entries(self, tmp_path: Path) -> None:
         electrodes = Electrodes(items=[_localized(), _unlocalized()])
 
-        path = export_electrodes(tmp_path / "localization" / "electrodes.csv", electrodes)
+        path = export_electrodes(
+            tmp_path / "localization" / "electrodes.csv", electrodes, CoordinateSystem.WORLD
+        )
 
         headers, rows = _read_rows(path)
         assert headers == [
             "electrode_id",
+            "coordinate_system",
             "ese_x",
             "ese_y",
             "ese_z",
@@ -58,6 +62,7 @@ class TestExportElectrodes:
         ]
         assert rows[0] == {
             "electrode_id": "Fz",
+            "coordinate_system": "world",
             "ese_x": "1.0",
             "ese_y": "2.0",
             "ese_z": "3.0",
@@ -78,8 +83,19 @@ class TestExportElectrodes:
         assert rows[1]["residual_mm"] == ""
         assert rows[1]["flagged"] == "yes"
 
+    def test_writes_the_requested_system(self, tmp_path: Path) -> None:
+        path = export_electrodes(
+            tmp_path / "voxel.csv", Electrodes(items=[_localized()]), CoordinateSystem.VOXEL
+        )
+
+        headers, rows = _read_rows(path)
+        assert headers[1] == "coordinate_system"
+        assert rows[0]["coordinate_system"] == "voxel"
+
     def test_creates_parent_directory(self, tmp_path: Path) -> None:
-        path = export_electrodes(tmp_path / "deep" / "electrodes.csv", Electrodes(items=[]))
+        path = export_electrodes(
+            tmp_path / "deep" / "electrodes.csv", Electrodes(items=[]), CoordinateSystem.WORLD
+        )
 
         assert path.is_file()
         headers, rows = _read_rows(path)
@@ -94,7 +110,16 @@ class TestExportElectrodesScalp:
         )
 
         headers, rows = _read_rows(path)
-        assert headers == ["electrode_id", "x", "y", "z", "residual_mm", "flagged"]
+        assert headers == [
+            "electrode_id",
+            "coordinate_system",
+            "x",
+            "y",
+            "z",
+            "residual_mm",
+            "flagged",
+        ]
+        assert rows[0]["coordinate_system"] == "world"
         assert rows[0]["x"] == "1.0"
         assert rows[0]["residual_mm"] == "1.25"
         assert rows[0]["flagged"] == "no"
@@ -107,7 +132,16 @@ class TestExportElectrodesEse:
         )
 
         headers, rows = _read_rows(path)
-        assert headers == ["electrode_id", "x", "y", "z", "residual_mm", "flagged"]
+        assert headers == [
+            "electrode_id",
+            "coordinate_system",
+            "x",
+            "y",
+            "z",
+            "residual_mm",
+            "flagged",
+        ]
+        assert rows[0]["coordinate_system"] == "world"
         assert rows[0]["x"] == "1.0"
 
     def test_unlocalized_electrode_has_empty_coords(self, tmp_path: Path) -> None:

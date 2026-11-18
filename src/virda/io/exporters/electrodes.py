@@ -5,21 +5,25 @@ from pathlib import Path
 
 import numpy as np
 
+from virda.models.coordinates import CoordinateSystem
 from virda.models.electrode import Electrode, Electrodes
 
 
-def export_electrodes(path: str | Path, electrodes: Electrodes) -> Path:
+def export_electrodes(path: str | Path, electrodes: Electrodes, system: CoordinateSystem) -> Path:
     """Write the full localization result to *path* as a CSV table.
 
-    Every row carries the electrode id, its localized ESE body-center and
-    scalp contact coordinates (world, scanner RAS), the measured distances
-    to the fiducials (one column per fiducial, lowercased), the residual
-    error and the flag; non-localized electrodes leave the coordinates and
-    the residual empty.  Returns the written path.
+    Every row carries the electrode id, the coordinate system the numbers
+    are given in, its localized ESE body-center and scalp contact
+    coordinates, the measured distances to the fiducials (one column per
+    fiducial, lowercased), the residual error and the flag; non-localized
+    electrodes leave the coordinates and the residual empty. ``system`` is
+    mandatory so a CSV is never ambiguous about its numbers. Returns the
+    written path.
     """
     fiducial_columns = _fiducial_columns(electrodes)
     fieldnames = [
         "electrode_id",
+        "coordinate_system",
         "ese_x",
         "ese_y",
         "ese_z",
@@ -33,6 +37,7 @@ def export_electrodes(path: str | Path, electrodes: Electrodes) -> Path:
     rows = [
         {
             "electrode_id": electrode.electrode_id or "",
+            "coordinate_system": system.value,
             "ese_x": _coordinate(electrode.ese_coords, 0),
             "ese_y": _coordinate(electrode.ese_coords, 1),
             "ese_z": _coordinate(electrode.ese_coords, 2),
@@ -52,21 +57,34 @@ def export_electrodes(path: str | Path, electrodes: Electrodes) -> Path:
 
 
 def export_electrodes_scalp(path: str | Path, electrodes: Electrodes) -> Path:
-    """Write the scalp table: ``x/y/z`` are the scalp contact points (RAS mm)."""
+    """Write the scalp table: ``x/y/z`` are scalp contact points in world mm."""
     return _export_coords_table(path, electrodes, "scalp_coords")
 
 
 def export_electrodes_ese(path: str | Path, electrodes: Electrodes) -> Path:
-    """Write the ESE table: ``x/y/z`` are the ESE body-center points (RAS mm)."""
+    """Write the ESE table: ``x/y/z`` are ESE body-center points in world mm."""
     return _export_coords_table(path, electrodes, "ese_coords")
 
 
 def _export_coords_table(path: str | Path, electrodes: Electrodes, coords_attribute: str) -> Path:
-    """Write the common coords-variant table for the given attribute."""
-    fieldnames = ["electrode_id", "x", "y", "z", "residual_mm", "flagged"]
+    """Write the common coords-variant table for the given attribute.
+
+    These point CSVs are project artifacts written from world-canonical
+    results, so their ``coordinate_system`` column is always ``world``.
+    """
+    fieldnames = [
+        "electrode_id",
+        "coordinate_system",
+        "x",
+        "y",
+        "z",
+        "residual_mm",
+        "flagged",
+    ]
     rows = [
         {
             "electrode_id": electrode.electrode_id or "",
+            "coordinate_system": CoordinateSystem.WORLD.value,
             "x": _coordinate(getattr(electrode, coords_attribute), 0),
             "y": _coordinate(getattr(electrode, coords_attribute), 1),
             "z": _coordinate(getattr(electrode, coords_attribute), 2),

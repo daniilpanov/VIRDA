@@ -118,4 +118,7 @@ surface is shifted along the scalp normals to match the measured distances.
 - A frame is greyed out → run the steps it needs: the scalp mesh for **Head**, the
   three fiducials for **Fiducials**, the NIfTI import for **Voxel**.
 - The export carries different numbers than the table → the export dialog has its
-  own frame selector; both start on **Head** and World is always available.
+  own frame selector; both start on **Head** and World is always available. The
+  electrodes CSV tags each row with `coordinate_system`, and the fiducials JSON
+  tags each point with `coordinate_system`, so their frame is unambiguous; PLY
+  meshes carry no such tag.

@@ -146,7 +146,7 @@ def test_save_localization_writes_all_files(tmp_path: Path) -> None:
     with scalp_path.open(newline="", encoding="utf-8") as fh:
         header = fh.readline().strip()
     # The exact batch pipeline header of export_electrodes_scalp.
-    assert header == "electrode_id,x,y,z,residual_mm,flagged"
+    assert header == "electrode_id,coordinate_system,x,y,z,residual_mm,flagged"
     scalp = import_electrode_points(scalp_path)
     assert [point.electrode_id for point in scalp] == ["A"]
     assert scalp[0].coordinates.tolist() == [4.0, 5.0, 6.0]

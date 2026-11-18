@@ -177,7 +177,7 @@ def _export_electrodes(
         [_convert_electrode(electrode, frame, coordinates) for electrode in stored.items],
         calibrated_offset_shift_mm=stored.calibrated_offset_shift_mm,
     )
-    return export_electrodes(path, converted)
+    return export_electrodes(path, converted, frame)
 
 
 def _compute_results(manager: StepsManager, options: Stage3Config | None) -> Electrodes | None:

@@ -150,12 +150,12 @@ available.
 
 | File | Description |
 |---|---|
-| `electrodes.csv` | Full localization result: `electrode_id, ese_x, ese_y, ese_z, scalp_x, scalp_y, scalp_z, [one column per fiducial, lowercased], residual_mm, flagged`. Coordinates are scanner RAS millimeters; the fiducial columns carry the measured distances (mm). Empty coordinates and residual mark non-localized electrodes. |
-| `electrodes_scalp.csv` | Same electrodes with only `x, y, z` = scalp contact points (scanner RAS). |
-| `electrodes_ese.csv` | Same electrodes with only `x, y, z` = ESE body-center points (scanner RAS). |
+| `electrodes.csv` | Full localization result: `electrode_id, coordinate_system, ese_x, ese_y, ese_z, scalp_x, scalp_y, scalp_z, [one column per fiducial, lowercased], residual_mm, flagged`. `coordinate_system` tags the numbers in the row with the frame chosen in the export dialog; the fiducial columns carry the measured distances (mm). Empty coordinates and residual mark non-localized electrodes. |
+| `electrodes_scalp.csv` | Same electrodes with only `x, y, z` = scalp contact points, always world scanner RAS; `coordinate_system` is `world`. |
+| `electrodes_ese.csv` | Same electrodes with only `x, y, z` = ESE body-center points, always world scanner RAS; `coordinate_system` is `world`. |
 
 The coordinate tables (`electrodes_scalp.csv`, `electrodes_ese.csv`) carry columns
-`electrode_id, x, y, z, residual_mm, flagged`.  Empty `x/y/z` and
+`electrode_id, coordinate_system, x, y, z, residual_mm, flagged`.  Empty `x/y/z` and
 `residual_mm` mark electrodes that could not be localized
 (`is_localized == false`).  `flagged` (`yes`/`no`) marks electrodes whose
 residual exceeds `residual_threshold_mm`.
