@@ -21,8 +21,15 @@ from PyInstaller.utils.hooks import (
 # Application settings
 # ==========================================================
 
-ENTRY_SCRIPT = "src/virda_gui/__main__.py"
+ENTRY_SCRIPT = "src/virda_gui_new/__main__.py"
 APP_NAME = "virda"
+
+if sys.platform == "win32":
+    ICON = "assets/app-icons/icon.ico"
+elif sys.platform == "darwin":
+    ICON = "assets/app-icons/icon.icns"
+else:
+    ICON = None
 
 PATH_EX: list[str] = []
 
@@ -148,6 +155,7 @@ exe = EXE(
     a.datas,
     [],
     name=APP_NAME,
+    icon=ICON,
     debug=DEBUG,
     bootloader_ignore_signals=False,
     strip=False,

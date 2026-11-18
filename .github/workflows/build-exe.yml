@@ -66,15 +66,15 @@ jobs:
         uses: actions/cache@v6
         with:
           path: build/
-          key: ${{ runner.os }}-pyinstaller-${{ hashFiles('uv.lock', 'virda_gui.spec', 'src/**') }}
+          key: ${{ runner.os }}-pyinstaller-${{ hashFiles('uv.lock', 'virda_gui_new.spec', 'src/**') }}
           restore-keys: |
             ${{ runner.os }}-pyinstaller-
 
       - name: Install dependencies (incl. PyInstaller)
-        run: uv sync --frozen --package virda-gui --group build
+        run: uv sync --frozen --package virda-gui-new --group build
 
       - name: Build executable
-        run: uv run pyinstaller virda_gui.spec
+        run: uv run pyinstaller virda_gui_new.spec
 
       - name: Upload ${{ matrix.name }} artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
