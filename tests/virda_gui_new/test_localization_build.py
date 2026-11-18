@@ -15,7 +15,7 @@ from virda_gui_new.services.localization.build import (
 def test_build_fiducials_happy() -> None:
     rows = [("Nasion", np.array([0.0, 1.0, 2.0])), ("  LPA ", np.array([3.0, 4.0, 5.0]))]
 
-    fiducials = build_fiducials(rows)
+    fiducials = build_fiducials(rows, CoordinateSystem.WORLD)
 
     assert [(f.fiducial_id, f.name) for f in fiducials.items] == [
         ("NAS", "Nasion"),
@@ -28,10 +28,19 @@ def test_build_fiducials_happy() -> None:
     assert first.weight == 1.0
 
 
+def test_build_fiducials_tags_the_given_system() -> None:
+    rows = [("Nasion", np.array([10.0, 20.0, 30.0]))]
+
+    fiducials = build_fiducials(rows, CoordinateSystem.VOXEL)
+
+    assert fiducials.items[0].point.system is CoordinateSystem.VOXEL
+    assert fiducials.items[0].point.as_array().tolist() == [10.0, 20.0, 30.0]
+
+
 def test_build_fiducials_keeps_unknown_names_as_ids() -> None:
     rows = [("Extra", np.zeros(3))]
 
-    fiducials = build_fiducials(rows)
+    fiducials = build_fiducials(rows, CoordinateSystem.WORLD)
 
     assert fiducials.items[0].fiducial_id == "Extra"
 
@@ -40,21 +49,21 @@ def test_build_fiducials_rejects_empty_name() -> None:
     rows = [("   ", np.zeros(3))]
 
     with pytest.raises(ValueError, match="non-empty"):
-        build_fiducials(rows)
+        build_fiducials(rows, CoordinateSystem.WORLD)
 
 
 def test_build_fiducials_rejects_duplicate_names() -> None:
     rows = [("Nasion", np.zeros(3)), ("  Nasion ", np.ones(3))]
 
     with pytest.raises(ValueError, match="unique"):
-        build_fiducials(rows)
+        build_fiducials(rows, CoordinateSystem.WORLD)
 
 
 def test_build_fiducials_rejects_bad_shape() -> None:
     rows = [("Nasion", np.zeros(4))]
 
     with pytest.raises(ValueError, match=r"shape \(4,\)"):
-        build_fiducials(rows)
+        build_fiducials(rows, CoordinateSystem.WORLD)
 
 
 def test_build_electrodes_maps_rows() -> None:

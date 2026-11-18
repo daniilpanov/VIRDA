@@ -1,7 +1,10 @@
 """Per-step pipeline contexts with completion state and change notification."""
 
 from collections.abc import Callable, Mapping, Sequence
+from pathlib import Path
 from typing import Any
+
+import numpy as np
 
 from lib.forward_list import ForwardList
 from virda.geometry import FrameContext, Geometry, match_fiducial_name
@@ -9,13 +12,16 @@ from virda.mesh.center_of_mass import center_of_mass
 from virda.models.coordinates import CoordinateSystem, Point
 from virda.models.fiducial import FiducialType
 from virda.models.mesh import Mesh
+from virda.models.mri_volume import MRIVolume
 from virda_gui_new.dto.steps import (
     BASE_MESH,
     FIDUCIALS_KEY,
     MESH_POSTPROCESSING,
+    NIFTI,
     RUN_INPUTS,
 )
 from virda_gui_new.dto.viewer3d import LabeledPoints
+from virda_gui_new.services import artifact_loading
 
 
 class StepsManager:
@@ -37,6 +43,7 @@ class StepsManager:
         self._listeners: list[Callable[[], None]] = []
         self._step_contexts.push_back({})
         self._geometry: Geometry | None = None
+        self._affine_cache: dict[Path, np.ndarray] = {}
 
     def _validate_step(self, step_n: int) -> None:
         step_count = len(self._step_contexts)
@@ -226,8 +233,27 @@ class StepsManager:
         return FrameContext(
             head_origin=head_origin,
             fiducials=self._fiducial_points(),
-            affine=None,
+            affine=self._volume_affine(),
         )
+
+    def _volume_affine(self) -> np.ndarray | None:
+        """Affine of the step-0 NIfTI volume, or ``None`` when it is absent.
+
+        A ready MRIVolume carries the affine directly; a path is loaded
+        lazily and its affine cached, because the geometry context is
+        rebuilt on every manager change and rereading the NIfTI each time
+        would be expensive.
+        """
+        volume = self.get_step_context_item(NIFTI.index, "volume")
+        if isinstance(volume, MRIVolume):
+            return volume.affine
+        if isinstance(volume, Path):
+            affine = self._affine_cache.get(volume)
+            if affine is None:
+                affine = artifact_loading.load_volume(volume).affine
+                self._affine_cache[volume] = affine
+            return affine
+        return None
 
     def _fiducial_points(self) -> dict[FiducialType, Point]:
         """The canonical fiducial slots of the global store, in world."""

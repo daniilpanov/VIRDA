@@ -4,6 +4,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QComboBox, QLabel, QVBoxLayout, QWidget
 
+from virda.models.coordinates import CoordinateSystem
 from virda_gui_new.services.artifact_exporting import ExportKind, MeshExportKind
 from virda_gui_new.services.steps_manager import StepsManager
 from virda_gui_new.widgets.popup.export.base import ExportPopupBase
@@ -67,16 +68,16 @@ class ElectrodesExportPopup(ExportPopupBase):
 
 
 class FiducialsExportPopup(ExportPopupBase):
-    """Export the global-store fiducials in the head or world frame.
+    """Export the global-store fiducials in the world, head or voxel frame.
 
     The ``fiducials`` frame is permanently greyed out: fiducials define
-    that frame, so they are only offered relative to head or world.
+    that frame, so they are only offered relative to another frame.
     """
 
     _TITLE = "Export fiducials"
     _HINT = (
         "Exports the current fiducials from the localization popup store "
-        "in the chosen frame (head or world only)."
+        "in the chosen frame (world, head or voxel)."
     )
 
     def __init__(
@@ -88,8 +89,8 @@ class FiducialsExportPopup(ExportPopupBase):
     ) -> None:
         super().__init__(manager, ExportKind.FIDUCIALS, parent, project=project)
 
-    def _fiducials_frame_offered(self) -> bool:
-        return False
+    def _offered_frames(self) -> frozenset[CoordinateSystem]:
+        return frozenset({CoordinateSystem.WORLD, CoordinateSystem.HEAD, CoordinateSystem.VOXEL})
 
 
 class MeshExportPopup(ExportPopupBase):
@@ -98,7 +99,8 @@ class MeshExportPopup(ExportPopupBase):
     The mesh type combo picks the source (base = step-1 scalp surface,
     postprocessed = step-2 mesh, ese = step-3 ESE mesh); switching it
     resets the path field to the new source's canonical default path,
-    because source and default path change together.
+    because source and default path change together. PLY carries no frame
+    metadata, so the voxel frame is not offered for meshes.
     """
 
     _TITLE = "Export mesh"
@@ -124,6 +126,11 @@ class MeshExportPopup(ExportPopupBase):
         layout.addWidget(QLabel("Mesh type", self))
         layout.addWidget(self._mesh_combo)
         self._mesh_combo.currentIndexChanged.connect(self._on_mesh_kind_changed)
+
+    def _offered_frames(self) -> frozenset[CoordinateSystem]:
+        return frozenset(
+            {CoordinateSystem.WORLD, CoordinateSystem.HEAD, CoordinateSystem.FIDUCIALS}
+        )
 
     def _on_mesh_kind_changed(self, _index: int) -> None:
         """Follow the new mesh source with its canonical default path."""

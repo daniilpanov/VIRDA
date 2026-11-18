@@ -18,6 +18,7 @@ from virda.io.exporters.measurements import export_measurements
 from virda.io.exporters.nifti_copy import export_nifti_copy
 from virda.io.exporters.scalp_mesh import export_scalp_mesh
 from virda.io.exporters.segmentation import export_head_mask
+from virda.models.coordinates import CoordinateSystem
 from virda.models.electrode import Electrodes
 from virda.models.mri_volume import MRIVolume
 from virda_gui_new.dto.steps import BASE_MESH, ESE_MESH, LOCALIZATION, MESH_POSTPROCESSING, STEPS
@@ -88,7 +89,10 @@ def save_localization_inputs(
     other table.
     """
     if fiducial_rows:
-        export_fiducials(artifact_paths.fiducials(project), build_fiducials(fiducial_rows))
+        export_fiducials(
+            artifact_paths.fiducials(project),
+            build_fiducials(fiducial_rows, CoordinateSystem.WORLD),
+        )
     if table:
         export_measurements(artifact_paths.measurements(project), build_electrodes(table))
     else:
@@ -112,7 +116,9 @@ def save_localization(
     """
     if not fiducial_rows:
         raise ValueError("no fiducial rows; refusing to write an empty fiducials.json")
-    export_fiducials(artifact_paths.fiducials(project), build_fiducials(fiducial_rows))
+    export_fiducials(
+        artifact_paths.fiducials(project), build_fiducials(fiducial_rows, CoordinateSystem.WORLD)
+    )
     export_measurements(artifact_paths.measurements(project), build_electrodes(measurements))
     if any(electrode.scalp_coords is not None for electrode in electrodes.items):
         export_electrodes_scalp(artifact_paths.scalp_points(project), electrodes)

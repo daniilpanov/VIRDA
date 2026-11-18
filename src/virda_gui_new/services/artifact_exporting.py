@@ -124,7 +124,8 @@ def export_artifact(
     """Export one in-memory artifact to ``path`` and return it.
 
     ``frame`` is the target coordinate frame of the exported numbers
-    (ignored by ``measurements``, which carries no coordinates);
+    (ignored by ``measurements``, which carries no coordinates; the voxel
+    frame is not allowed for meshes, whose PLY has no frame metadata);
     ``mesh_kind`` selects the mesh source for the ``mesh`` kind;
     ``options`` are the localization settings the electrodes are
     localized with when the project holds no results yet.
@@ -176,7 +177,7 @@ def _export_electrodes(
         [_convert_electrode(electrode, frame, coordinates) for electrode in stored.items],
         calibrated_offset_shift_mm=stored.calibrated_offset_shift_mm,
     )
-    return export_electrodes(path, converted)
+    return export_electrodes(path, converted, frame)
 
 
 def _compute_results(manager: StepsManager, options: Stage3Config | None) -> Electrodes | None:
@@ -197,7 +198,7 @@ def _compute_results(manager: StepsManager, options: Stage3Config | None) -> Ele
     if not isinstance(points, LabeledPoints) or not isinstance(measurements, Electrodes):
         return None
     try:
-        fiducials = build_fiducials(_fiducial_rows(points))
+        fiducials = build_fiducials(_fiducial_rows(points), CoordinateSystem.WORLD)
     except ValueError:
         return None
     if options is None:
@@ -231,7 +232,10 @@ def _export_fiducials(
 
     The ``fiducials`` frame is not offered for fiducials themselves;
     head frame export is a plain centroid translation of the store's
-    world coordinates.
+    world coordinates. The written ``coordinate_system`` tag always
+    matches the numbers that were written: a head-frame export is tagged
+    ``head`` and is meant for external tools, not for re-import as a
+    project fiducials file (those accept only world and voxel).
     """
     if frame is CoordinateSystem.FIDUCIALS:
         raise ValueError(
@@ -246,7 +250,7 @@ def _export_fiducials(
         (label, coordinates.from_world(xyz, frame))
         for label, xyz in zip(points.labels, points.points, strict=True)
     ]
-    return export_fiducials(path, build_fiducials(rows))
+    return export_fiducials(path, build_fiducials(rows, frame))
 
 
 def _export_mesh(
@@ -261,8 +265,13 @@ def _export_mesh(
     ``base``/``postprocessed`` meshes go through ``export_scalp_mesh``
     (plain PLY, like the step savers), the ESE mesh through
     ``export_ese_mesh``; the exported copy keeps the source faces and
-    only its vertices are converted.
+    only its vertices are converted. PLY carries no frame metadata, so
+    the voxel frame is rejected instead of writing ambiguous indices.
     """
+    if frame is CoordinateSystem.VOXEL:
+        raise ValueError(
+            "Meshes cannot be exported in the voxel frame; choose world, head or fiducials."
+        )
     step_n, key = _MESH_CONTEXTS[mesh_kind]
     mesh = _context_item(manager, step_n, key)
     if not isinstance(mesh, Mesh):

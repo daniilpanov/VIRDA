@@ -5,8 +5,9 @@ name cells are read-only, only the XYZ cells are editable, and there
 are no add/remove row buttons. An "Empty" button clears the grid.
 
 The rows are kept in world coordinates and rendered in the current
-display frame; the collected rows come back in world coordinates and in
-the fixed NAS/LPA/RPA order.
+display frame (integer indices for voxel, millimetres otherwise); the
+collected rows come back in world coordinates and in the fixed
+NAS/LPA/RPA order.
 """
 
 from collections.abc import Mapping, Sequence
@@ -185,7 +186,10 @@ class FiducialsTable(QWidget):
         table = self._table
         table.blockSignals(True)
         for row, (name, xyz) in enumerate(zip(self._names, self._world, strict=True)):
-            cells = (name, *self._xyz_texts(None if xyz is None else self._display(xyz)))
+            cells = (
+                name,
+                *self._xyz_texts(None if xyz is None else self._display(xyz), self._frame),
+            )
             for column, text in enumerate(cells, start=1):
                 item = QTableWidgetItem(text)
                 if column == 1:
@@ -271,10 +275,17 @@ class FiducialsTable(QWidget):
         table.blockSignals(False)
 
     @staticmethod
-    def _xyz_texts(xyz: np.ndarray | None) -> tuple[str, str, str]:
-        """Displayed coordinate texts of one row (blank when unset)."""
+    def _xyz_texts(xyz: np.ndarray | None, system: CoordinateSystem) -> tuple[str, str, str]:
+        """Displayed coordinate texts of one row (blank when unset).
+
+        Voxel indices are shown as integers, the other frames keep their
+        compact millimetre format. Only the edited row is canonicalized
+        back to world, so showing rounded indices cannot shift the others.
+        """
         if xyz is None:
             return ("", "", "")
+        if system is CoordinateSystem.VOXEL:
+            return (f"{xyz[0]:.0f}", f"{xyz[1]:.0f}", f"{xyz[2]:.0f}")
         return (f"{xyz[0]:g}", f"{xyz[1]:g}", f"{xyz[2]:g}")
 
     def _text(self, row: int, column: int) -> str:

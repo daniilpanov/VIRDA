@@ -20,7 +20,8 @@ from tests.virda_gui_new.fixtures.steps import advance
 from virda.models.coordinates import CoordinateSystem
 from virda.models.electrode import Electrode, Electrodes
 from virda.models.mesh import Mesh
-from virda_gui_new.dto.steps import STEPS
+from virda.models.mri_volume import MRIVolume
+from virda_gui_new.dto.steps import NIFTI, STEPS
 from virda_gui_new.dto.viewer3d import LabeledPoints
 from virda_gui_new.services.artifact_exporting import (
     ExportKind,
@@ -38,6 +39,14 @@ _MESH = Mesh(
 )
 _ESE_MESH = Mesh(np.eye(3) * 10.0, np.array([[0, 1, 2]]))
 _CENTROID = np.array([7.5, 7.5, 7.5])
+_VOXEL_AFFINE = np.array(
+    [
+        [0.5, 0.0, 0.0, 10.0],
+        [0.0, 0.5, 0.0, -5.0],
+        [0.0, 0.0, 0.5, 3.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+)
 # World fiducials whose frame comes out axis-aligned: NAS at the origin,
 # right = +x, anterior = +y, up = +z.
 _WORLD_FIDUCIALS = np.array([[0.0, 100.0, 0.0], [-70.0, 0.0, 0.0], [70.0, 0.0, 0.0]])
@@ -85,6 +94,14 @@ def _make_manager(
 
 def _set_fiducials(manager: StepsManager) -> None:
     manager.set_global_item("fiducials", LabeledPoints(_WORLD_FIDUCIALS, _FIDUCIAL_LABELS))
+
+
+def _set_volume(manager: StepsManager) -> None:
+    manager.set_step_context_item(
+        NIFTI.index,
+        "volume",
+        MRIVolume(np.zeros((2, 2, 2)), _VOXEL_AFFINE, (0.5, 0.5, 0.5), ("R", "A", "S")),
+    )
 
 
 def _read_csv(path: Path) -> list[dict[str, str]]:
@@ -266,9 +283,10 @@ def test_export_fiducials_head_frame_subtracts_the_centroid(tmp_path: Path) -> N
         manager, ExportKind.FIDUCIALS, tmp_path / "fiducials.json", frame=CoordinateSystem.HEAD
     )
 
-    points = load_fiducial_points(path)
+    document = json.loads(path.read_text(encoding="utf-8"))
     expected = _WORLD_FIDUCIALS - _CENTROID
-    assert points.points.tolist() == expected.tolist()
+    assert [item["coordinates"] for item in document["fiducials"]] == expected.tolist()
+    assert [item["coordinate_system"] for item in document["fiducials"]] == ["head"] * 3
 
 
 def test_export_fiducials_in_fiducials_frame_is_rejected(tmp_path: Path) -> None:
@@ -289,7 +307,49 @@ def test_export_fiducials_missing_store_raises(tmp_path: Path) -> None:
         export_artifact(_make_manager(), ExportKind.FIDUCIALS, tmp_path / "f.json")
 
 
+# --- voxel frame ---
+
+
+def test_export_electrodes_voxel_frame_writes_indices(tmp_path: Path) -> None:
+    manager = _make_manager()
+    _set_volume(manager)
+
+    path = export_artifact(
+        manager, ExportKind.ELECTRODES, tmp_path / "electrodes.csv", frame=CoordinateSystem.VOXEL
+    )
+
+    row = _read_csv(path)[0]
+    assert row["coordinate_system"] == "voxel"
+    # World (10, 0, 0) -> voxel (0, 10, -6) through the inverse affine.
+    assert [float(row[axis]) for axis in ("ese_x", "ese_y", "ese_z")] == [0.0, 10.0, -6.0]
+    assert [float(row[axis]) for axis in ("scalp_x", "scalp_y", "scalp_z")] == [-20.0, 30.0, -6.0]
+
+
+def test_export_fiducials_voxel_frame_tags_voxel(tmp_path: Path) -> None:
+    manager = _make_manager()
+    _set_fiducials(manager)
+    _set_volume(manager)
+
+    path = export_artifact(
+        manager, ExportKind.FIDUCIALS, tmp_path / "fiducials.json", frame=CoordinateSystem.VOXEL
+    )
+
+    document = json.loads(path.read_text(encoding="utf-8"))
+    assert [item["coordinate_system"] for item in document["fiducials"]] == ["voxel"] * 3
+    assert document["fiducials"][0]["coordinates"] == [-20.0, 210.0, -6.0]
+
+
 # --- mesh ---
+
+
+def test_export_mesh_voxel_frame_is_rejected(tmp_path: Path) -> None:
+    manager = _make_manager()
+    _set_volume(manager)
+
+    with pytest.raises(ValueError, match="voxel frame"):
+        export_artifact(
+            manager, ExportKind.MESH, tmp_path / "mesh.ply", frame=CoordinateSystem.VOXEL
+        )
 
 
 def test_export_mesh_head_frame_writes_shifted_ply(tmp_path: Path) -> None:

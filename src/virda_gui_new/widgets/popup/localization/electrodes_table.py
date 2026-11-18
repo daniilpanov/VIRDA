@@ -31,8 +31,13 @@ def _fmt(value: float | None) -> str:
     return "" if value is None else f"{value:.2f}"
 
 
-def _coord_text(coords: np.ndarray | None, axis: int) -> str:
-    return "" if coords is None or coords.shape != (3,) else f"{coords[axis]:.2f}"
+def _coord_text(coords: np.ndarray | None, axis: int, system: CoordinateSystem) -> str:
+    """One coordinate cell: integer voxel indices, millimetres otherwise."""
+    if coords is None or coords.shape != (3,):
+        return ""
+    if system is CoordinateSystem.VOXEL:
+        return f"{coords[axis]:.0f}"
+    return f"{coords[axis]:.2f}"
 
 
 class ElectrodesTable(QWidget):
@@ -42,8 +47,9 @@ class ElectrodesTable(QWidget):
     :class:`Electrodes` model: coordinates and residuals at two decimals
     (missing values blank), the flag as ``yes``/``no``. The coordinates
     are rendered in the current display frame while the model keeps its
-    world-canonical coordinates; residuals are distances and do not
-    depend on the frame.
+    world-canonical coordinates; the voxel frame shows integer indices,
+    the other frames millimetres at two decimals. Residuals are distances
+    and do not depend on the frame.
     """
 
     def __init__(self, converter: Geometry | None = None, parent: QWidget | None = None) -> None:
@@ -93,12 +99,12 @@ class ElectrodesTable(QWidget):
             scalp = self._display(electrode.scalp_coords)
             texts = (
                 electrode.electrode_id or "",
-                _coord_text(ese, 0),
-                _coord_text(ese, 1),
-                _coord_text(ese, 2),
-                _coord_text(scalp, 0),
-                _coord_text(scalp, 1),
-                _coord_text(scalp, 2),
+                _coord_text(ese, 0, self._frame),
+                _coord_text(ese, 1, self._frame),
+                _coord_text(ese, 2, self._frame),
+                _coord_text(scalp, 0, self._frame),
+                _coord_text(scalp, 1, self._frame),
+                _coord_text(scalp, 2, self._frame),
                 _fmt(electrode.residual_error),
                 "yes" if electrode.flagged else "no",
             )
