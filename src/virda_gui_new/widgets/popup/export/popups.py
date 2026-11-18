@@ -68,16 +68,16 @@ class ElectrodesExportPopup(ExportPopupBase):
 
 
 class FiducialsExportPopup(ExportPopupBase):
-    """Export the global-store fiducials in the head or world frame.
+    """Export the global-store fiducials in the world, head or voxel frame.
 
     The ``fiducials`` frame is permanently greyed out: fiducials define
-    that frame, so they are only offered relative to head or world.
+    that frame, so they are only offered relative to another frame.
     """
 
     _TITLE = "Export fiducials"
     _HINT = (
         "Exports the current fiducials from the localization popup store "
-        "in the chosen frame (head or world only)."
+        "in the chosen frame (world, head or voxel)."
     )
 
     def __init__(
