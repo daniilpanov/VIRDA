@@ -105,6 +105,10 @@ class StepPopupBase(QWidget):
         except Exception as exc:  # noqa: BLE001 - any hook error is user-facing
             self._show_failure(str(exc))
             return
+
+        if self._busy:
+            return
+
         self._busy = True
         self._run_button.setEnabled(False)
         self._hint_label.setText("Running...")
