@@ -22,12 +22,10 @@ class FrameSelector(QComboBox):
     ``frames`` limits the frames the combo offers: the fiducials table
     is shown in the world and the head frame only, because the
     fiducials frame is defined by the very rows the table shows.
-    :meth:`set_frame_enabled` enables/disables a frame's item (e.g. the
-    fiducials frame is unavailable while fewer than three fiducials have
-    coordinates); picking an enabled frame emits :attr:`frameChanged`
-    with the :class:`CoordinateSystem`, which the popup forwards to the
-    table it controls. Changing availability never changes the selection
-    by itself -- the popup decides on a fallback.
+    :meth:`set_frame_enabled` enables/disables a frame's item; picking
+    an enabled frame emits :attr:`frameChanged` with the
+    :class:`CoordinateSystem`. Changing availability never changes the
+    selection by itself.
     """
 
     frameChanged = Signal(CoordinateSystem)  # noqa: N815 - Qt signal API

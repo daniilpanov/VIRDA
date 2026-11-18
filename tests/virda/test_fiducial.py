@@ -8,32 +8,27 @@ import pytest
 
 from tests.helpers.fiducials import make_fiducials
 from virda.io.fiducial_helpers import load_fiducials, save_fiducials
+from virda.models.coordinates import CoordinateSystem, Point
 from virda.models.coordsystem import Coordsystem
 from virda.models.fiducial import (
     DefinitionMethod,
     Fiducial,
-    FiducialCoordinateSystem,
     Fiducials,
 )
 
 
-class TestFiducialModel:
-    def test_fiducial_validates_coordinates_shape(self) -> None:
-        with pytest.raises(ValueError, match=r"Coordinates must be \(3,\)"):
-            Fiducial(
-                fiducial_id="NAS",
-                name="Nasion",
-                coordinates=np.array([0.0, 88.0]),
-                coordinate_system="world",
-            )
+def _world_point(x: float, y: float, z: float) -> Point:
+    """A point in the world frame."""
+    return Point(x=x, y=y, z=z, system=CoordinateSystem.WORLD)
 
-    def test_fiducial_validates_coordinate_system(self) -> None:
-        with pytest.raises(ValueError, match="Invalid coordinate_system"):
+
+class TestFiducialModel:
+    def test_fiducial_validates_the_point(self) -> None:
+        with pytest.raises(ValueError, match="point must be a Point"):
             Fiducial(
                 fiducial_id="NAS",
                 name="Nasion",
-                coordinates=np.array([0.0, 88.0, -10.0]),
-                coordinate_system=cast(FiducialCoordinateSystem, "nonsense"),
+                point=cast(Point, np.array([0.0, 88.0, -10.0])),
             )
 
     def test_fiducial_validates_definition_method(self) -> None:
@@ -41,18 +36,17 @@ class TestFiducialModel:
             Fiducial(
                 fiducial_id="NAS",
                 name="Nasion",
-                coordinates=np.array([0.0, 88.0, -10.0]),
-                coordinate_system="world",
+                point=_world_point(0.0, 88.0, -10.0),
                 definition_method=cast(DefinitionMethod, "guessed"),
             )
 
     def test_fiducials_require_unique_ids(self) -> None:
-        coordinates = np.array([0.0, 88.0, -10.0])
+        point = _world_point(0.0, 88.0, -10.0)
         with pytest.raises(ValueError, match="must be unique"):
             Fiducials(
                 items=[
-                    Fiducial("NAS", "Nasion", coordinates, "world"),
-                    Fiducial("NAS", "Nasion", coordinates, "world"),
+                    Fiducial("NAS", "Nasion", point),
+                    Fiducial("NAS", "Nasion", point),
                 ]
             )
 
@@ -60,8 +54,7 @@ class TestFiducialModel:
         fiducial = Fiducial(
             fiducial_id="NAS",
             name="Nasion",
-            coordinates=np.array([0.0, 88.0, -10.0]),
-            coordinate_system="world",
+            point=_world_point(0.0, 88.0, -10.0),
         )
         assert fiducial.weight == 1.0
 
@@ -70,8 +63,7 @@ class TestFiducialModel:
             Fiducial(
                 fiducial_id="NAS",
                 name="Nasion",
-                coordinates=np.array([0.0, 88.0, -10.0]),
-                coordinate_system="world",
+                point=_world_point(0.0, 88.0, -10.0),
                 weight=0.0,
             )
 
@@ -94,8 +86,8 @@ class TestFiducialHelpers:
         assert restored.ids == ["NAS", "LPA"]
         nas = restored.get("NAS")
         assert nas is not None
-        assert nas.coordinates.tolist() == [0.0, 88.0, -10.0]
-        assert nas.coordinate_system == "world"
+        assert nas.point.as_array().tolist() == [0.0, 88.0, -10.0]
+        assert nas.point.system is CoordinateSystem.WORLD
         assert nas.definition_method == "manual"
         lpa = restored.get("LPA")
         assert lpa is not None
@@ -161,8 +153,8 @@ class TestFiducialHelpers:
         assert fiducials.ids == ["NAS", "LPA", "RPA"]
         nas = fiducials.get("NAS")
         assert nas is not None
-        assert nas.coordinates.tolist() == [3.38, 94.66, 32.26]
-        assert nas.coordinate_system == "world"
+        assert nas.point.as_array().tolist() == [3.38, 94.66, 32.26]
+        assert nas.point.system is CoordinateSystem.WORLD
         assert nas.definition_method == "imported"
 
     def test_load_fiducials_converts_metres_to_mm(self, tmp_path: Path) -> None:
@@ -184,7 +176,7 @@ class TestFiducialHelpers:
 
         nas = fiducials.get("NAS")
         assert nas is not None
-        assert nas.coordinates.tolist() == pytest.approx([10.0, 90.0, 30.0])
+        assert nas.point.as_array().tolist() == pytest.approx([10.0, 90.0, 30.0])
 
     def test_load_fiducials_defaults_to_metres_when_units_missing(self, tmp_path: Path) -> None:
         path = tmp_path / "coordsystem.json"
@@ -204,7 +196,7 @@ class TestFiducialHelpers:
 
         nas = fiducials.get("NAS")
         assert nas is not None
-        assert nas.coordinates.tolist() == pytest.approx([10.0, 90.0, 30.0])
+        assert nas.point.as_array().tolist() == pytest.approx([10.0, 90.0, 30.0])
 
     def test_load_fiducials_rejects_unknown_units(self, tmp_path: Path) -> None:
         path = tmp_path / "coordsystem.json"

@@ -36,20 +36,14 @@ def _coord_text(coords: np.ndarray | None, axis: int) -> str:
 
 
 class ElectrodesTable(QWidget):
-    """Display of the localized electrodes; the popup keeps it read-only.
+    """Read-only grid of the localized electrodes.
 
-    :meth:`show_electrodes` re-renders the whole grid from an
+    :meth:`show_electrodes` re-renders the grid from an
     :class:`Electrodes` model: coordinates and residuals at two decimals
-    (missing values blank), the flag as ``yes``/``no``. The table takes
-    no editing input.
-
-    The displayed coordinates are rendered in the current display frame
-    (default ``world``; the popup selects ``head`` when available) while
-    the stored model keeps its world-canonical coordinates --
-    :meth:`set_display_frame` only re-renders. Residuals are distances,
-    so they do not depend on the frame. Unavailable frames (no
-    converter, or the converter cannot serve the frame) fall back to
-    ``world`` rendering.
+    (missing values blank), the flag as ``yes``/``no``. The coordinates
+    are rendered in the current display frame while the model keeps its
+    world-canonical coordinates; residuals are distances and do not
+    depend on the frame.
     """
 
     def __init__(self, converter: Geometry | None = None, parent: QWidget | None = None) -> None:

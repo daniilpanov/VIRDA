@@ -458,7 +458,7 @@ def test_concrete_popup_prefills_fiducials_from_store(qapp, popups) -> None:
     assert [name for name, _xyz in rows] == ["Nasion", "LPA"]
     assert rows[0][1].tolist() == [0.0, 0.0, 1.0]
     assert rows[1][1].tolist() == [1.0, 0.0, 0.0]
-    name_item = popup._fiducials_table._table.item(0, 0)
+    name_item = popup._fiducials_table._table.item(0, 1)
     assert name_item is not None
     assert name_item.text() == "Nasion"
 
@@ -627,6 +627,51 @@ def _fiducials_item_enabled(selector: FrameSelector) -> bool:
     return bool(model.item(index).isEnabled())
 
 
+def test_concrete_popup_pick_button_asks_the_viewer(qapp, popups) -> None:
+    """The Pick button asks the 3D view for a point of that slot."""
+    from PySide6.QtWidgets import QPushButton
+
+    popup = LocalizationPopup(LOCALIZATION, _make_manager())
+    popups.append(popup)
+    events: list[str] = []
+    popup.pickRequested.connect(lambda slot: events.append(slot))
+
+    button = popup._fiducials_table._table.cellWidget(0, 5)
+    assert isinstance(button, QPushButton)
+    button.click()
+
+    assert events == ["NAS"]
+
+
+def test_concrete_popup_pick_button_stops_the_same_slot(qapp, popups) -> None:
+    """Picking the same slot twice leaves the picking mode."""
+    from PySide6.QtWidgets import QPushButton
+
+    popup = LocalizationPopup(LOCALIZATION, _make_manager())
+    popups.append(popup)
+    cancelled: list[int] = []
+    popup.pickCancelled.connect(lambda: cancelled.append(1))
+
+    button = popup._fiducials_table._table.cellWidget(0, 5)
+    assert isinstance(button, QPushButton)
+    button.click()
+    button.click()
+
+    assert cancelled == [1]
+
+
+def test_concrete_popup_writes_the_picked_point(qapp, popups) -> None:
+    """A picked point lands in the row of its slot."""
+    popup = LocalizationPopup(LOCALIZATION, _make_manager())
+    popups.append(popup)
+
+    popup.set_picked_point("NAS", np.array([1.0, 2.0, 3.0]))
+
+    rows = popup.collect_fiducial_rows()
+    assert [name for name, _xyz in rows] == ["NAS"]
+    assert rows[0][1].tolist() == [1.0, 2.0, 3.0]
+
+
 def test_concrete_popup_frame_selectors_default_to_head(qapp, popups) -> None:
     """Both selectors default to head; head is available (scalp mesh set)."""
     popup = LocalizationPopup(LOCALIZATION, _make_manager())
@@ -713,7 +758,7 @@ def test_localized_save_is_world_canonical_in_head_display(
 
     assert popup._fiducials_frames.frame() == CoordinateSystem.HEAD
     assert [
-        cast("QTableWidgetItem", popup._fiducials_table._table.item(0, c)).text() for c in (1, 2, 3)
+        cast("QTableWidgetItem", popup._fiducials_table._table.item(0, c)).text() for c in (2, 3, 4)
     ] == [
         "-7.5",
         "92.5",
@@ -721,8 +766,8 @@ def test_localized_save_is_world_canonical_in_head_display(
     ]
 
     popup._measurements_table.add_row()
-    for column, text in enumerate(("A", "LPA", "10")):
-        popup._measurements_table._table.setItem(0, column, QTableWidgetItem(text))
+    popup._measurements_table._table.setItem(0, 0, QTableWidgetItem("A"))
+    popup._measurements_table._table.setItem(0, 2, QTableWidgetItem("10"))
 
     _settle(qapp, popup, "Localized 1 electrode.")
 
@@ -759,7 +804,7 @@ def test_concrete_popup_blocked_states(qapp, popups, monkeypatch) -> None:
 
     assert popup._hint_label.text() == "Blocked: not enough fiducials (need 3)."
     for row, coords in enumerate(("0 0 1", "1 0 0", "-1 0 0")):
-        for column, text in enumerate(coords.split(), start=1):
+        for column, text in enumerate(coords.split(), start=2):
             popup._fiducials_table._table.setItem(row, column, QTableWidgetItem(text))
     assert popup._hint_label.text() == "Blocked: no measurements."
     popup._measurements_table.add_row()
@@ -783,16 +828,13 @@ def test_concrete_popup_live_flow(qapp, popups, monkeypatch) -> None:
     popups.append(popup)
 
     for row, coords in enumerate(("0 0 1", "1 0 0", "-1 0 0")):
-        for column, text in enumerate(coords.split(), start=1):
+        for column, text in enumerate(coords.split(), start=2):
             popup._fiducials_table._table.setItem(row, column, QTableWidgetItem(text))
     popup._measurements_table.add_row()
-    for row, (electrode, fiducial, distance) in enumerate(
-        (("A", "NAS", "10"), ("A", "LPA", "11"), ("A", "RPA", "12"))
-    ):
-        if row:
-            popup._measurements_table.add_row()
-        for column, text in enumerate((electrode, fiducial, distance)):
-            popup._measurements_table._table.setItem(row, column, QTableWidgetItem(text))
+    popup._measurements_table._table.setItem(0, 0, QTableWidgetItem("A"))
+    popup._measurements_table._table.setItem(0, 1, QTableWidgetItem("10"))
+    popup._measurements_table._table.setItem(0, 2, QTableWidgetItem("11"))
+    popup._measurements_table._table.setItem(0, 3, QTableWidgetItem("12"))
 
     _settle(qapp, popup, "Localized 1 electrode.")
 
@@ -847,10 +889,10 @@ def test_popup_prefills_the_measurements_from_the_global_store(qapp, popups) -> 
     popups.append(popup)
 
     grid = popup._measurements_table._table
-    assert grid.rowCount() == 2
+    assert grid.rowCount() == 1
     assert _cell_text(grid, 0, 0) == "A"
-    assert _cell_text(grid, 0, 1) == "LPA"
-    assert _cell_text(grid, 0, 2) == "10"
+    assert _cell_text(grid, 0, 2) == "10"  # the LPA column
+    assert _cell_text(grid, 0, 3) == "12"  # the RPA column
 
 
 def test_popup_prefills_the_electrodes_from_the_seeded_points(qapp, popups, monkeypatch) -> None:
@@ -941,6 +983,59 @@ def test_incomplete_measurement_edit_does_not_schedule_localization(qapp, popups
     popup._on_measurement_edited("A")
 
     assert not _run_pending(popup)
+
+
+def test_a_changed_cell_recomputes_only_its_electrode(qapp, popups, monkeypatch) -> None:
+    """A changed distance moves its own electrode, not the whole set."""
+    calls: list[_LocalizeCall] = []
+    _patch_localize(
+        monkeypatch,
+        calls,
+        Electrodes([Electrode("A", {"LPA": 10.0}, scalp_coords=np.zeros(3))]),
+    )
+    manager = _make_manager()
+    popup = LocalizationPopup(LOCALIZATION, manager)
+    popups.append(popup)
+    popup._fiducials_table.set_rows(_FIDUCIAL_ROWS)
+    popup._measurements_table.set_rows(_TWO_ELECTRODES)
+    popup._calibrate_box.setChecked(False)
+    calls.clear()
+
+    popup._measurements_table._table.setItem(0, 1, QTableWidgetItem("11"))
+    _settle(qapp, popup, "Localized 1 electrode.")
+
+    assert len(calls) == 1
+    _fiducials, electrodes = calls[0]
+    assert [item.electrode_id for item in electrodes.items] == ["A"]
+
+
+def test_a_removed_row_drops_the_electrode_without_a_recompute(qapp, popups, monkeypatch) -> None:
+    """A removed electrode leaves the results, and nothing is recomputed."""
+    calls: list[_LocalizeCall] = []
+    payload = Electrodes(
+        [
+            Electrode("A", {"NAS": 10.0}, scalp_coords=np.zeros(3)),
+            Electrode("B", {"NAS": 11.0}, scalp_coords=np.ones(3)),
+        ]
+    )
+    _patch_localize(monkeypatch, calls, payload)
+    manager = _make_manager()
+    popup = LocalizationPopup(LOCALIZATION, manager)
+    popups.append(popup)
+    popup._fiducials_table.set_rows(_FIDUCIAL_ROWS)
+    popup._measurements_table.set_rows(_TWO_ELECTRODES)
+    popup._on_inputs_changed()
+    _settle(qapp, popup, "Localized 2 electrodes.")
+    calls.clear()
+
+    popup._measurements_table._table.setItem(0, 0, QTableWidgetItem("A"))
+    popup._measurements_table._table.selectRow(1)
+    popup._measurements_table.remove_selected_rows()
+
+    assert calls == []
+    results = manager.get_step_context_item(LOCALIZATION.index, "electrodes")
+    assert isinstance(results, Electrodes)
+    assert results.ids == ["A"]
 
 
 def test_relocalize_button_is_disabled_without_fiducials(qapp, popups, monkeypatch) -> None:

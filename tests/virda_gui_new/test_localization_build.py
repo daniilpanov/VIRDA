@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 
+from virda.models.coordinates import CoordinateSystem
 from virda_gui_new.services.localization.build import (
     blocked_reason,
     build_electrodes,
@@ -17,14 +18,22 @@ def test_build_fiducials_happy() -> None:
     fiducials = build_fiducials(rows)
 
     assert [(f.fiducial_id, f.name) for f in fiducials.items] == [
-        ("Nasion", "Nasion"),
+        ("NAS", "Nasion"),
         ("LPA", "LPA"),
     ]
     first = fiducials.items[0]
-    assert first.coordinates.shape == (3,)
-    assert first.coordinate_system == "world"
+    assert first.point.as_array().shape == (3,)
+    assert first.point.system is CoordinateSystem.WORLD
     assert first.definition_method == "manual"
     assert first.weight == 1.0
+
+
+def test_build_fiducials_keeps_unknown_names_as_ids() -> None:
+    rows = [("Extra", np.zeros(3))]
+
+    fiducials = build_fiducials(rows)
+
+    assert fiducials.items[0].fiducial_id == "Extra"
 
 
 def test_build_fiducials_rejects_empty_name() -> None:

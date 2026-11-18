@@ -22,24 +22,12 @@ class StepsManager:
     """Tracks one context dict per pipeline step plus a global store.
 
     Step contexts hold step-derived results; the global store holds
-    project-level inputs (currently only fiducials) that survive
-    ``invalidate_steps_after``. Step 0's empty context is created at
-    construction, so ``get_current_step()`` is always >= 0 and step 0
-    accepts writes immediately. Context accessors and
-    ``invalidate_steps_after`` raise ``ValueError`` for step numbers
-    outside ``[0, current step]``; ``is_step_done`` follows the same rule
-    and additionally returns ``False`` for valid steps that have no
-    ``required_keys`` entry. Listeners are pull-model callbacks of no
-    arguments, re-reading the manager after each mutation.
-
-    ``next_step`` refuses to leave an unfinished step: every required
-    key of the current step must be present in its context, or it
-    raises ``ValueError``. A step without required keys (the live
-    localization step) never blocks the advance. The invariant behind
-    the rule: every step before the current one is finished.
-
-    :attr:`geometry` is the app-wide geometry service: it converts
-    between the coordinate frames over the current project state.
+    project-level inputs that survive ``invalidate_steps_after``. Step 0
+    starts empty, so ``get_current_step()`` is always >= 0. Context
+    accessors raise ``ValueError`` for step numbers outside
+    ``[0, current step]``, and ``next_step`` refuses to leave an
+    unfinished step. :attr:`geometry` converts between the coordinate
+    frames over the current state.
     """
 
     def __init__(self, required_keys_by_step: Sequence[tuple[str, ...]] = ()) -> None:

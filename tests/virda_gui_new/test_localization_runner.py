@@ -10,6 +10,7 @@ from typing import cast
 import numpy as np
 import pytest
 
+from virda.models.coordinates import CoordinateSystem, Point
 from virda.models.electrode import Electrode, Electrodes
 from virda.models.fiducial import Fiducial, Fiducials
 from virda.models.mesh import Mesh
@@ -18,7 +19,9 @@ from virda_gui_new.services.localization import LiveLocalizationRunner
 _ESE = Mesh(np.zeros((4, 3)), np.zeros((1, 3), dtype=int))
 _SCALP = Mesh(np.zeros((3, 3)), np.zeros((1, 3), dtype=int))
 _NORMALS = np.ones((4, 3))
-_FIDUCIALS = Fiducials([Fiducial("a", "a", np.zeros(3), "world")])
+_FIDUCIALS = Fiducials(
+    [Fiducial("a", "a", Point(x=0.0, y=0.0, z=0.0, system=CoordinateSystem.WORLD))]
+)
 _ELECTRODES = Electrodes([Electrode(electrode_id="A", measured_distances={"a": 1.0})])
 
 
@@ -115,3 +118,74 @@ def test_stop_silences_pending_submit(qapp, runners, monkeypatch) -> None:
     qapp.processEvents()
 
     assert results == []
+
+
+def test_busy_tracks_a_successful_run(qapp, runners, monkeypatch) -> None:
+    busy: list[bool] = []
+    monkeypatch.setattr(
+        "virda_gui_new.services.localization.runner.localize_electrodes",
+        lambda *_args, **_kw: Electrodes([]),
+    )
+    runner = _make_runner(runners)
+    runner.busyChanged.connect(busy.append)
+
+    runner.submit(_FIDUCIALS, _ELECTRODES)
+    _pump(qapp, 2.0)
+
+    # One submit schedules one debounced run: busy turns on once, off once.
+    assert busy == [True, False]
+
+
+def test_busy_tracks_a_failed_run(qapp, runners, monkeypatch) -> None:
+    busy: list[bool] = []
+    failures: list[str] = []
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("no fiducials on surface")
+
+    monkeypatch.setattr("virda_gui_new.services.localization.runner.localize_electrodes", boom)
+    runner = _make_runner(runners)
+    runner.busyChanged.connect(busy.append)
+    runner.failed.connect(failures.append)
+
+    runner.submit(_FIDUCIALS, _ELECTRODES)
+    _pump(qapp, 2.0)
+
+    assert failures == ["no fiducials on surface"]
+    assert busy == [True, False]
+
+
+def test_busy_stays_on_when_a_result_submits_the_next_run(qapp, runners, monkeypatch) -> None:
+    """A listener that submits from ``localized`` keeps the busy state.
+
+    The debounce of the new run is already armed when the previous
+    result lands, so no ``False`` slips between the two runs.
+    """
+    busy: list[bool] = []
+    monkeypatch.setattr(
+        "virda_gui_new.services.localization.runner.localize_electrodes",
+        lambda *_args, **_kw: Electrodes([]),
+    )
+    runner = _make_runner(runners)
+    runner.busyChanged.connect(busy.append)
+    runner.localized.connect(lambda _result: runner.submit(_FIDUCIALS, _ELECTRODES))
+
+    runner.submit(_FIDUCIALS, _ELECTRODES)
+    _pump(qapp, 2.0)
+
+    assert busy == [True]
+
+
+def test_stop_releases_the_busy_state(qapp, runners, monkeypatch) -> None:
+    busy: list[bool] = []
+    monkeypatch.setattr(
+        "virda_gui_new.services.localization.runner.localize_electrodes",
+        lambda *_args, **_kw: Electrodes([]),
+    )
+    runner = _make_runner(runners)
+    runner.busyChanged.connect(busy.append)
+
+    runner.submit(_FIDUCIALS, _ELECTRODES)
+    runner.stop()
+
+    assert busy == [True, False]

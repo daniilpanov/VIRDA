@@ -5,6 +5,7 @@ from typing import Any, Final
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
 
+from virda.models.coordinates import CoordinateSystem, Point
 from virda.models.fiducial import Fiducial, Fiducials, match_fiducial_name
 
 #: Conversion factors to millimetres for supported ``*CoordinateUnits`` values.
@@ -73,14 +74,20 @@ class Coordsystem(BaseModel):
         are scaled automatically; any other unit is rejected.
         """
         unit_scale = self.mri_unit_scale_mm()
-        items = [
-            Fiducial(
-                fiducial_id=match_fiducial_name(label) or label,
-                name=label,
-                coordinates=np.asarray(coordinate.mri, dtype=np.float64) * unit_scale,
-                coordinate_system="world",
-                definition_method="imported",
+        items = []
+        for label, coordinate in self.fiducials_coordinates.items():
+            coords = np.asarray(coordinate.mri, dtype=np.float64) * unit_scale
+            items.append(
+                Fiducial(
+                    fiducial_id=match_fiducial_name(label) or label,
+                    name=label,
+                    point=Point(
+                        x=float(coords[0]),
+                        y=float(coords[1]),
+                        z=float(coords[2]),
+                        system=CoordinateSystem.WORLD,
+                    ),
+                    definition_method="imported",
+                )
             )
-            for label, coordinate in self.fiducials_coordinates.items()
-        ]
         return Fiducials(items=items)

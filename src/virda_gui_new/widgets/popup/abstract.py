@@ -4,6 +4,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QLabel, QPushButton, QVBoxLayout, QWidget
 
@@ -16,27 +17,19 @@ from virda_gui_new.services.task_runner import TaskRunner
 class StepPopupBase(QWidget):
     """Shared lifecycle for a step popup: form, run, apply, advance.
 
-    Subclasses add option widgets to ``self._form_layout`` in
-    ``build_form``, return the heavy zero-arg work callable from
-    ``_collect_run`` and write context entries from the ready result in
-    ``_apply_result``. A Run click collects the work callable (a hook
-    exception fails immediately) and runs it on this popup's own
-    :class:`TaskRunner`; while in flight the Run button is disabled and the
-    hint label shows ``"Running..."``. The runner retires superseded runs
-    itself, so results are never delivered stale. On success
-    ``_apply_result`` runs on the GUI thread, then the manager advances
-    when this step is still current and holds its required artifacts; a
-    step that finished without them keeps the pipeline where it is and
-    says so in the hint. The hint shows ``"Done."`` and
-    ``completed`` carries the step index, which is also the failure payload
-    of ``failed``, whose message the hint shows. ``shutdown`` stops any
-    in-flight run before the host closes the popup. ``project`` is the
-    open project directory; popups that persist their outputs hand it to
-    the artifact savers (``None`` keeps save-free runs, as in tests).
+    Subclasses add option widgets in ``build_form``, return the heavy
+    zero-arg work callable from ``_collect_run`` and write context entries
+    from the ready result in ``_apply_result``. A Run click runs the work
+    on the popup's own :class:`TaskRunner`; the runner retires superseded
+    runs itself, so results are never delivered stale. A step that marks
+    points on a mesh asks for them with ``pickRequested`` and takes them
+    back through ``set_picked_point``.
     """
 
     completed = Signal(int)  # noqa: N815
     failed = Signal(str)
+    pickRequested = Signal(str)  # noqa: N815 - the slot to pick
+    pickCancelled = Signal()  # noqa: N815 - stop picking
 
     def __init__(
         self,
@@ -98,8 +91,11 @@ class StepPopupBase(QWidget):
             self._hint_label.setText(f"Could not save the step configuration: {error}")
 
     def shutdown(self) -> None:
-        """Stop any in-flight run; called by the host before closing."""
+        """Stop any in-flight run."""
         self._runner.stop()
+
+    def set_picked_point(self, slot: str, point: np.ndarray) -> None:
+        """Take a point picked in the 3D view; steps without a picker ignore it."""
 
     def _on_run(self) -> None:
         if self._busy:

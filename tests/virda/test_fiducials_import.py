@@ -37,7 +37,9 @@ class TestImportFiducialsProjectFormat:
 
         assert isinstance(fiducials, Fiducials)
         assert [f.fiducial_id for f in fiducials.items] == ["NAS", "LPA"]
-        np.testing.assert_array_almost_equal(fiducials.items[0].coordinates, [0.0, 88.0, -10.0])
+        np.testing.assert_array_almost_equal(
+            fiducials.items[0].point.as_array(), [0.0, 88.0, -10.0]
+        )
         assert fiducials.items[0].definition_method == "manual"
 
     def test_default_weight_is_one(self, tmp_path: Path) -> None:
@@ -67,7 +69,9 @@ class TestImportFiducialsCoordsystem:
 
         assert [f.fiducial_id for f in fiducials.items] == ["NAS", "LPA"]
         assert fiducials.items[0].definition_method == "imported"
-        np.testing.assert_array_almost_equal(fiducials.items[0].coordinates, [0.0, 88.0, -10.0])
+        np.testing.assert_array_almost_equal(
+            fiducials.items[0].point.as_array(), [0.0, 88.0, -10.0]
+        )
 
     def test_metre_units_are_scaled(self, tmp_path: Path) -> None:
         data = {
@@ -81,7 +85,9 @@ class TestImportFiducialsCoordsystem:
 
         fiducials = import_fiducials(path)
 
-        np.testing.assert_array_almost_equal(fiducials.items[0].coordinates, [0.0, 88.0, -10.0])
+        np.testing.assert_array_almost_equal(
+            fiducials.items[0].point.as_array(), [0.0, 88.0, -10.0]
+        )
 
 
 class TestImportFiducialsErrors:

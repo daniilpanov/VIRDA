@@ -137,6 +137,19 @@ def test_collect_hook_exception_fails_immediately(qapp, manager, popups) -> None
     assert popup._run_button.isEnabled()
 
 
+class _StubViewer:
+    """Stand-in for the 3D viewer the dispatcher connects a popup to."""
+
+    def __init__(self) -> None:
+        self.picking: str | None = None
+
+    def start_surface_picking(self, slot: str) -> None:
+        self.picking = slot
+
+    def stop_surface_picking(self) -> None:
+        self.picking = None
+
+
 class _Host:
     """No-op stand-in for the dispatcher state a :class:`MainWindow` holds."""
 
@@ -147,6 +160,9 @@ class _Host:
         self._popup_factories: dict[int, Callable[[], StepPopupBase]] = {}
         self._popup_windows: dict[int, QMainWindow] = {}
         self._popups: dict[int, StepPopupBase] = {}
+        # The dispatcher wires the popup to the viewer: the stub only
+        # needs the two methods it calls.
+        self._viewer3d = _StubViewer()
 
     def _log(self, message: str) -> None:
         self.logs.append(message)

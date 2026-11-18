@@ -5,7 +5,14 @@ from typing import Any
 
 import numpy as np
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QCheckBox, QDoubleSpinBox, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QDoubleSpinBox,
+    QLabel,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from virda.models.electrode import Electrode, Electrodes
 from virda.models.mesh import Mesh, Normals
@@ -128,26 +135,16 @@ def localization_options_payload(options: Stage3Config) -> dict[str, Any]:
 
 
 class LocalizationPopupBase(StepPopupBase):
-    """Base popup for the live localization step.
+    """Base of the live localization step.
 
-    The Run button is hidden: edits re-read the table hooks
-    (``collect_fiducial_rows`` / ``collect_measurement_table``) and, when
-    enough inputs exist, submit a debounced background run through a
-    :class:`LiveLocalizationRunner`; results land in the step-4 context
-    as ``electrodes``, the current fiducial table rows are mirrored
-    into the manager's global ``fiducials`` store and the current
-    measurement table into its global ``measurements`` store (both
-    ready models for the export popups). Geometry comes from the step-3
-    context (with a step-2 mesh or step-1 scalp surface fallback) at
-    construction; without it the hint shows the precondition and no
-    runner is created. Status text flows through the base hint label and
-    the ``on_status`` hook for subclasses.
-
-    The measurements drive the recompute: a changed row recomputes that
-    electrode alone, a changed electrode set recomputes all of them. The
-    tables stay editable at all times -- only the computation waits for
-    the fiducials -- and the "Re-localization" button triggers a full
-    recompute of the current tables.
+    The Run button is hidden: edits re-read the table hooks and, when
+    enough inputs exist, submit a debounced background run; the results
+    land in the step-4 context as ``electrodes``, the fiducial rows in
+    the global ``fiducials`` store and the measurements in the global
+    ``measurements`` store. A changed row recomputes that electrode
+    alone, a changed electrode set recomputes all of them, and the
+    "Re-localization" button triggers a full recompute. The step runs
+    when the manager holds its inputs; the hint names the ones it misses.
     """
 
     def __init__(
@@ -162,6 +159,8 @@ class LocalizationPopupBase(StepPopupBase):
         # attribute must exist from the start: build_form() prefills the
         # fiducial table, and the prefill schedules an input change.
         self._localization_runner: LiveLocalizationRunner | None = None
+        # Input changes during prefill query this before the runner exists.
+        self._localization_busy = False
         self._pending_scope: str | None = None
         self._relocalize_button: QPushButton | None = None
         # The geometry is read after the form is built, but the
@@ -204,6 +203,7 @@ class LocalizationPopupBase(StepPopupBase):
             )
             self._localization_runner.localized.connect(self._on_localized)
             self._localization_runner.failed.connect(self._on_run_failed)
+            self._localization_runner.busyChanged.connect(self._on_localization_busy)
             # The step does not run on its own: the first edit (or the
             # re-localization button) starts it.
             reason = self._blocked_reason()
@@ -228,12 +228,20 @@ class LocalizationPopupBase(StepPopupBase):
         self._threshold_spin.setValue(self._options.residual_threshold_mm)
         layout.addWidget(self._threshold_spin)
 
+        layout.addWidget(QLabel("Fiducial tolerance (mm)"))
+        self._tolerance_spin = QDoubleSpinBox(self)
+        self._tolerance_spin.setRange(0.0, 50.0)
+        self._tolerance_spin.setDecimals(2)
+        self._tolerance_spin.setValue(self._options.fiducial_tolerance_mm)
+        layout.addWidget(self._tolerance_spin)
+
         self._relocalize_button = QPushButton(_RELOCALIZE, self)
         self._relocalize_button.clicked.connect(self._re_localize)
         layout.addWidget(self._relocalize_button)
 
         self._calibrate_box.toggled.connect(self._on_options_changed)
         self._threshold_spin.valueChanged.connect(self._on_options_changed)
+        self._tolerance_spin.valueChanged.connect(self._on_options_changed)
 
     def collect_fiducial_rows(self) -> FiducialRows:
         """Hook: return the current ``(name, xyz)`` fiducial rows."""
@@ -248,6 +256,9 @@ class LocalizationPopupBase(StepPopupBase):
 
     def on_status(self, text: str) -> None:
         """Hook: called with every status line shown in the hint label."""
+
+    def _on_localization_busy(self, busy: bool) -> None:
+        """Hook: called while a localization run is scheduled or in flight."""
 
     def shutdown(self) -> None:
         """Stop the debounced live runs, then the base machinery."""
@@ -288,6 +299,16 @@ class LocalizationPopupBase(StepPopupBase):
         self._pending_scope = None
         self._localization_runner.submit(fiducials, electrodes, self._options)
         self._set_hint("Running...")
+
+    def _on_electrode_set_changed(self) -> None:
+        """The electrode set changed: the results follow the table.
+
+        Adding or removing an electrode does not move the other ones, so
+        nothing is recomputed: the results just lose the electrode that
+        left the table.
+        """
+        self._schedule_save()
+        self._publish_results()
 
     def _on_measurement_edited(self, electrode_id: str) -> None:
         """Recompute only a named electrode after its row is complete."""
@@ -383,6 +404,7 @@ class LocalizationPopupBase(StepPopupBase):
         self._options = Stage3Config(
             calibrate_ese_offset=self._calibrate_box.isChecked(),
             residual_threshold_mm=self._threshold_spin.value(),
+            fiducial_tolerance_mm=self._tolerance_spin.value(),
         )
         self._save_config(localization_options_payload(self._options))
 
@@ -510,15 +532,11 @@ class LocalizationPopupBase(StepPopupBase):
     def _mirror_measurements_into_store(self) -> None:
         """Mirror the current measurement table into the global store.
 
-        Like the fiducial table (mirrored into the global store), the
-        measurement table lands in the manager's global store as an
-        :class:`Electrodes` model (``measurements``), so the export
-        popups can write the last successfully run state without
-        touching disk. An invalid table (empty or duplicate electrode id)
-        is a hint, not a failure: the electrodes result is kept and
-        export falls back to the seeded or last stored state. An
-        unchanged store is left alone, so the pull-model listeners are
-        not re-triggered.
+        The table lands in the manager's global store as an
+        :class:`Electrodes` model (``measurements``). An invalid table
+        (empty or duplicate electrode id) is a hint, not a failure: the
+        electrodes result is kept. An unchanged store is left alone, so
+        the pull-model listeners are not re-triggered.
         """
         try:
             measurements = build_electrodes(self.collect_measurement_table())
@@ -566,10 +584,10 @@ class LocalizationPopupBase(StepPopupBase):
         """Drop the global fiducials entry so the scene loses the points.
 
         The table's Empty action clears the entry; the pull-model
-        listeners (MainWindow scene rebuild) re-read the store after the
-        write, so the rebuilt scene no longer carries fiducial points.
-        An entry that is already gone is left alone, so the listeners
-        are not re-triggered.
+        listeners re-read the store after the write, so the rebuilt
+        scene no longer carries fiducial points. An entry that is
+        already gone is left alone, so the listeners are not
+        re-triggered.
         """
         if self._manager.get_global_item(FIDUCIALS_KEY) is None:
             return

@@ -1,11 +1,19 @@
 """The geometry service: frame conversions and mesh queries over one context."""
 
+from collections.abc import Mapping
+
 import numpy as np
 
 from virda.geometry.frames import SLOT_IDS, FrameContext, convert, convert_point
+from virda.geometry.measurement import DUPLICATE_TOLERANCE_MM, predict_measurement
 from virda.geometry.surface import SurfaceProbe
 from virda.models.coordinates import CoordinateSystem, Point
+from virda.models.fiducial import FiducialType
+from virda.models.measurement import MeasurementPrediction
 from virda.models.mesh import Mesh
+
+#: How many mesh probes stay alive in one geometry service.
+_MAX_PROBES = 4
 
 
 class Geometry:
@@ -20,8 +28,7 @@ class Geometry:
 
     def __init__(self, context: FrameContext) -> None:
         self._context = context
-        self._probe: SurfaceProbe | None = None
-        self._probe_mesh: Mesh | None = None
+        self._probes: dict[int, tuple[Mesh, SurfaceProbe]] = {}
 
     @property
     def context(self) -> FrameContext:
@@ -91,8 +98,50 @@ class Geometry:
         return self.probe(mesh).nearest_vertex(world.as_array())
 
     def probe(self, mesh: Mesh) -> SurfaceProbe:
-        """The proximity probe of a mesh; the last one is kept alive."""
-        if self._probe is None or self._probe_mesh is not mesh:
-            self._probe = SurfaceProbe(mesh)
-            self._probe_mesh = mesh
-        return self._probe
+        """The proximity probe of a mesh; the probes are kept for reuse.
+
+        The scalp and the ESE mesh are queried side by side (the surface
+        check and the prediction), so a few probes stay alive instead of
+        only the last one.
+        """
+        cached = self._probes.get(id(mesh))
+        if cached is not None and cached[0] is mesh:
+            return cached[1]
+        probe = SurfaceProbe(mesh)
+        self._probes[id(mesh)] = (mesh, probe)
+        if len(self._probes) > _MAX_PROBES:
+            self._probes.pop(next(iter(self._probes)))
+        return probe
+
+    # --- measurements ---
+
+    def predict_measurement(
+        self,
+        measured: Mapping[FiducialType, float],
+        fiducials: Mapping[FiducialType, Point],
+        mesh: Mesh,
+        missing: FiducialType,
+        *,
+        approximate: bool = True,
+        system: CoordinateSystem = CoordinateSystem.WORLD,
+        duplicate_tolerance_mm: float = DUPLICATE_TOLERANCE_MM,
+    ) -> MeasurementPrediction:
+        """Predict the distance to ``missing`` from two measured distances.
+
+        The electrode lies on the mesh surface: the two measured distances
+        put it on a circle, the surface cuts that circle into candidates
+        and the electrode side of the fiducial plane picks the right one.
+        ``approximate`` snaps the position to the closest mesh vertex --
+        the accuracy the mesh density controls.
+        """
+        return predict_measurement(
+            measured,
+            fiducials,
+            mesh,
+            missing,
+            self._context,
+            approximate=approximate,
+            system=system,
+            duplicate_tolerance_mm=duplicate_tolerance_mm,
+            probe=self.probe(mesh),
+        )

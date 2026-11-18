@@ -17,7 +17,7 @@ class TestExportFiducials:
 
         assert [f.fiducial_id for f in restored.items] == fiducials.ids
         np.testing.assert_array_almost_equal(
-            restored.items[0].coordinates, fiducials.items[0].coordinates
+            restored.items[0].point.as_array(), fiducials.items[0].point.as_array()
         )
         assert restored.items[1].definition_method == fiducials.items[1].definition_method
 

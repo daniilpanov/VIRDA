@@ -1,36 +1,12 @@
 """Shared base of the export popups: selectors, path picker, result dialogs.
 
-Common controls of every export popup: an optional coordinate-frame
-selector (reusing the localization popup's
-:class:`~virda_gui_new.widgets.popup.localization.frame_selector.
-FrameSelector` and its availability logic through the manager's
-:class:`~virda.geometry.Geometry` -- no duplicated math), a path line
-edit with a Browse button
-(:meth:`QFileDialog.getSaveFileName`) prefilled with the kind's
-canonical default project path, and an Export button.
-
-Result-dialog flow (chosen for simplicity and consistency):
-
-- Success: the export popup closes first (its Qt.Tool host window is
-  closed; the 3D viewer stays visible behind), then the modal
-  ``Export successful`` message box shows a single ``Close`` button
-  that simply returns to the viewer -- nothing else happens.
-- Failure: the export popup stays open behind the modal ``Export
-  error`` box. ``Retry`` returns to the popup WITHOUT auto-retrying:
-  the popup keeps the user's previous settings untouched and the user
-  adjusts them and clicks Export again. ``Close`` closes the popup and
-  returns to the viewer.
-
-Availability approach: every export popup opens for every kind; a
-missing source (e.g. electrodes never localized) is surfaced by the
-Export click through the error dialog with the reason. The menu actions
-are therefore never disabled.
-
-The frame availability is synced once at construction: the MainWindow
-creates a fresh popup on every menu action, so no live re-sync is
-needed. Switching the mesh kind (mesh popup only) resets the path field
-to the new mesh kind's canonical default, because the mesh source and
-the default path change together.
+Every export popup offers an optional coordinate-frame selector, a path
+line edit with a Browse button prefilled with the kind's canonical
+default project path, and an Export button. A missing source surfaces at
+the Export click through the error dialog with the reason, so the menu
+actions are never disabled. On success the popup closes and a modal
+"Export successful" box shows; on failure it stays open behind the
+"Export error" box, whose Retry returns without re-running the export.
 """
 
 from pathlib import Path
@@ -178,7 +154,7 @@ class ExportPopupBase(QWidget):
         three fiducials have coordinates) or not offered by the popup;
         the head frame while no scalp mesh exists. A selected frame that
         is not available falls back to head (or world without a scalp
-        mesh), like the localization popup's selectors do.
+        mesh).
         """
         if self._frame_selector is None:
             return

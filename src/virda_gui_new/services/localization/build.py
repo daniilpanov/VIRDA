@@ -3,8 +3,9 @@
 import numpy as np
 
 from virda.geometry import match_fiducial_name
+from virda.models.coordinates import CoordinateSystem, Point
 from virda.models.electrode import Electrode, Electrodes
-from virda.models.fiducial import Fiducial, Fiducials
+from virda.models.fiducial import SLOT_IDS, Fiducial, Fiducials
 from virda_gui_new.dto.viewer3d import LabeledPoints
 
 type FiducialRows = list[tuple[str, np.ndarray]]
@@ -19,9 +20,8 @@ _EMPTY_NAME = "Fiducial name must be non-empty."
 def labeled_points_from_rows(rows: FiducialRows) -> LabeledPoints:
     """Bundle ``(name, xyz)`` fiducial rows into labeled points.
 
-    Rows come from the same table :func:`build_fiducials` consumes, so
-    the points match what the popup shows; an empty row list yields an
-    empty point set.
+    Rows come from the same table :func:`build_fiducials` consumes; an
+    empty row list yields an empty point set.
     """
     points = np.asarray([xyz for _name, xyz in rows], dtype=np.float64).reshape(-1, 3)
     labels = tuple(name for name, _xyz in rows)
@@ -31,21 +31,31 @@ def labeled_points_from_rows(rows: FiducialRows) -> LabeledPoints:
 def build_fiducials(rows: FiducialRows) -> Fiducials:
     """Build one world-coordinate manual fiducial per row.
 
-    The normalized non-empty name doubles as the id; coordinates must be
-    ``(3,)`` float arrays and names unique (mismatched shapes or duplicate
-    names raise ``ValueError``).
+    The normalized non-empty name doubles as the label; the id is the
+    canonical slot the name matches (so the measurements and the
+    fiducials agree on the id), and the name itself when it matches no
+    slot. Coordinates must be ``(3,)`` float arrays and names unique
+    (mismatched shapes or duplicate names raise ``ValueError``).
     """
     items = []
     for name, xyz in rows:
         fiducial_name = str(name).strip()
         if not fiducial_name:
             raise ValueError(_EMPTY_NAME)
+        coords = np.asarray(xyz, dtype=float)
+        if coords.shape != (3,):
+            raise ValueError(f"Coordinates must be a (3,) array, got shape {coords.shape}")
+        slot = match_fiducial_name(fiducial_name)
         items.append(
             Fiducial(
-                fiducial_id=fiducial_name,
+                fiducial_id=slot.value if slot is not None else fiducial_name,
                 name=fiducial_name,
-                coordinates=np.asarray(xyz, dtype=float),
-                coordinate_system="world",
+                point=Point(
+                    x=float(coords[0]),
+                    y=float(coords[1]),
+                    z=float(coords[2]),
+                    system=CoordinateSystem.WORLD,
+                ),
                 definition_method="manual",
             )
         )
@@ -87,7 +97,7 @@ def measurement_counts(table: MeasurementTable) -> tuple[int, int]:
             slot = canonical_fiducial_name(name)
             if slot is not None:
                 slots.add(slot)
-        if len(slots) >= 3:
+        if len(slots) >= len(SLOT_IDS):
             complete += 1
         elif distances:
             incomplete += 1
@@ -123,11 +133,12 @@ def canonical_fiducial_name(name: str) -> str | None:
 def blocked_reason(n_fiducials: int, n_complete: int, n_incomplete: int) -> str | None:
     """Return why live localization cannot run, or ``None`` when ready.
 
-    Three fiducials and three measured distances per electrode are
-    needed: an electrode with fewer distances cannot be localized.
+    All the canonical fiducials and all the measured distances per
+    electrode are needed: an electrode with fewer distances cannot be
+    localized.
     """
-    if n_fiducials < 3:
-        return "not enough fiducials (need 3)"
+    if n_fiducials < len(SLOT_IDS):
+        return f"not enough fiducials (need {len(SLOT_IDS)})"
     if n_incomplete:
         return f"{n_incomplete} electrode(s) need all three measured distances"
     if n_complete < 1:
@@ -162,9 +173,7 @@ def _point_set(items: list[tuple[str, np.ndarray]]) -> LabeledPoints:
 def measurement_table_from_model(electrodes: Electrodes) -> MeasurementTable:
     """Build the electrode -> fiducial -> distance table from a model.
 
-    The inverse of :func:`build_electrodes`: the stored measurements are
-    shown in the popup grid again, so a reopened project continues with
-    the table the user last edited.
+    The inverse of :func:`build_electrodes`.
     """
     table: MeasurementTable = {}
     for electrode in electrodes.items:

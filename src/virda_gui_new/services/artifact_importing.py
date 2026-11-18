@@ -1,24 +1,11 @@
-"""Artifact file import into the localization popup's table inputs.
+"""Read artifact files into the table inputs of the localization step.
 
-Two import paths back the localization popup's "From file" buttons:
-
-- fiducial files -- the project ``fiducials.json`` format or an MNE-style
-  ``coordsystem.json`` -- are read through
-  :func:`virda.io.importers.fiducials.import_fiducials` and matched onto
-  the fixed NAS/LPA/RPA table slots case-insensitively (the shared alias
-  table in :mod:`virda.geometry`); unknown fiducials
-  are ignored. The imported coordinates are world millimetres (both
-  writers produce them), which is the tables' canonical representation.
-- measurements files -- the project ``measurements.json`` format -- are
-  read through :func:`virda.io.importers.measurements.import_measurements`
-  into an electrode -> fiducial -> distance table; fiducial-name columns
-  are whatever the file carries, so no mapping is needed.
-
-Both raise ``ValueError`` (with a user-facing message) on unreadable,
-invalid or empty files; the popup surfaces it through its hint label.
-Fiducial files carry world or voxel coordinates: voxel rows are
-converted to world through the MRI affine, so only world rows ever
-reach the tables.
+Fiducial files (the project ``fiducials.json`` or an MNE-style
+``coordsystem.json``) are matched onto the fixed NAS/LPA/RPA slots
+case-insensitively; unknown fiducials are ignored and voxel rows are
+converted to world through the MRI affine. Measurements files are read
+into an electrode -> fiducial -> distance table with the fiducial names
+the file carries. Every failure raises ``ValueError``.
 """
 
 from pathlib import Path
@@ -62,16 +49,8 @@ def import_fiducial_rows(path: Path, affine: np.ndarray | None) -> FiducialRows:
         label = fiducial.name or fiducial.fiducial_id
         slot = match_fiducial_name(label) or match_fiducial_name(fiducial.fiducial_id)
         if slot is not None and slot not in matched:
-            coords = fiducial.coordinates
-            xyz = _world_coordinates(
-                Point(
-                    x=float(coords[0]),
-                    y=float(coords[1]),
-                    z=float(coords[2]),
-                    system=CoordinateSystem(fiducial.coordinate_system),
-                ),
-                affine,
-            )
+            xyz = _world_coordinates(fiducial.point, affine)
+
             matched[slot] = (label, xyz)
     rows = [matched[slot] for slot in SLOT_IDS if slot in matched]
     if not rows:

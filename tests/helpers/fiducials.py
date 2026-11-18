@@ -1,5 +1,4 @@
-import numpy as np
-
+from virda.models.coordinates import CoordinateSystem, Point
 from virda.models.fiducial import Fiducial, Fiducials, FiducialType
 
 
@@ -9,15 +8,13 @@ def make_fiducials() -> Fiducials:
             Fiducial(
                 fiducial_id=FiducialType.NAS,
                 name="Nasion",
-                coordinates=np.array([0.0, 88.0, -10.0]),
-                coordinate_system="world",
+                point=Point(x=0.0, y=88.0, z=-10.0, system=CoordinateSystem.WORLD),
                 definition_method="manual",
             ),
             Fiducial(
                 fiducial_id=FiducialType.LPA,
                 name="Left pre-auricular",
-                coordinates=np.array([-75.0, -1.0, -14.0]),
-                coordinate_system="world",
+                point=Point(x=-75.0, y=-1.0, z=-14.0, system=CoordinateSystem.WORLD),
             ),
         ]
     )
