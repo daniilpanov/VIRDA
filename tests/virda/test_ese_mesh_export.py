@@ -1,13 +1,50 @@
 from pathlib import Path
 
 import numpy as np
+import pytest
 import trimesh
 
 from tests.helpers.measurements import make_ese
-from virda.io.exporters.ese_mesh import export_ese_companions, export_ese_mesh
-from virda.io.importers.ese_mesh import import_ese_mesh
+from virda.io.exporters.ese_mesh import (
+    export_ese_companions,
+    export_ese_mesh,
+    export_ese_normals,
+)
+from virda.io.importers.ese_mesh import import_ese_mesh, import_ese_normals
 from virda.io.importers.scalp_mesh import import_scalp_mesh
 from virda.models.mesh import Mesh
+
+
+class TestExportEseNormals:
+    def test_the_normals_are_written_to_the_given_file(self, tmp_path: Path) -> None:
+        normals = np.array([[0.0, 0.0, 1.0], [1.0, 0.0, 0.0]])
+
+        path = export_ese_normals(tmp_path / "ese" / "normals.npy", normals)
+
+        assert path == tmp_path / "ese" / "normals.npy"
+        assert path.is_file()
+
+    def test_the_normals_round_trip(self, tmp_path: Path) -> None:
+        normals = np.array([[0.0, 0.0, 1.0], [1.0, 0.0, 0.0]])
+        export_ese_normals(tmp_path / "ese" / "normals.npy", normals)
+
+        loaded = import_ese_normals(tmp_path / "ese" / "normals.npy")
+
+        np.testing.assert_array_almost_equal(loaded, normals)
+
+    def test_the_file_that_is_named_is_the_file_that_is_read(self, tmp_path: Path) -> None:
+        """The importer reads the file it is given, not a sibling of it."""
+        normals = np.array([[0.0, 0.0, 1.0]])
+        target = tmp_path / "ese" / "custom.npy"
+        export_ese_normals(target, normals)
+
+        loaded = import_ese_normals(target)
+
+        np.testing.assert_array_almost_equal(loaded, normals)
+
+    def test_the_missing_normals_are_reported(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="Cannot import the ESE normals"):
+            import_ese_normals(tmp_path / "ese" / "normals.npy")
 
 
 class TestExportEseMesh:

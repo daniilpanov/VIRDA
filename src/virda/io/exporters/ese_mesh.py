@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import trimesh
 
-from virda.models.mesh import Mesh
+from virda.models.mesh import Mesh, Normals
 
 
 def export_ese_mesh(path: str | Path, ese_mesh: Mesh) -> Path:
@@ -14,6 +14,19 @@ def export_ese_mesh(path: str | Path, ese_mesh: Mesh) -> Path:
     target.parent.mkdir(parents=True, exist_ok=True)
     mesh = trimesh.Trimesh(vertices=ese_mesh.vertices, faces=ese_mesh.faces)
     mesh.export(str(target))
+    return target
+
+
+def export_ese_normals(path: str | Path, normals: Normals) -> Path:
+    """Write the per-vertex normals into the .npy file at *path*.
+
+    The normals are the byproduct of the ESE step, and the
+    localization needs them: they are stored next to the surface, so a
+    reopened project does not have to estimate them again.
+    """
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    np.save(target, np.asarray(normals, dtype=np.float64))
     return target
 
 

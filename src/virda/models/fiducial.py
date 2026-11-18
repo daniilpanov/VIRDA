@@ -1,10 +1,52 @@
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Literal
 
 import numpy as np
 
 CoordinateSystem = Literal["world", "voxel"]
 DefinitionMethod = Literal["auto", "manual", "imported"]
+
+
+class FiducialType(StrEnum):
+    """The canonical anatomical fiducial slots.
+
+    The values are the strings the project artifacts carry, so a stored
+    ``"NAS"`` id and ``FiducialType.NAS`` are the same thing. Manual
+    fiducials may carry any other name; these are the three slots the
+    anatomical frame and the localization tables are built from.
+    """
+
+    NAS = "NAS"
+    LPA = "LPA"
+    RPA = "RPA"
+
+
+#: The three canonical fiducial slots, in fixed row order.
+SLOT_IDS: tuple[FiducialType, ...] = (
+    FiducialType.NAS,
+    FiducialType.LPA,
+    FiducialType.RPA,
+)
+
+#: Lowercased label -> canonical slot. Checked case-insensitively.
+_ALIASES: dict[str, FiducialType] = {
+    "nas": FiducialType.NAS,
+    "nasion": FiducialType.NAS,
+    "nz": FiducialType.NAS,
+    "lpa": FiducialType.LPA,
+    "rpa": FiducialType.RPA,
+}
+
+
+def match_fiducial_name(name: str) -> FiducialType | None:
+    """Return the canonical slot of a fiducial label, or ``None``.
+
+    The project artifacts name the NAS point either way
+    (``fiducial_id="NAS"`` with ``name="NASION"``), so the alias table
+    accepts both spellings.
+    """
+    return _ALIASES.get(name.strip().lower())
 
 
 @dataclass(frozen=True)

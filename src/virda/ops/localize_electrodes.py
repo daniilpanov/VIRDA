@@ -81,22 +81,15 @@ def localize_electrodes(
 ) -> Electrodes:
     """Localize real electrodes by brute-force search over the ESE point cloud.
 
-    For every electrode the predicted distance from each ESE vertex to the
-    fiducials is compared against the measured distances; the vertex minimizing
-    the weighted sum of squared differences is chosen (spec Stage 3).
+    For every electrode the distance from each ESE vertex to the fiducials
+    is compared against the measured distances; the vertex minimizing the
+    weighted sum of squared differences is chosen.
 
-    When ``calibrate_ese_offset`` is enabled, a global shift of the ESE cloud
-    along the scalp normals is estimated before localization so that systematic
-    reference mismatches (e.g. measurements taken on the scalp while the ESE
-    models electrode body centers) do not degrade every electrode.
-
-    After the discrete argmin, the electrode position is refined by Gauss-Newton
-    least squares on the sphere equations and snapped back to the nearest
-    allowed vertex.  The discrete search alone suffers from tangential slide:
-    on a coarsely tessellated surface a distant vertex can fit the measured
-    distances better than any vertex near the true intersection point.  The
-    continuous refinement removes that bias while keeping the argmin result as
-    a fallback whenever refinement does not improve the residual.
+    With ``calibrate_ese_offset`` a global shift of the ESE cloud along the
+    scalp normals is estimated first, so that a systematic reference
+    mismatch does not degrade every electrode. The discrete argmin is then
+    refined by Gauss-Newton least squares on the sphere equations and
+    snapped back to the nearest allowed vertex.
     """
     vertices = np.asarray(ese.vertices)
     normals = np.asarray(normals)
@@ -297,19 +290,9 @@ def _refine_best_index(
 
     The Gauss-Newton solution is the actual sphere intersection, so the
     nearest allowed vertex to it approximates the true electrode position
-    even when the discrete distance-profile fit favored a distant vertex
-    (tangential slide on a coarsely tessellated surface).
-
-    Refinement applies only when all involved fiducials share the same
-    weight: unequal weights declare some measurements less trustworthy,
-    a signal that pure sphere intersection must not override the
-    discrete weighted argmin (weighted-fiducial dominance).  On top of
-    that, the continuous solution is trusted only when it explains the
-    measurements almost perfectly (unweighted residual below
-    ``_REFINE_MAX_RESIDUAL_MM``) and strictly better than the argmin
-    vertex.  A near-zero residual proves the measured distances are
-    mutually consistent and the spheres genuinely intersect near this
-    vertex; otherwise the discrete argmin result is kept.
+    even when the discrete fit favored a distant vertex. The refinement
+    applies only to fiducials of equal weight and is trusted only when
+    it explains the measurements almost perfectly and beats the argmin.
     """
     if not np.all(weights == weights[0]):
         return best_index

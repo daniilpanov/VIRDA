@@ -41,6 +41,30 @@ def _orient_outward(normals: np.ndarray, vertices: np.ndarray) -> np.ndarray:
     return normals
 
 
+def estimate_normals(mesh: Mesh, config: Stage2Config) -> Normals:
+    """The outward normals of the scalp mesh.
+
+    The normals are the per-vertex directions the ESE surface is offset
+    along. ``config.k_neighbors`` switches between a fixed k-NN
+    neighborhood and a radius-based one with a k-NN fallback for sparse
+    regions.
+    """
+    vertices = mesh.vertices
+    k = config.k_neighbors
+    if k is not None:
+        if k >= vertices.shape[0]:
+            raise ValueError(
+                "k_neighbors must be less than the number of vertices: "
+                f"k={k}, n_vertices={vertices.shape[0]}"
+            )
+        normals = _estimate_normals_knn(
+            vertices, k, use_weighted_pca=config.use_weighted_pca, sigma=config.pca_sigma_mm
+        )
+    else:
+        normals = _estimate_normals_radius(vertices, config)
+    return _orient_outward(normals, vertices)
+
+
 def build_ese(
     scalp_mesh: Mesh,
     *,
@@ -53,33 +77,24 @@ def build_ese(
     ``config.k_neighbors`` switches between a fixed k-NN neighborhood and a
     radius-based one with a k-NN fallback for sparse regions.
     """
-    vertices = scalp_mesh.vertices
-    k = config.k_neighbors
-    if k is not None:
-        if k >= vertices.shape[0]:
-            raise ValueError(
-                "k_neighbors must be less than the number of vertices: "
-                f"k={k}, n_vertices={vertices.shape[0]}"
-            )
-        normals = _estimate_normals_knn(
-            vertices, k, use_weighted_pca=config.use_weighted_pca, sigma=config.pca_sigma_mm
-        )
-        mode = f"k-NN k={k}"
-    else:
-        normals = _estimate_normals_radius(vertices, config)
-        mode = f"radius r={config.neighborhood_radius_mm} mm"
-
-    normals = _orient_outward(normals, vertices)
-    ese_vertices = vertices + ese_offset_mm * normals
+    normals = estimate_normals(scalp_mesh, config)
+    ese_vertices = scalp_mesh.vertices + ese_offset_mm * normals
 
     if logger:
-        logger.info("ESE estimated: %d vertices, %s", vertices.shape[0], mode)
+        logger.info("ESE estimated: %d vertices, %s", scalp_mesh.vertices.shape[0], _mode(config))
 
     ese_mesh = Mesh(
         vertices=ese_vertices,
         faces=scalp_mesh.faces,
     )
     return ese_mesh, normals
+
+
+def _mode(config: Stage2Config) -> str:
+    """A short description of the neighborhood the normals come from."""
+    if config.k_neighbors is not None:
+        return f"k-NN k={config.k_neighbors}"
+    return f"radius r={config.neighborhood_radius_mm} mm"
 
 
 def _estimate_normals_knn(

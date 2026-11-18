@@ -4,7 +4,7 @@ import pytest
 from tests.helpers.meshes import make_plane, make_sphere
 from virda.models.mesh import Mesh
 from virda.models.stage2_config import Stage2Config
-from virda.ops.build_ese import build_ese
+from virda.ops.build_ese import build_ese, estimate_normals
 
 ESE_OFFSET_MM = 1.0
 
@@ -12,6 +12,50 @@ ESE_OFFSET_MM = 1.0
 def run_builder(config: Stage2Config, mesh: Mesh) -> tuple[Mesh, np.ndarray]:
     """Build the ESE surface and return it together with its normals."""
     return build_ese(mesh, config=config, ese_offset_mm=ESE_OFFSET_MM)
+
+
+class TestEstimateNormals:
+    def test_three_neighbors_are_accepted(self) -> None:
+        mesh = make_sphere()
+        normals = estimate_normals(mesh, Stage2Config(k_neighbors=3))
+
+        assert normals.shape == mesh.vertices.shape
+
+    def test_two_neighbors_are_rejected(self) -> None:
+        with pytest.raises(ValueError, match="k_neighbors must be >= 3"):
+            Stage2Config(k_neighbors=2)
+
+    def test_the_normals_are_the_ones_of_the_ese_build(self) -> None:
+        config = Stage2Config(k_neighbors=30)
+        mesh = make_sphere()
+
+        _, built = run_builder(config, mesh)
+        estimated = estimate_normals(mesh, config)
+
+        assert np.allclose(built, estimated)
+
+    def test_the_normals_point_outward(self) -> None:
+        config = Stage2Config(k_neighbors=30)
+        mesh = make_sphere()
+
+        normals = estimate_normals(mesh, config)
+
+        radial = mesh.vertices / np.linalg.norm(mesh.vertices, axis=1, keepdims=True)
+        assert np.mean(np.sum(normals * radial, axis=1)) > 0.8
+
+    def test_the_radius_mode_gives_the_same_normals(self) -> None:
+        mesh = make_sphere()
+
+        estimated = estimate_normals(
+            mesh, Stage2Config(k_neighbors=None, neighborhood_radius_mm=5.0)
+        )
+        knn = estimate_normals(mesh, Stage2Config(k_neighbors=30))
+
+        assert np.allclose(estimated, knn, atol=0.2)
+
+    def test_it_rejects_k_larger_than_vertex_count(self) -> None:
+        with pytest.raises(ValueError, match="k_neighbors must be less than"):
+            estimate_normals(make_sphere(), Stage2Config(k_neighbors=500))
 
 
 class TestBuildEse:
