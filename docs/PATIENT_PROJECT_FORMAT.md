@@ -157,6 +157,67 @@ The coordinate tables (`electrodes_scalp.csv`, `electrodes_ese.csv`) carry colum
 (`is_localized == false`).  `flagged` (`yes`/`no`) marks electrodes whose
 residual exceeds `residual_threshold_mm`.
 
+## GUI step outputs and scanner rules
+
+The interactive GUI (`virda-gui-new`) persists the artifacts of every step
+run it completes, using the layout below; the names differ from the batch
+pipeline's Stage 1-3 output where noted.
+
+| Path (GUI writes)                      | Produced by step    | Content |
+|----------------------------------------|---------------------|---------|
+| `input/<source>.nii.gz`                | NIfTI import        | Byte-for-byte copy of the imported source MRI, so the project stays self-contained. |
+| `segmentation/head_mask.nii.gz`        | Base mesh           | uint8 NIfTI head mask with the MRI affine (as above). |
+| `scalp/base_mesh.ply`                  | Base mesh           | Raw extracted scalp surface (trimesh PLY). |
+| `scalp/final_mesh.ply`                 | Mesh postprocessing | Cleaned, decimated and smoothed mesh (trimesh PLY). |
+| `ese/mesh.ply`                         | ESE mesh            | ESE surface (trimesh PLY); normals stay in memory only. |
+| `localization/fiducials.json`          | Localization        | Fiducial table in the `input/fiducials.json` format. |
+| `localization/measurements.json`       | Localization        | Measured distances in the Stage 3 `measurements.json` format (no `fiducial_weights`). |
+| `localization/electrodes_scalp.csv`    | Localization        | Localized scalp contact points, in the pipeline's `electrodes_scalp.csv` format (see `localization/` above). |
+| `localization/electrodes_ese.csv`      | Localization        | Localized ESE body-center points, in the pipeline's `electrodes_ese.csv` format. |
+
+A point CSV is written only when at least one electrode carries that
+coordinate set; electrodes without it keep empty coordinate cells, and
+readers skip such rows.
+
+### Step chain rule
+
+The GUI loads a project as a chain: every step needs the artifacts of
+the step before it (`volume` -> `scalp_surface` -> `mesh` -> `ese_mesh`).
+The first step whose artifact is missing is where the pipeline stops:
+the steps after it are not loaded, and the import dialog says so. A
+project therefore needs the source MRI (or its copy in `input/`) to be
+usable, and a mesh postprocessing result to reach the ESE step.
+
+### Step configuration
+
+Every step keeps its settings in `config/<step>.json`
+(`config/base_mesh.json`, `config/mesh_postprocessing.json`,
+`config/ese_mesh.json`, `config/localization.json`). The GUI writes the
+file whenever a setting changes and reads it back when the step is
+opened, so a reopened project continues with the parameters the step was
+last run with.
+
+Scanner rules (the GUI's single source of truth): rules run in order and
+the first match fills its slot; every variant name is a first-class rule
+with no canonical-folder preference and no fallbacks. Most names are
+searched anywhere in the project (`fiducials.json`, `measurements.json`,
+`coordsystem.json`, `pipeline_config.json`, `base_mesh.ply`,
+`final_mesh.ply`, `ese_mesh.ply`, `electrodes_scalp.csv`,
+`electrodes_ese.csv`, `head_mask.nii.gz`, `*.nii.gz` before `*.nii`);
+the head mask is excluded from the NIfTI globs by name; `mesh.ply`
+counts as the ESE mesh only under `ese/` and outranks an
+`ese_mesh.ply` there. When several files match one rule, the first in
+sorted path order wins. Dot-directories are never searched. Precedence
+between different artifact kinds: `fiducials.json` wins over
+`coordsystem.json` as the fiducial input (a lone `coordsystem.json` is
+converted through its MRI fiducial coordinates), and `final_mesh.ply`
+wins over `base_mesh.ply` as the scene and postprocessing mesh.
+
+Electrode point files are CSV only: the GUI-invented JSON point-row
+files (`electrodes_scalp.json` / `electrodes_ese.json`) are no longer
+recognized, so projects carrying only those files do not seed electrode
+points (no legacy support).
+
 ## `logs/`
 
 `stageN.log` (`stage1.log`, `stage2.log` and `stage3.log`) — pipeline logs:
