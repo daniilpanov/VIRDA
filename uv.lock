@@ -1257,15 +1257,17 @@ wheels = [
 
 [[package]]
 name = "pyvistaqt"
-version = "0.13.2"
+version = "0.14.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "numpy" },
     { name = "pyvista" },
     { name = "qtpy" },
+    { name = "scooby" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a2/ac/cc744f1a68de13208bf188dbf39164d6cbfb68bf816ef79cf3111fd66d87/pyvistaqt-0.13.2.tar.gz", hash = "sha256:82aef38012e3110fbe9a3aa92feb8175142cbcee0ae167cd99068c697dce81e1", size = 584322, upload-time = "2026-11-02T15:21:14.678Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ba/5b/cc198dcfef9e0d248fb76de9b5ab64884dacd9e397e3aaeb0243fd29ebc2/pyvistaqt-0.14.0.tar.gz", hash = "sha256:69f04257f484d43070ac3902d09d8bea78a22fda9adcbc5447a5152bb537ee16", size = 591513, upload-time = "2026-11-18T16:16:09.04Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f2/de/d474a74dc80552c08af1a980a86ba6cb0777c2d12a5fccc3e9145374f08b/pyvistaqt-0.13.2-py3-none-any.whl", hash = "sha256:158b986e24c38984794ad707f263218d3fdfb3f4c0c1ae9f6683d7eddc43071c", size = 142555, upload-time = "2026-11-02T15:21:12.884Z" },
+    { url = "https://files.pythonhosted.org/packages/61/97/b705586ce2ef4c40167a60107a441a9786ddfd886d305bfd4a765f8ebd9c/pyvistaqt-0.14.0-py3-none-any.whl", hash = "sha256:1999858816e9540c71fb3f71d4a832ede0032cac1f2043f218df9ccb9ed42ed8", size = 144376, upload-time = "2026-11-18T16:16:07.437Z" },
 ]
 
 [[package]]
